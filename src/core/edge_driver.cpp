@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -270,11 +271,50 @@ void run_lane_blocks(const program& p, const std::vector<edge_record>& e,
   }
 }
 
-// A stage of a flat body on the slots `at`, whole (driver.cpp's run_whole), with the cursors f:
+// The arguments a flat body's stages run with over one execution: a stage that reads cursors
+// from a copy of its arguments made once, whose factor pointers are set for each transform (a
+// copy per call cost 3-5 ns per stage on x86, X28); the others from the plan's own. The copies
+// live in raw storage, constructed for those stages only, so that an execution of one short row
+// pays for no others.
+class flat_args {
+public:
+  explicit flat_args(const edge_forms& forms) noexcept : forms_(forms) {
+    for (std::size_t k = 0; k < forms.flat.size(); ++k) {
+      if (forms.flat[k].moving != 0) {
+        copy_[k] =
+            std::construct_at(reinterpret_cast<pass_args*>(storage_.data() + k * sizeof(pass_args)),
+                              forms.flat[k].s.args);
+      }
+    }
+  }
+  // Stage k's arguments with the cursors f.
+  [[nodiscard]] const pass_args* of(std::size_t k, factor_cursors f) noexcept {
+    pass_args* a = copy_[k];
+    if (a == nullptr) {
+      return &forms_.flat[k].s.args;
+    }
+    const std::uint8_t moving = forms_.flat[k].moving;
+    if ((moving & moving_in_factor) != 0) {
+      a->in_factor = reinterpret_cast<const void*>(f.in);
+    }
+    if ((moving & moving_out_factor) != 0) {
+      a->out_factor = reinterpret_cast<const void*>(f.out);
+    }
+    return a;
+  }
+
+private:
+  const edge_forms& forms_;
+  std::array<pass_args*, flat_stages_max> copy_{};
+  alignas(pass_args) std::array<std::byte, sizeof(pass_args) * flat_stages_max> storage_;
+};
+
+// Stage k of a flat body on the slots `at`, whole (driver.cpp's run_whole), with the cursors f:
 // the arguments and units the walked form gives it (chunks 0 to `chunks`).
-void run_flat_stage(const edge_flat_stage& x, const slot_addresses& at, factor_cursors f) noexcept {
-  pass_args local;
-  const pass_args* a = with_cursors(x.s.args, x.moving, f, local);
+void run_flat_stage(const edge_forms& forms, std::size_t k, flat_args& args,
+                    const slot_addresses& at, factor_cursors f) noexcept {
+  const edge_flat_stage& x = forms.flat[k];
+  const pass_args* a = args.of(k, f);
   if (x.s.leaf != nullptr) {
     x.s.leaf(a, source_of(x.s.src, at), destination_of(x.s.dst, at), 0, 0, 1);
     return;
@@ -301,6 +341,7 @@ void run_edge_flat(const program& p, const std::vector<edge_record>& e, const ed
              destination_of(x.s.dst, at), step_of(*only, x.s.src), step_of(*only, x.s.dst), count);
     return;
   }
+  flat_args args(forms);
   for (std::size_t t = first; t < first + count; ++t) {
     if (t != first) {
       if (only != nullptr) {
@@ -311,8 +352,8 @@ void run_edge_flat(const program& p, const std::vector<edge_record>& e, const ed
         cursors = edge_transform_cursors(p, e, t, f);
       }
     }
-    for (const edge_flat_stage& x : forms.flat) {
-      run_flat_stage(x, at, cursors);
+    for (std::size_t k = 0; k < forms.flat.size(); ++k) {
+      run_flat_stage(forms, k, args, at, cursors);
     }
   }
 }
@@ -332,20 +373,20 @@ void run_edge_row_blocks(const program& p, const std::vector<edge_record>& e,
   factor_cursors cursors = edge_transform_cursors(p, e, first, f);
   std::size_t t = first;
   const std::size_t stages = forms.flat.size();
+  flat_args args(forms);
   while (true) {
     const std::size_t rows = end - t < forms.row_block ? end - t : forms.row_block;
     for (std::size_t k = 0; k < stages; ++k) {
       const edge_flat_stage& x = forms.flat[k];
       if (x.block_call) {
-        pass_args block_args = x.s.args;
-        pass_args local;
         if (x.s.leaf != nullptr) {
-          x.s.leaf(with_cursors(block_args, x.moving, cursors, local), source_of(x.s.src, at),
-                   destination_of(x.s.dst, at), x.src_dist, x.dst_dist, rows);
+          x.s.leaf(args.of(k, cursors), source_of(x.s.src, at), destination_of(x.s.dst, at),
+                   x.src_dist, x.dst_dist, rows);
         } else {
+          // The block's rows, in a copy: the last block may be shorter.
+          pass_args block_args = *args.of(k, cursors);
           block_args.rows = static_cast<std::uint32_t>(rows);
-          x.s.run(with_cursors(block_args, x.moving, cursors, local), source_of(x.s.src, at),
-                  destination_of(x.s.dst, at), 0, x.s.units);
+          x.s.run(&block_args, source_of(x.s.src, at), destination_of(x.s.dst, at), 0, x.s.units);
         }
         continue;
       }
@@ -364,7 +405,7 @@ void run_edge_row_blocks(const program& p, const std::vector<edge_record>& e,
           row_cursors = moved(row_cursors, fs, 1);
         }
         for (std::size_t m = k; m < segment_end; ++m) {
-          run_flat_stage(forms.flat[m], row, row_cursors);
+          run_flat_stage(forms, m, args, row, row_cursors);
         }
       }
       k = segment_end - 1;

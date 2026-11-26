@@ -236,7 +236,18 @@ void run_case(const edge_case& ec, fftn::isa t, bool threads, bool reference = t
   // workspace block). Where the rules take another strategy for the row on this target (the
   // lanes for short float rows on x86, say), every factor is a separate pass around it.
   const bool other_strategy = describe.find("the row's strategy") != std::string::npos;
-  const char* expect = other_strategy ? "the row's strategy" : ec.expect;
+  // Rows on batch leaves in the edge driver's row blocks (task 5.2a) take a fusable factor as a
+  // separate pass, which keeps the batch leaves.
+  std::string expect = other_strategy ? "the row's strategy" : ec.expect;
+  if (describe.find("\nedge row blocks:") != std::string::npos) {
+    for (const auto& [fused, separate] :
+         {std::pair{"in the first pass", "in a separate pass into the workspace block"},
+          std::pair{"in the last pass", "in a separate pass from the workspace block"}}) {
+      if (const std::size_t at = expect.find(fused); at != std::string::npos) {
+        expect.replace(at, std::string(fused).size(), separate);
+      }
+    }
+  }
   EXPECT_NE(describe.find(expect), std::string::npos) << ec.name << ": no '" << expect << "' in\n"
                                                       << describe;
   if (other_strategy) {

@@ -3068,7 +3068,12 @@ std::shared_ptr<plan_core> build_with_edges(const shape_view& shape, const optio
   // chain against another strategy with separate passes.
   const resolved_edges separate = resolve_edges(shape, opts, edges, false);
   std::shared_ptr<plan_core> c = build_plan_core(shape, separate.opts, settings, &separate.plan);
-  if (any_fused(r.plan) && c->built == strategy_choice::chain) {
+  // Batch leaves in the row-block form (task 5.2a) keep the separate passes: the fused chain
+  // takes no batch leaves: in X65's first P1 runs on the EPYC 7763, rows of 16 and 64 points
+  // with a fused complex factor (E2, E4) took 1.1-2.0 times the time of the same rows with a
+  // separate real factor in row blocks (E1, E5).
+  const bool batch_rows = c->edge_row_block != 0 && c->strategy_name == batch_leaves_name;
+  if (any_fused(r.plan) && c->built == strategy_choice::chain && !batch_rows) {
     const std::string fallback = c->edge_fallback;
     c = build_plan_core(shape, r.opts, settings, &r.plan);
     // What kept the separate passes' plan from the plain plan's strategy keeps this one too,

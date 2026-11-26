@@ -1211,8 +1211,32 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
   d::execute_all(*w, in_of(one), out_of(one), ws, args);
   std::vector<T> other = fresh();
   d::execute_all(*b, in_of(other), out_of(other), ws, args);
-  EXPECT_TRUE(same_bits(one, other)) << what << ": the batched forms differ from the walked form\n"
-                                     << d::describe(*b);
+  // The same program in both (describe() apart from the row blocks and the workspace they
+  // enlarge): the same bits. Otherwise batch leaves in row blocks took a factor the walked form
+  // fuses into the chain as a separate pass, a different program checked against the reference
+  // (BatchedFormsAgainstTheReference).
+  const auto program_of = [](const std::string& text) {
+    std::string kept;
+    std::size_t at = 0;
+    while (at < text.size()) {
+      const std::size_t end = std::min(text.find('\n', at), text.size());
+      const std::string line = text.substr(at, end - at);
+      if (!line.starts_with("edge row blocks:") && !line.starts_with("workspace:")) {
+        kept += line + "\n";
+      }
+      at = end + 1;
+    }
+    return kept;
+  };
+  if (program_of(d::describe(*w)) == program_of(d::describe(*b))) {
+    EXPECT_TRUE(same_bits(one, other))
+        << what << ": the batched forms differ from the walked form\n"
+        << d::describe(*b);
+  } else {
+    EXPECT_NE(d::describe(*b).find("\nedge row blocks:"), std::string::npos)
+        << what << ": the plans differ\n"
+        << d::describe(*w) << d::describe(*b);
+  }
   // Pieces of the batch that start and end inside a block of rows.
   if (transforms(sc) > 3) {
     std::vector<T> pieces = fresh();
@@ -1222,7 +1246,7 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
           std::pair{1 + n / 2, n - 1 - n / 2}}) {
       d::execute_core(*b, first, count, in_of(pieces), out_of(pieces), ws, args);
     }
-    EXPECT_TRUE(same_bits(one, pieces)) << what << ": pieces of the batch differ";
+    EXPECT_TRUE(same_bits(other, pieces)) << what << ": pieces of the batch differ";
   }
 }
 
@@ -1281,28 +1305,39 @@ TYPED_TEST(EdgeShapes, BatchedFormsTakeBatchLeaves) {
   leaves.batch_leaves = d::batch_leaf_choice::own;
   leaves.strategy = d::strategy_choice::chain;
   leaves.profile.edge_batched_forms = true;
-  const shape_case c{.name = "batch leaves, real factors",
-                     .kind = transform_kind::c2c,
-                     .dims = {8},
-                     .count = 40,
-                     .in = {real, {}, 1},
-                     .out = {real, {-1}, -1},
-                     .expect = "edge row blocks: the rows in blocks of"};
+  const std::vector<shape_case> cases{
+      {.name = "batch leaves, real factors",
+       .kind = transform_kind::c2c,
+       .dims = {8},
+       .count = 40,
+       .in = {real, {}, 1},
+       .out = {real, {-1}, -1},
+       .expect = "edge row blocks: the rows in blocks of"},
+      // A factor the walked form would fuse into the chain's leaf.
+      {.name = "batch leaves, fusable complex factor",
+       .kind = transform_kind::c2c,
+       .dims = {8},
+       .count = 24,
+       .out = {cplx, {}, 1},
+       .expect = "the output times a complex factor in a separate pass from the workspace block"},
+  };
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    fftn::test::input_source src(0x5C2ULL);
-    const shape_run<TypeParam> run(c, t, src);
-    const fftn::shape<C, C> s = run.template shape<C, C>();
-    const auto plain = d::build_plan_core(d::view_of(s), run.opts, leaves);
-    if (plain->strategy_name != "the chain on batch leaves") {
-      continue; // a target without batch leaves in this precision
+    for (const shape_case& c : cases) {
+      fftn::test::input_source src(0x5C2ULL);
+      const shape_run<TypeParam> run(c, t, src);
+      const fftn::shape<C, C> s = run.template shape<C, C>();
+      const auto plain = d::build_plan_core(d::view_of(s), run.opts, leaves);
+      if (plain->strategy_name != "the chain on batch leaves") {
+        continue; // a target without batch leaves in this precision
+      }
+      const auto core = d::make_plan_core_with_edges(
+          d::view_of(s), run.opts, d::view_of(run.template edges<C, C>()), leaves);
+      const std::string text = d::describe(*core);
+      EXPECT_EQ(core->strategy_name, plain->strategy_name) << text;
+      EXPECT_EQ(text.find("not the strategy"), std::string::npos) << text;
+      EXPECT_NE(core->edge_row_block, 0U) << text;
+      run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &leaves, "batch leaf radix-8");
     }
-    const auto core = d::make_plan_core_with_edges(d::view_of(s), run.opts,
-                                                   d::view_of(run.template edges<C, C>()), leaves);
-    const std::string text = d::describe(*core);
-    EXPECT_EQ(core->strategy_name, plain->strategy_name) << text;
-    EXPECT_EQ(text.find("not the strategy"), std::string::npos) << text;
-    EXPECT_NE(core->edge_row_block, 0U) << text;
-    run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &leaves, "batch leaf radix-8");
   }
 }
 
@@ -1721,8 +1756,9 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
   depth.strategy = d::strategy_choice::depth;
   d::build_settings leaves;
   leaves.batch_leaves = d::batch_leaf_choice::own;
-  // Separate edge passes keep batch leaves to a row at a time in the walked form only: the
-  // batched forms run them a block of rows at a time (BatchedFormsTakeBatchLeaves).
+  // Separate edge passes keep batch leaves to a row at a time, and a fusable factor takes the
+  // fused chain, in the walked form only: the batched forms run batch leaves a block of rows at a
+  // time with every factor a separate pass (BatchedFormsTakeBatchLeaves).
   d::build_settings walked_leaves = leaves;
   walked_leaves.profile.edge_batched_forms = false;
   d::build_settings packed;
@@ -1798,7 +1834,7 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
          .dims = {16},
          .count = 16,
          .out = {cplx, {}, 1}},
-        leaves,
+        walked_leaves,
         "the chain on batch leaves",
         "the chain with a fused factor takes no batch leaves"},
        false},
