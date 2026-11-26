@@ -447,7 +447,10 @@ void run_edge_row_blocks(const program& p, const std::vector<edge_record>& e,
       for (std::size_t j = 0; j < rows; ++j) {
         if (j != 0) {
           row = moved(row, l.step, 1);
-          row.block += forms.block_row_bytes;
+          // A plan whose stages leave the block alone (callbacks in place) may have none.
+          if (row.block != nullptr) {
+            row.block += forms.block_row_bytes;
+          }
           row_cursors = moved(row_cursors, fs, 1);
         }
         task.transform = t + j;
