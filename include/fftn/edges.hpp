@@ -87,12 +87,13 @@ template <class T> struct edge {
   /// values are its input.
   bool accumulate = false;
   /// A block callback (fftn/callback.hpp), none by default; its argument arrives with each
-  /// execution (`exec_args::in_user`, `out_user`). Provisional (task 5.3a): c2c plans of one
-  /// axis only, on the chain whatever strategy the rules would choose (`plan::describe()` says
-  /// so); measured planning and wisdom are not used for such plans (the rules plan them). A
-  /// plan with a callback must be executed through an overload that takes `exec_args`: the
-  /// others end the program (`std::abort`, with a message on stderr). A pipeline's prologue and
-  /// epilogue refuse one until task 5.3d.
+  /// execution (`exec_args::in_user`, `out_user`). Provisional (tasks 5.3a, 5.3b): plans of one
+  /// axis only (c2c, r2c, c2r), on the strategy the rules or measured planning choose, except
+  /// that a consumed output keeps a row off the strategies that write the output as working
+  /// memory (`plan::describe()` says so); measured planning times candidates with stand-ins that
+  /// do nothing, never calling the callback. A plan with a callback must be executed through an
+  /// overload that takes `exec_args`: the others end the program (`std::abort`, with a message
+  /// on stderr). A pipeline's prologue and epilogue refuse one until task 5.3d.
   callback<T> call{};
 };
 

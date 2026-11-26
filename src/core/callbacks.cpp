@@ -32,6 +32,10 @@ void invoke_as(erased_block_fn fn, void* user, const block_info& info, std::byte
   reinterpret_cast<block_fn<E>>(fn)(user, info, reinterpret_cast<E*>(data));
 }
 
+// Measured planning's stand-in (callback_env::stand_in).
+void invoke_nothing(erased_block_fn /*fn*/, void* /*user*/, const block_info& /*info*/,
+                    std::byte* /*data*/) noexcept {}
+
 } // namespace
 
 std::byte* callback_area(std::byte* slot, std::size_t offset, std::size_t bytes) noexcept {
@@ -48,10 +52,23 @@ void callback_guard(const pass_args* /*args*/, const void* /*src*/, void* /*dst*
                    "exec_args");
 }
 
+std::size_t callback_chunks(std::size_t count, std::size_t lines, std::size_t element_bytes,
+                            std::size_t block_bytes) noexcept {
+  if (count == 0) {
+    return 1;
+  }
+  const std::size_t per_element = std::max<std::size_t>(lines, 1) * element_bytes;
+  // The elements of every line a block may hold, at least one.
+  const std::size_t fit =
+      std::max<std::size_t>(block_bytes / std::max<std::size_t>(per_element, 1), 1);
+  return std::min<std::size_t>((count + fit - 1) / fit, std::numeric_limits<std::uint32_t>::max());
+}
+
 stage callback_stage(precision prec, bool real, const side_callback& call, bool output,
                      std::size_t count, std::size_t logical, slot where, std::ptrdiff_t stride,
-                     std::ptrdiff_t offset, std::size_t chunk_points,
-                     std::vector<std::unique_ptr<callback_site>>& sites) {
+                     std::ptrdiff_t offset, std::size_t block_bytes,
+                     std::vector<std::unique_ptr<callback_site>>& sites, std::size_t lines,
+                     std::ptrdiff_t line_dist) {
   const std::size_t real_bytes = prec == precision::f64 ? sizeof(double) : sizeof(float);
   auto site = std::make_unique<callback_site>();
   site->fn = call.fn;
@@ -69,12 +86,12 @@ stage callback_stage(precision prec, bool real, const side_callback& call, bool 
   st.src = where;
   st.dst = where;
   st.units = count;
-  const std::size_t chunks = std::clamp<std::size_t>(count / std::max<std::size_t>(chunk_points, 1),
-                                                     1, std::numeric_limits<std::uint32_t>::max());
-  st.chunks = static_cast<std::uint32_t>(chunks);
+  st.chunks =
+      static_cast<std::uint32_t>(callback_chunks(count, lines, site->element_bytes, block_bytes));
   st.moving_factors = moving_callback;
   st.args.src_stride = stride;
   st.args.dst_stride = stride;
+  st.args.dst_dist = line_dist;
   // Two's complement of a negative offset (a run along a reversed axis), as the edge passes
   // keep theirs (core/edges.cpp).
   st.args.dst_cols = static_cast<std::size_t>(offset);
@@ -87,7 +104,8 @@ stage callback_stage(precision prec, bool real, const side_callback& call, bool 
 }
 
 void run_callback_stage(const stage& st, const callback_site& site, std::byte* data,
-                        const callback_env& env, std::size_t first, std::size_t last) noexcept {
+                        const callback_env& env, std::size_t lines, std::ptrdiff_t line_stride,
+                        std::size_t first, std::size_t last) noexcept {
   std::byte* line = data + static_cast<std::ptrdiff_t>(st.args.dst_cols);
   const std::ptrdiff_t stride = st.args.dst_stride;
   const auto element = static_cast<std::ptrdiff_t>(site.element_bytes);
@@ -100,9 +118,9 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
       .element_axis = site.axis,
       .line_axis = along_transforms,
       .length = 0,
-      .lines = 1,
+      .lines = lines,
       .element_stride = stride,
-      .line_stride = 0,
+      .line_stride = lines > 1 ? line_stride : 0,
       .group = 1,
       .group_stride = 0,
       .copy = 0,
@@ -111,6 +129,8 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
                                         : std::span<std::byte>(),
   };
   void* user = env.user[site.user];
+  // A stand-in calls this instead (planning): the same indirect call, doing nothing.
+  const auto invoke = env.stand_in ? &invoke_nothing : site.invoke;
   for (std::size_t c = first; c < last; ++c) {
     const std::size_t begin = chunk_start(st.units, st.chunks, c);
     const std::size_t end = chunk_start(st.units, st.chunks, c + 1);
@@ -119,7 +139,7 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
     }
     origin[site.axis] = site.logical + begin;
     info.length = end - begin;
-    site.invoke(site.fn, user, info, line + static_cast<std::ptrdiff_t>(begin) * stride * element);
+    invoke(site.fn, user, info, line + static_cast<std::ptrdiff_t>(begin) * stride * element);
   }
 }
 
@@ -136,25 +156,43 @@ const char* mode_name(callback_mode m) noexcept {
 }
 
 std::string callbacks_text(const side_callback& in, const side_callback& out,
-                           const std::string& in_where, const std::string& out_where,
-                           std::size_t block_elements) {
+                           const callback_place& in_place, const callback_place& out_place) {
   std::string t = "callbacks:";
-  const auto side = [&](const char* name, const side_callback& c, const std::string& where) {
+  const auto side = [&](const char* name, const side_callback& c, const callback_place& at) {
     if (!c.any()) {
       return;
     }
     if (t.back() != ':') {
       t += ";";
     }
-    t += std::string(" the ") + name + "'s (" + mode_name(c.mode) + ") on each row " + where;
+    t += std::string(" the ") + name + "'s (" + mode_name(c.mode) + ") " + at.where + ", " +
+         at.block;
+    if (at.sweep) {
+      t += ", one more sweep over each row (longer than a block)";
+    }
     if (c.scratch_bytes != 0) {
       t += ", " + std::to_string(c.scratch_bytes) + " bytes of scratch per member";
     }
   };
-  side("input", in, in_where);
-  side("output", out, out_where);
-  return t + "; blocks of one row's elements, up to about " + std::to_string(block_elements) +
-         " per call";
+  side("input", in, in_place);
+  side("output", out, out_place);
+  return t;
+}
+
+callback_place callback_blocks(std::string where, std::size_t count, std::size_t lines,
+                               std::size_t element_bytes, std::size_t block_bytes,
+                               const char* what) {
+  const std::size_t chunks = callback_chunks(count, lines, element_bytes, block_bytes);
+  const std::size_t longest = (count + chunks - 1) / chunks;
+  callback_place p{.where = std::move(where), .block = {}, .sweep = chunks > 1};
+  if (lines > 1) {
+    p.block = "blocks of up to " + std::to_string(lines) + " " + what + " together, " +
+              (chunks == 1 ? "whole" : "up to " + std::to_string(longest) + " elements of each");
+  } else {
+    p.block = chunks == 1 ? "blocks of one whole row"
+                          : "blocks of up to " + std::to_string(longest) + " elements of one row";
+  }
+  return p;
 }
 
 } // namespace fftn::inline v0::detail

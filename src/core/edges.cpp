@@ -112,10 +112,9 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output, const st
     if (e.call_scratch > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / 4) {
       reject(call + ".scratch_bytes", "is too large to address");
     }
-    if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
-      reject(call + ".fn", "is a callback on a real or multi-axis plan, which takes none yet "
-                           "(task 5.3a built them for c2c rows; tasks 5.3b and 5.3c add the "
-                           "others)");
+    if (s.axes.size() != 1) {
+      reject(call + ".fn", "is a callback on a multi-axis plan, which takes none yet (tasks 5.3a "
+                           "and 5.3b built them for rows; task 5.3c adds planes and volumes)");
     }
     side.call = {.fn = e.call, .mode = e.call_mode, .scratch_bytes = e.call_scratch};
   }

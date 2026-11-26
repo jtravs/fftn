@@ -500,8 +500,8 @@ template <class T> struct cb_run {
     }
   }
 
-  // The same work as the user's loops would do it, bitwise: the plain plan on the chain (the
-  // strategy callbacks take in 5.3a) over the logical input after the input callback's loop,
+  // The same work as the user's loops would do it, bitwise: the plain plan on the chain (for the
+  // plans the rules put on the chain) over the logical input after the input callback's loop,
   // then the output callback's loop and the store, accumulation or capture. The plain plan reads
   // and writes the layouts the plan's chain does (the workspace block's contiguous row where the
   // plan copies or ends there, else the caller's strided rows, in place for in place), since
@@ -625,7 +625,12 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
     EXPECT_TRUE(same_bits(xs, x0)) << what << ": input written";
   }
   EXPECT_TRUE(same_bits(run.fin, fin0) && run.fin_r == fin_r0) << what << ": factor written";
-  if (cc.in_factor == fftn::factor_kind::none && cc.out_factor == fftn::factor_kind::none) {
+  // The separate loops run the plain plan on the chain: comparable bitwise only where the plan
+  // with callbacks is on the chain too (the rules may choose another strategy, task 5.3b).
+  const bool on_chain = describe.find("\nstrategy: chain (") != std::string::npos &&
+                        describe.find("batch leaves") == std::string::npos;
+  if (on_chain && cc.in_factor == fftn::factor_kind::none &&
+      cc.out_factor == fftn::factor_kind::none) {
     cvec<T> consumed(cc.n * cc.count);
     const cvec<T> loops = run.separate_loops(consumed);
     if (cc.out == out_kind::consume) {
@@ -1032,19 +1037,20 @@ TEST(Callbacks, RefusalsNameTheField) {
                        "edges.out.call.scratch_bytes");
   expect_refused<C, C>(rows, {}, {.out = {.call = {.fn = &some_fn, .scratch_bytes = SIZE_MAX / 2}}},
                        "edges.out.call.scratch_bytes");
-  // Not built yet on real and multi-axis plans (tasks 5.3b and 5.3c).
-  expect_refused<double, C>(fftn::rows_r2c<double>(16, 2), {},
-                            {.in = {.call = {.fn = &some_real_fn}}}, "edges.in.call.fn");
-  expect_refused<C, double>(fftn::rows_c2r<double>(16, 2), {}, {.in = {.call = {.fn = &some_fn}}},
-                            "edges.in.call.fn");
+  // Real rows take callbacks (task 5.3b); a consumed real output in place is refused.
+  expect_refused<C, double>(
+      fftn::rows_c2r<double>(16, 2), {.in_place = true},
+      {.out = {.call = {.fn = &some_real_fn, .mode = callback_mode::consume}}},
+      "edges.out.call.mode");
+  // Not built yet on multi-axis plans (task 5.3c).
   fftn::shape<C, C> plane;
   plane.axes = {{.n = 8}, {.n = 8}};
   expect_refused<C, C>(plane, {}, {.out = {.call = {.fn = &some_fn}}}, "edges.out.call.fn");
 }
 
-// describe() says where each callback runs, and the plan is on the chain whatever the rules
-// would choose for the rows (the lanes, batch leaves or the grid on some targets), saying why
-// where they differ. Measured planning is not used.
+// describe() says where each callback runs and its blocks, the plan taking the strategy the
+// rules choose (task 5.3b; each strategy's line: callbacks_strategies_test.cpp), measured
+// planning included.
 TEST(Callbacks, DescribeNamesTheCallbacks) {
   using C = cd;
   for (const std::size_t n : {std::size_t{8}, std::size_t{64}, std::size_t{1} << 16U}) {
@@ -1054,17 +1060,13 @@ TEST(Callbacks, DescribeNamesTheCallbacks) {
         {.in = {.call = {.fn = &some_fn}},
          .out = {.call = {.fn = &some_fn, .mode = fftn::callback_mode::consume}}});
     const std::string d = p.describe();
-    EXPECT_NE(d.find("callbacks: the input's (modify) on each row in the workspace block, after "
-                     "a copy of the input; the output's (consume) on each row in the workspace "
-                     "block"),
+    EXPECT_NE(d.find("callbacks: the input's (modify) on each row in the "), std::string::npos)
+        << d;
+    EXPECT_NE(d.find("the output's (consume) on each row in the workspace block"),
               std::string::npos)
         << d;
-    EXPECT_NE(d.find("measured planning and wisdom take no callbacks yet"), std::string::npos) << d;
-    const fftn::plan<C, C> plain(rows);
-    if (plain.describe().find("strategy: chain") == std::string::npos ||
-        plain.describe().find("batch leaves") != std::string::npos) {
-      EXPECT_NE(d.find("callbacks take the chain until task 5.3b"), std::string::npos) << d;
-    }
+    EXPECT_NE(d.find("planning: "), std::string::npos) << d;
+    EXPECT_EQ(d.find("callbacks take the chain"), std::string::npos) << d;
   }
 }
 
