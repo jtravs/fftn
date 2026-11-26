@@ -5,7 +5,8 @@
 uv run python -m gen.fftn_gen                 # write src/gen/
 uv run python -m gen.fftn_gen --out DIR       # write elsewhere
 uv run python -m gen.fftn_gen --check DIR     # exit 1 unless DIR holds exactly this output
-uv run python -m gen.fftn_gen --table         # operation counts against the reference
+uv run python -m gen.fftn_gen --table         # operation counts against the reference, and
+                                              # the pruned codelets against the full ones
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from .catalogue import all_codelets, generate
-from .reference import MissingReference, compare, table
+from .catalogue import all_codelets, all_pruned_codelets, generate
+from .reference import MissingReference, compare, pruned_table, table
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         except MissingReference as e:
             print(f"fftn_gen: {e.args[0]}", file=sys.stderr)
             return 1
+        print()
+        print(pruned_table(codelets, all_pruned_codelets()))
         problems = [p for c in codelets if (p := compare(c))]
         for p in problems:
             print(p, file=sys.stderr)

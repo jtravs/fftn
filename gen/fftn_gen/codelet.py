@@ -9,6 +9,11 @@ F the R-point DFT of the codelet's direction:
   dif    y_0 = (F x)_0,  y_k = (F x)_k t_k               (multiply outputs)
 with t_k = w_k forward and conj(w_k) backward: twiddle tables hold forward roots only
 (DESIGN.md decision log), and a backward pass multiplies by their conjugates (mulc).
+
+Pruned variants (DESIGN.md 12.1, task 5.1e), for the edge passes of lines with stored runs,
+of the even radices in PRUNED_RADICES, with h = R/2:
+  dif_head    dif with x_j = 0 for j >= h: inputs h .. R-1 are known zero and not read
+  plain_head  plain computing y_0 .. y_{h-1} only: the other outputs are not wanted
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .algorithms import dft
-from .ir import Graph
+from .ir import ZERO, Graph
 from .lower import Op, lower
 from .realify import realify
 from .schedule import REGISTERS, peak_live, schedule
@@ -24,7 +29,14 @@ from .split import SPLIT_FUSED, expand, lower_split
 from .verify import verify, verify_split
 
 VARIANTS = ("plain", "dit", "dif")
+PRUNED_VARIANTS = ("dif_head", "plain_head")
 SIGNS = (-1, 1)
+
+
+def head(radix: int) -> int:
+    """The legs a pruned codelet keeps: the inputs dif_head reads, the outputs plain_head
+    computes."""
+    return radix // 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +90,7 @@ class Codelet:
 
     @property
     def twiddles(self) -> int:
-        return 0 if self.variant == "plain" else self.radix - 1
+        return 0 if self.variant in ("plain", "plain_head") else self.radix - 1
 
 
 def count(ops: list[Op] | tuple[Op, ...]) -> Counts:
@@ -98,13 +110,18 @@ def build_ops(radix: int, variant: str, sign: int, real: bool = True) -> list[Op
     uses; False lowers the DAG as built (kept for the tests that compare the two).
     """
     g = Graph(radix, twiddles=radix - 1)
-    x = [g.input(j) for j in range(radix)]
+    # dif_head's inputs from h on are the zero term: value numbering and dead-code
+    # elimination drop everything they fed (gen/README.md, pipeline step 3).
+    reads = head(radix) if variant == "dif_head" else radix
+    x = [g.input(j) if j < reads else ZERO for j in range(radix)]
     conj = sign > 0
     if variant == "dit":
         x = [x[0]] + [g.tw_mul(x[j], g.twiddle(j), conj) for j in range(1, radix)]
     y = dft(g, x, sign)
-    if variant == "dif":
+    if variant in ("dif", "dif_head"):
         y = [y[0]] + [g.tw_mul(y[k], g.twiddle(k), conj) for k in range(1, radix)]
+    if variant == "plain_head":
+        y = y[: head(radix)]
     if real:
         g, y = realify(g, y, radix)
     return lower(g, y)
