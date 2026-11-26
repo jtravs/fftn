@@ -3939,10 +3939,10 @@ void name_forced_strategy(plan_core& c, const shape_view& shape, const options& 
     return;
   }
   std::string fallback = c.edge_fallback;
-  // Where the plan without the edges is on batch leaves, the edges' separate passes take a
-  // row at a time, and a fused factor (the chain the edges keep, the only other plan they
-  // build there) takes none, whatever else build() noted. Callbacks give their own reason.
-  if (plain->strategy_name == batch_leaves_name && c.callback_sites.empty()) {
+  // Where the plan without the edges is on batch leaves, the edges' separate passes and
+  // callback stages take a row at a time, and a fused factor (the chain the edges keep, the only
+  // other plan they build there) takes none, whatever else build() noted.
+  if (plain->strategy_name == batch_leaves_name) {
     if (c.strategy_name == batch_one_row_name) {
       fallback = batch_one_row_reason;
     } else if (c.strategy_name == "the chain") {
