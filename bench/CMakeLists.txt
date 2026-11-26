@@ -144,16 +144,26 @@ if(_fbench_fftw_root)
   # FFTW's POSIX-threads library, for the THREADS option (no OpenMP runtime in the process).
   find_library(_fbench_fftw_threads_lib fftw3_threads PATHS ${_fbench_fftw_root}/lib
                ${_fbench_fftw_root}/lib64 NO_DEFAULT_PATH NO_CACHE)
+  # Single precision, when the installation has it (the f32 cases, experiment X84).
+  find_library(_fbench_fftwf_lib fftw3f PATHS ${_fbench_fftw_root}/lib ${_fbench_fftw_root}/lib64
+               NO_DEFAULT_PATH NO_CACHE)
+  set(_fbench_fftw_libs ${_fbench_fftw_lib})
+  if(_fbench_fftwf_lib)
+    list(APPEND _fbench_fftw_libs ${_fbench_fftwf_lib})
+  endif()
   if(_fbench_fftw_threads_lib)
-    fbench_add_backend(fftw ${_fbench_fftw_threads_lib} ${_fbench_fftw_lib} Threads::Threads
+    fbench_add_backend(fftw ${_fbench_fftw_threads_lib} ${_fbench_fftw_libs} Threads::Threads
                        ${CMAKE_DL_LIBS})
     target_compile_definitions(fbench-fftw PRIVATE FBENCH_FFTW_THREADS)
   else()
-    fbench_add_backend(fftw ${_fbench_fftw_lib} ${CMAKE_DL_LIBS})
+    fbench_add_backend(fftw ${_fbench_fftw_libs} ${CMAKE_DL_LIBS})
+  endif()
+  if(_fbench_fftwf_lib)
+    target_compile_definitions(fbench-fftw PRIVATE FBENCH_FFTW_FLOAT)
   endif()
   target_include_directories(fbench-fftw SYSTEM PRIVATE ${_fbench_fftw_include})
   target_compile_definitions(fbench-fftw PRIVATE "FBENCH_FFTW_ROOT=\"${_fbench_fftw_root}\"")
-  message(STATUS "fbench: FFTW backend against ${_fbench_fftw_lib}")
+  message(STATUS "fbench: FFTW backend against ${_fbench_fftw_libs}")
 else()
   message(STATUS "fbench: FFTW backend not built (set FFTN_BENCH_FFTW_ROOT to an installation)")
 endif()

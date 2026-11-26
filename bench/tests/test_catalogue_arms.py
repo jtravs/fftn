@@ -24,6 +24,18 @@ class Standard(unittest.TestCase):
         self.assertTrue(30 <= len(tracking) <= 70)
         self.assertEqual(len(self.cat.select("full")), len(self.cat.cases))
 
+    def test_precision_override(self):
+        f64 = self.cat.select("full", r"^c2c-1024-b")
+        f32 = self.cat.select("full", r"^c2c-1024-b", "f32")
+        # The catalogue lists c2c 1024 x 2 in both precisions: it is kept once.
+        self.assertIn("c2c-1024-b2-op-f32", {c.id for c in f64})
+        self.assertEqual(len(f32), len({c.id.removesuffix("-f32") for c in f64}))
+        self.assertTrue(all(c.precision == "f32" and c.id.endswith("-f32") for c in f32))
+        only = self.cat.select("full", r"-f32$", "f32")
+        self.assertEqual(len(only), len({c.id.removesuffix("-f32") for c in self.cat.cases}))
+        with self.assertRaises(ValueError):
+            self.cat.select("full", None, "f16")
+
     def test_covers_design_16_1(self):
         cases = self.cat.cases
         pow2 = {c.dims[0] for c in cases if c.kind == "c2c" and len(c.dims) == 1}
@@ -203,6 +215,11 @@ class ArmGrammar(unittest.TestCase):
         prefix = {"loaded_from": "/opt/fftw-old/lib/libfftw3.so", "expected_root": "/opt/fftw"}
         self.assertIsNotNone(arms.library_problem(prefix))
         self.assertIsNone(arms.library_problem({}))
+        # The single-precision library is checked as well (FFTW's libfftw3f).
+        both = {**ok, "loaded_from_f32": "/opt/fftw/lib/libfftw3f.so"}
+        self.assertIsNone(arms.library_problem(both))
+        float_wrong = {**ok, "loaded_from_f32": "/usr/lib/libfftw3f.so"}
+        self.assertIn("libfftw3f", arms.library_problem(float_wrong))
         # On Linux a symbol's address seen from the executable names the executable.
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp) / "fbench-fftw"
