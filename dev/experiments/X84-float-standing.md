@@ -66,6 +66,12 @@ library with its SIMD codelets, MEASURE, fresh wisdom per run.
   3. A case that fails fbench's accuracy check in either arm is reported as a failure, not
      timed.
 
+**Amendment 1** (2026-11-26 15:10, before the EPYC's deciding re-run). The EPYC's near-miss
+re-run (run 20261126-150451-f8fa, Slurm 520153) took six rounds in 18 s and its intervals span
+0.33–0.97 of FFTW ÷ FFTN for every case: too few rounds to decide anything. It is void as
+deciding; the deciding re-run repeats it with `--min-rounds 24`. The Mac's and the Xeon's
+re-runs (12 rounds each, intervals of a few per cent) stand.
+
 ## Results
 
 (to come)
