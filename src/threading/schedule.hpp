@@ -457,7 +457,7 @@ struct machine_profile {
   // separate edge passes in blocks of rows (edge passes and leaves once per block). Otherwise
   // such a plan walks its program one transform at a time. Last, so that every field above
   // keeps its place.
-  bool edge_batched_forms = false;
+  bool edge_batched_forms = true;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which
