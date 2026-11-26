@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <latch>
 #include <set>
 #include <span>
 #include <stdexcept>
@@ -832,6 +833,9 @@ TEST(easy, each_thread_has_its_own_context) {
   std::vector<std::size_t> cached(threads);
   std::vector<int> agree(threads, 0);
   std::vector<std::thread> pool;
+  // Every thread stays alive until all have taken their context's address: an exited thread's
+  // thread_local storage may be reused by a later thread, at the same address.
+  std::latch all_seen(static_cast<std::ptrdiff_t>(threads));
   for (std::size_t t = 0; t < threads; ++t) {
     pool.emplace_back([&, t] {
       bool ok = true;
@@ -843,6 +847,7 @@ TEST(easy, each_thread_has_its_own_context) {
       seen[t] = &easy::thread_context();
       cached[t] = easy::thread_context().cached_plans();
       agree[t] = ok ? 1 : 0;
+      all_seen.arrive_and_wait();
     });
   }
   for (std::thread& th : pool) {
