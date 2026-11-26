@@ -2862,6 +2862,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (callback_scratch != 0) {
     constexpr std::size_t area_alignment = 128;
     c.offset_callback = (used + area_alignment - 1) / area_alignment * area_alignment;
+    c.callback_bytes = callback_scratch;
     // scratch_bytes is bounded at validation (core/edges.cpp), so nothing here overflows.
     used = c.offset_callback + line_alignment + callback_scratch;
   }

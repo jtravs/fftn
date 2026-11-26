@@ -263,10 +263,12 @@ public:
   edge_forms edge_batched;
   std::size_t edge_row_block = 0;
   // Block callbacks (core/callbacks.hpp, task 5.3a): the sites their stages call, which the
-  // edge records point to; and the offset in each scratch slot of its callback area (0: none),
-  // the largest scratch_bytes of the plan's callbacks, one member never running two at once.
+  // edge records point to; and the offset in each scratch slot of its callback area and the
+  // area's bytes (0: none), the largest scratch_bytes of the plan's callbacks, one member never
+  // running two at once.
   std::vector<std::unique_ptr<callback_site>> callback_sites;
   std::size_t offset_callback = 0;
+  std::size_t callback_bytes = 0;
   std::string callbacks_note; // describe()'s line for them (callbacks_text)
 };
 

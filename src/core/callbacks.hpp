@@ -61,10 +61,11 @@ struct callback_env {
   std::byte* scratch = nullptr; // that lane's callback area (128-byte aligned), or null
 };
 
-// The callback area of the scratch slot that starts at `slot` (a 64-byte boundary serially, a
-// 128-byte one in a team; core/plan_core.cpp lays it out with room for the alignment): null
-// where the plan's callbacks take no scratch.
-[[nodiscard]] std::byte* callback_area(std::byte* slot, std::size_t offset) noexcept;
+// The callback area, `offset` bytes into the scratch slot that starts at `slot` (a 64-byte
+// boundary serially, a 128-byte one in a team; core/plan_core.cpp lays it out with room for the
+// alignment): null where the plan's callbacks take no scratch (`bytes` 0).
+[[nodiscard]] std::byte* callback_area(std::byte* slot, std::size_t offset,
+                                       std::size_t bytes) noexcept;
 
 // The guard kernel of a callback stage, for driver.hpp: it ends the program (contract_failure).
 void callback_guard(const pass_args* args, const void* src, void* dst, std::size_t first,

@@ -717,6 +717,13 @@ std::vector<cb_case> cases() {
        .count = 2,
        .out = out_kind::modify,
        .in_place = true},
+      // No workspace but the callbacks' scratch.
+      {.name = "a leaf in place, output only, scratch",
+       .n = 8,
+       .count = 3,
+       .out = out_kind::modify,
+       .in_place = true,
+       .scratch = 40},
       {.name = "strided rows",
        .n = 20,
        .count = 3,

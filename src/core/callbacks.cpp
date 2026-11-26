@@ -34,8 +34,8 @@ void invoke_as(erased_block_fn fn, void* user, const block_info& info, std::byte
 
 } // namespace
 
-std::byte* callback_area(std::byte* slot, std::size_t offset) noexcept {
-  if (slot == nullptr || offset == 0) {
+std::byte* callback_area(std::byte* slot, std::size_t offset, std::size_t bytes) noexcept {
+  if (slot == nullptr || bytes == 0) {
     return nullptr;
   }
   const auto at = reinterpret_cast<std::uintptr_t>(slot + offset);
