@@ -2387,9 +2387,11 @@ TEST(EdgeShapes, StoredRunsPrunedPasses) {
                         "the first pass pruned"),
               std::string::npos)
         << band;
-    EXPECT_NE(band.find("the last pass pruned to the line's first half; they cost 2 separate"),
-              std::string::npos)
+    EXPECT_EQ(band.find("the last pass pruned to the line's first half; they cost 2 separate") !=
+                  std::string::npos,
+              band.find("split lane") == std::string::npos)
         << band;
+    EXPECT_NE(band.find("they cost 2 separate passes"), std::string::npos) << band;
     const std::string odd = text(2187,
                                  {{.where = side::in, .logical = 0, .stored = 0, .count = 1000},
                                   {.where = side::out, .logical = 0, .stored = 0, .count = 1000}},
