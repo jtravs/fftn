@@ -9,7 +9,7 @@ import itertools
 import math
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 CATALOGUE_DIR = Path(__file__).resolve().parent.parent / "catalogues"
@@ -85,16 +85,26 @@ class Catalogue:
     sha256: str
     cases: tuple[Case, ...]
 
-    def select(self, tier: str | None = None, pattern: str | None = None) -> list[Case]:
-        """Cases of a tier (every case is in "full"), whose id matches the regex."""
+    def select(
+        self, tier: str | None = None, pattern: str | None = None, precision: str | None = None
+    ) -> list[Case]:
+        """Cases of a tier (every case is in "full"), whose id matches the regex. With a
+        precision, every case of the tier is taken in that precision first (a case the
+        catalogue already lists in it is kept once), and the regex sees the new ids."""
         if tier is not None and tier not in TIERS:
             raise ValueError(f"unknown tier {tier!r}; tiers are {', '.join(TIERS)}")
+        if precision is not None and precision not in PRECISIONS:
+            raise ValueError(f"precision is one of {PRECISIONS}")
         rx = re.compile(pattern) if pattern else None
-        return [
-            c
-            for c in self.cases
-            if (tier in (None, "full") or tier in c.tiers) and (rx is None or rx.search(c.id))
-        ]
+        chosen: dict[str, Case] = {}
+        for c in self.cases:
+            if tier not in (None, "full") and tier not in c.tiers:
+                continue
+            if precision is not None:
+                c = replace(c, precision=precision)
+            if (rx is None or rx.search(c.id)) and c.id not in chosen:
+                chosen[c.id] = c
+        return list(chosen.values())
 
 
 def resolve(name_or_path: str) -> Path:

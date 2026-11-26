@@ -207,9 +207,20 @@ def describe(binary: Binary, options: dict[str, str]) -> dict:
 def library_problem(info: dict, binary: Path | None = None) -> str | None:
     """Why a backend must not be trusted, or None: it loaded a shared library from outside
     the installation it was built against (DESIGN.md 16.1). A file reached through the
-    installation's directory is inside it, even when that directory holds symlinks."""
-    loaded, root = info.get("loaded_from"), info.get("expected_root")
-    if not loaded or not root:
+    installation's directory is inside it, even when that directory holds symlinks. Every
+    library the backend names is checked: "loaded_from", and "loaded_from_f32" where a second
+    library serves single precision (FFTW's libfftw3f)."""
+    root = info.get("expected_root")
+    if not root:
+        return None
+    for key in ("loaded_from", "loaded_from_f32"):
+        if problem := _loaded_problem(info.get(key), root, binary):
+            return problem
+    return None
+
+
+def _loaded_problem(loaded: str | None, root: str, binary: Path | None) -> str | None:
+    if not loaded:
         return None
     loaded_real = os.path.realpath(loaded)
     if binary is not None and loaded_real == os.path.realpath(binary):
