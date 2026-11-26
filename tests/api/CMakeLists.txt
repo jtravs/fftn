@@ -19,7 +19,7 @@ fftn_always_optimise(edges_test.cpp)
 fftn_add_test(fftn_edges_shapes_tests SOURCES edges_shapes_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(edges_shapes_test.cpp)
 
-# Row pipelines (task 5.2b) against the quadruple-precision reference, optimised likewise.
+# Row pipelines (tasks 5.2b, 5.2c) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_test.cpp)
 

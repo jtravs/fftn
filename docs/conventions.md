@@ -303,7 +303,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (task 5.2b, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b and 5.2c, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -337,14 +337,41 @@ std::vector<std::complex<double>> y(n * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
 ```
 
-Built so far: `pipeline<C, C, C>` (C = `std::complex<T>`) with the forward transform first,
+A `pipeline<T, C, T>` (C = `std::complex<T>`) is a real convolution: the r2c transform of each
+real line, the middle on the spectrum's n/2 + 1 bins (bins 0 to n/2, its factor indexed by bin),
+and the c2r transform, which ignores the imaginary parts of bin 0 and, for even n, of bin n/2, as a
+c2r plan does. Its prologue and epilogue are on real values and take real factors only.
+`convolution_rows` describes real rows convolved with one kernel spectrum:
+
+```cpp file=examples/pipeline.cpp region=real-pipeline
+// The filter's spectrum: its r2c transform, n/2 + 1 bins.
+const fftn::r2c_plan<double> r2c(fftn::rows_r2c<double>(n, 1));
+fftn::workspace r2c_ws(r2c);
+std::vector<std::complex<double>> kernel(n / 2 + 1);
+r2c.execute(filter.data(), kernel.data(), r2c_ws);
+
+// Every real row circularly convolved with the filter: r2c, times the spectrum, c2r,
+// normalised by 1/n, in one sweep.
+fftn::pipeline_desc desc = fftn::convolution_rows<double>(n, count);
+desc.middle.scale = 1.0 / static_cast<double>(n);
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<double> y(n * count);
+pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
+```
+
+A linear (zero-padded) convolution of m values with a kernel of L taps is the circular one of a
+length n of at least m + L − 1; until stored runs are built the caller stores the zeros.
+
+Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`,
 lines stored whole, one inverse per forward, planned by the rules (`options::effort` is
 ignored, and `pipeline::describe()` says so). Refused at construction, naming the field, until
 their steps: the inverse transform first (`spectral_pair_rows` with `direction::backward`), the
-real kinds `<T, C, T>` and `<C, T, C>`, stored runs (`pipeline_desc::runs`) and `fanout` above
-1. A complex factor of stride 1 along the line is applied in the neighbouring transform's pass;
-any other factor, and accumulation, in a pass of its own over the line while it is in the
-workspace (`describe()` counts them). Results equal the transform, the multiplications and the
+kind `<C, T, C>`, stored runs (`pipeline_desc::runs`) and `fanout` above 1. On `<C, C, C>`, a
+complex factor of stride 1 along the line is applied in the neighbouring transform's pass; any
+other factor, every factor of `<T, C, T>`, and accumulation, in a pass of its own over the line
+while it is in the workspace (`describe()` counts them). Results equal the transform, the multiplications and the
 inverse done separately within two transforms' error bound plus one rounding per
 multiplication and addition, not bit for bit; the guarantees of "Determinism" below hold for
 pipelines too. `pipeline::transforms_of` deals lines among a team's members as

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Row pipelines (DESIGN.md 12.2, fftn/pipeline.hpp; task 5.2b): a transform, a middle and the
-// inverse transform over one axis, built as a program (8.3) over a scratch-resident line, and the
-// parts of plan construction (core/plan_core.cpp) they share with plans.
+// Row pipelines (DESIGN.md 12.2, fftn/pipeline.hpp; tasks 5.2b, 5.2c): a transform, a middle and
+// the inverse transform over one axis, built as a program (8.3) over a scratch-resident line, and
+// the parts of plan construction (core/plan_core.cpp) they share with plans.
 //
 // The <C, C, C> chain pair: batch loops, then the stages of one line,
 //
@@ -22,6 +22,10 @@
 // make_edge_forms) whatever machine_profile::edge_batched_forms says: leaf-sized lines are a flat
 // body of two leaves, longer ones up to calls_max calls per line unrolled (X65 measured plans
 // with edges losing these forms).
+//
+// The <T, C, T> real chain pair (task 5.2c) has the same shape with chain_builder::r2c_line and
+// c2r_line, the middle on the spectrum's n/2 + 1 bins, and every factor in a separate pass
+// (pipeline.cpp, build_real_pair).
 #pragma once
 
 #include "core/plan_core.hpp"
@@ -39,6 +43,8 @@ namespace fftn::inline v0::detail {
 // The layout of a c2c shape of one axis without runs (a pipeline's line under its batch), with
 // every default resolved and checked as a plan checks it (std::invalid_argument naming the
 // shape's fields): strides and distances in elements, and the bytes each side spans [lo, hi).
+// real: the elements are reals, not complex values (a <T, C, T> pipeline's input and output,
+// whose sides have the same logical extents and, in place, the same layout).
 struct row_layout {
   std::ptrdiff_t in_stride = 0;
   std::ptrdiff_t out_stride = 0;
@@ -49,7 +55,7 @@ struct row_layout {
   std::ptrdiff_t out_lo = 0;
   std::ptrdiff_t out_hi = 0;
 };
-[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place);
+[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real = false);
 
 // The target profile of c's instruction set (c.isa_target, set by the caller) with the settings'
 // overrides, and the chain builder on it with the settings' rules, its tables in c's: what
