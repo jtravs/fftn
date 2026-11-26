@@ -30,7 +30,8 @@ double pipeline_error() {
   // A kernel's spectrum (the forward transform of a short filter, here made up directly).
   std::vector<std::complex<double>> kernel(n);
   for (std::size_t k = 0; k < n; ++k) {
-    kernel[k] = std::polar(1.0 / (1.0 + 0.01 * static_cast<double>(k)), 0.1 * static_cast<double>(k));
+    kernel[k] =
+        std::polar(1.0 / (1.0 + 0.01 * static_cast<double>(k)), 0.1 * static_cast<double>(k));
   }
 
   // snippet-begin: pipeline

@@ -49,7 +49,7 @@ void replace_all(std::string& s, std::string_view from, std::string_view to) {
 // Runs f, the plan's own validation of the line's layout, the edges or the options, with its
 // messages naming the description's fields instead of a plan's: the line is a c2c shape of one
 // axis (shape.axes[0]) under the description's batch dimensions (shape.batches).
-template <class F> auto renaming(F&& f) {
+template <class F> auto renaming(const F& f) {
   try {
     return f();
   } catch (const std::invalid_argument& e) {
@@ -101,14 +101,14 @@ placed place(edge_side pro, edge_side mid, edge_side epi, double scale, std::siz
   p.epi.fused = p.epi.fused && !p.epi.accumulate;
   p.epi.separate = p.epi.accumulate || (p.epi.kind != factor_kind::none && !p.epi.fused);
   if (scale != 1.0) {
-    if (p.epi.separate) {
-      p.epi.scale = scale;
-      p.at = scale_at::pass;
-    } else if (p.mid.separate) {
-      p.mid.scale = scale;
-      p.at = scale_at::pass;
-    } else if (p.pro.separate) {
-      p.pro.scale = scale;
+    edge_side* pass = nullptr;
+    for (edge_side* s : {&p.epi, &p.mid, &p.pro}) {
+      if (pass == nullptr && s->separate) {
+        pass = s;
+      }
+    }
+    if (pass != nullptr) {
+      pass->scale = scale;
       p.at = scale_at::pass;
     } else if (!p.epi.fused) {
       p.at = scale_at::inverse_out;
@@ -387,10 +387,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->strategy_note = "the chain pair: each line through the forward chain into the workspace "
                      "block (its scratch-resident home, which the batch loops never move), the "
                      "middle there, then the backward chain out of it (DESIGN.md 12.2)";
-  std::size_t stages = 0;
-  for (const record& r : c->prog.records) {
-    stages += std::holds_alternative<stage>(r) ? 1 : 0;
-  }
+  const auto stages = std::ranges::count_if(
+      c->prog.records, [](const record& r) { return std::holds_alternative<stage>(r); });
   const std::size_t calls = c->needs_args ? c->edge_batched.calls.size() : c->prog.calls.size();
   if (c->prog.flat) {
     c->axis_notes.push_back("form: flat, the line's " + std::to_string(stages) +
@@ -400,10 +398,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   } else {
     c->axis_notes.push_back("form: walked, the program's records per line");
   }
-  std::size_t passes = 0;
-  for (const edge_side* s : {&pl.pro, &pl.mid, &pl.epi}) {
-    passes += s->separate ? 1 : 0;
-  }
+  const std::size_t passes =
+      (pl.pro.separate ? 1U : 0U) + (pl.mid.separate ? 1U : 0U) + (pl.epi.separate ? 1U : 0U);
   std::string ops = operation_text("prologue", pl.pro, "in the forward chain's first pass",
                                    "in a separate pass into the workspace block") +
                     "\n" +

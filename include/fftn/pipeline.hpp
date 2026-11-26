@@ -101,7 +101,7 @@ template <class In, class Mid, class Out> struct pipeline_desc {
     /// dimension (0 for a kernel shared along it) or none (one kernel for every line). Its array
     /// arrives with each execution (`exec_args::mid_factor`).
     factor mul{};
-  } middle{};
+  } middle{}; ///< The middle: what multiplies each bin of the spectrum between the transforms.
   /// The output edge: a scale and a factor applied to each output element after the second
   /// transform, then stored, or added to the output's value with `accumulate`.
   edge<Out> epilogue{};
@@ -142,9 +142,11 @@ complex_convolution_rows(std::size_t n, std::size_t count, std::span<const store
   const auto dist = [n](std::size_t extent) {
     return static_cast<std::ptrdiff_t>(extent != 0 ? extent : n);
   };
-  d.batches.push_back(batch{.count = count,
-                            .in_dist = runs.empty() ? 0 : dist(in_extent),
-                            .out_dist = runs.empty() ? 0 : dist(out_extent)});
+  d.batches.push_back(batch{
+      .count = count,
+      .in_dist = runs.empty() ? 0 : dist(in_extent),
+      .out_dist = runs.empty() ? 0 : dist(out_extent),
+  });
   d.middle.mul = factor{.kind = factor_kind::complex, .axis_strides = {1}, .batch_strides = {}};
   return d;
 }
@@ -310,10 +312,13 @@ private:
         .batches = d.batches,
         .runs = d.runs,
         .prologue = detail::view_of(d.prologue),
-        .middle = {.scale = d.middle.scale,
-                   .kind = d.middle.mul.kind,
-                   .axis_strides = d.middle.mul.axis_strides,
-                   .batch_strides = d.middle.mul.batch_strides},
+        .middle =
+            {
+                .scale = d.middle.scale,
+                .kind = d.middle.mul.kind,
+                .axis_strides = d.middle.mul.axis_strides,
+                .batch_strides = d.middle.mul.batch_strides,
+            },
         .epilogue = detail::view_of(d.epilogue),
         .fanout = d.fanout,
         .fanout_out_dist = d.fanout_out_dist,
