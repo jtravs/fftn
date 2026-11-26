@@ -1,7 +1,8 @@
 # X65: plan edges against a plain plan plus the user's own loop
 
-- **Status:** done (no variant adopted; proposals P1–P5 for the maintainer; P1 built and judged
-  in task 5.2a, 2026-11-26: not adopted, behind a profile flag that is off)
+- **Status:** done (no fused variant adopted; proposals P2–P5 for the maintainer. P1 built and
+  judged in task 5.2a, 2026-11-26: not adopted by its rule; then adopted narrowed: the batched
+  forms for c2c rows on one leaf on the EPYC 7763's and the Xeon 6240's classes)
 - **Owner:** task S (5.1f), 2026-11-25 (overnight)
 - **Phase / task:** 5.1f
 
@@ -360,3 +361,110 @@ The Xeon's standard-tier run was not made (the x65 run covers rows, planes and v
 both precisions; the known 1.06–1.08 on single tiny transforms is parked).
 
 Lesson 4.28 in `dev/LESSONS.md`. DESIGN 12.1 and the decision log record the outcome.
+
+### P1 narrowed to rows on one leaf (AGENTS.md section 6; declared before its run)
+
+P1's runs moved one group of cases far and the rest barely: c2c rows whose transform is a single
+leaf (16 × 1024 and 64 × 64: a leaf of radix n, a pair leaf or batch leaves) took 0.39–0.94 of
+the walked form's time in every edge configuration on both machines (geometric means over the 8
+such cases: EPYC 0.62 in run 1, Xeon 0.63 in run 2), while chains of 256 to 1024 points, real rows,
+planes and volumes stayed at 0.90–1.01, with the one case slower beyond band among them (Xeon E5,
+c2c 1024 × 64, 1.029). Under the narrowing clause (maintainer, 2026-11-23) P1 is narrowed to the
+first group, which is where its mechanism (one leaf call over many rows instead of a walk per row)
+acts:
+
+- **The narrowed change.** `machine_profile::edge_batched_forms` becomes a reach (`none`,
+  `leaf_rows`, `all`) instead of a switch. With `leaf_rows`, a plan whose edges have factors takes
+  the batched forms (the flat form, rows of one leaf, the row blocks) only when it is a plan of
+  c2c rows (one axis) whose line's transform, between any separate edge passes, is one stage and a
+  leaf. This is decided at plan construction, in build(): the stages that the chain adds for the
+  line (`chain.c2c_line`) are counted, so the plan with the separate passes and the fused chain
+  are judged alike; every other plan (chains of two or more passes, Bluestein lines, real rows,
+  planes, volumes, the lanes, grids and depth-first chains) keeps the walked form, and its
+  `edge_row_block` stays 0. `all` is P1 as built (the tests' setting). `describe()` names the
+  batched forms a plan takes (a line "edge forms: …" or the row blocks' line), so that a run's
+  notes show which cases took them.
+- **Where it is on.** `leaf_rows` on the two classes measured, by their keys in set_grid_sizes:
+  Zen 3's class (the EPYC 7763; `avx2`) and the Xeon 6240's class (Intel's cores, `avx512`; the
+  keys of `anchored_runs`). `none` everywhere else (Apple and other AArch64, Zen 4 and 5, the Ice
+  Lake VM's large-L3 key, Granite and Sapphire Rapids, unknown topologies) until measured.
+- **The deciding run,** on the final code (after origin/main is merged): arms `O` = the `main`
+  this branch merges (the walked form for every plan with edges; while PR 137, task 5.1e, is
+  merging, its head, which `main` becomes and which this branch merges) and `N` = this branch's head
+  (the narrowed change, on by the machine's profile), plus fbench's control `O~`; runs E1, E2, E4
+  and E5, catalogue `x65` tier `full`, one thread, on the EPYC (DMOG, shared `-c 8`) and the Xeon
+  (`--serial`), as P1's runs.
+- **Included cases** (by the criterion above, which on both machines' rules selects them): c2c
+  16 × 1024 and 64 × 64 in each of the four runs, 8 per machine. **Excluded:** every other case of
+  the four runs.
+- **Adopt** (`leaf_rows` on those two classes) when, on both machines: (1) every excluded case is
+  on its walked form: its note in `N` names no batched form ("edge forms:", "edge row blocks") and
+  is identical to its note in `O`; (2) no case of any of the eight runs, included or excluded, is
+  slower than 1 + band (its interval wholly above); (3) the change still moves its cases: the
+  geometric mean of N/O over the included cases is below 1 − band (for the record, P1's bar of 0.80
+  is reported beside it); and (4) plans without edges compile to exactly `main`'s code
+  (`describe()` and `workspace_bytes()` probes over many plans, and the plain driver's disassembly
+  under Clang on arm64 and x86-64). A criterion missed by less than the band gets one `--serial`
+  re-run that decides. Otherwise the reach stays `none` everywhere and the verdict is recorded.
+
+**Amendment, before the deciding run (2026-11-26 ~02:30Z).** The first run of the narrowed change
+(`O` = 7cb9bd4b, `N` = 15e58879; EPYC runs 20261126-021057-895e, -c41c, -b554, -7e0b, jobs
+519299–519305; the Xeon's E1 cancelled, 17278–17284) cannot show criterion (1): fbench's FFTN
+backend keeps only the describe() lines that contain "edges: ", so the "edge forms" and "edge row
+blocks" lines never reached the notes. It is informative only. The backend now keeps those lines
+too (`bench/backends/fftn.cpp`, `edge_lines_of`; the library is unchanged), and the deciding run is
+the same run again with `N` = the commit that adds this: arms `O` = 7cb9bd4b (PR 137's head, the
+walked form; its backend's notes lack those lines, which no plan of `O` has) and `N` = that commit,
+E1, E2, E4 and E5 on the EPYC and the Xeon (`--serial`), with the rule above unchanged. The included
+cases are those whose note in `N` names a batched form; on the EPYC the fused complex factor makes
+64 × 64 a chain of two passes (radices 4 × 16), so E2 and E4 include only 16 × 1024 there, as the
+criterion says.
+
+**Deciding run of the narrowed P1** (`O` = 7cb9bd4b, `N` = ee6854b3; one thread; EPYC 7763 on DMOG,
+GCC 16.2, `avx2`, Slurm shared `-c 8`, jobs 519309–519315; Xeon 6240, GCC 14.4, `avx512`,
+`--serial`, jobs 17288–17294, loaded: 16–20 of 20 rounds above the load limit, others' jobs). N/O
+of the included cases (whose note in `N` names a batched form), every interval below 1:
+
+| Run | EPYC run, band | 16 × 1024 | 64 × 64 | Xeon run, band | 16 × 1024 | 64 × 64 |
+|---|---|---|---|---|---|---|
+| E1 out real.line | 20261126-022433-ff53, 1.31 % | 0.440 | 0.533 | 20261126-022459-4555, 1.73 % | 0.424 | 0.723 |
+| E2 out complex.full | 20261126-022433-b467, 1.64 % | 0.727 | (chain) | 20261126-023407-d0eb, 3.01 % | 0.642 | (chain) |
+| E4 in complex.full | 20261126-022433-d943, 1.53 % | 0.757 | (chain) | 20261126-024130-95c7, 2.00 % | 0.663 | (chain) |
+| E5 in real.line | 20261126-022433-906c, 2.07 % | 0.392 | 0.539 | 20261126-024809-cd64, 1.62 % | 0.407 | 0.744 |
+
+With a fused complex factor, 64 × 64 is a chain of two passes (radices 4 × 16) on both machines,
+so it keeps the walked form ("(chain)": 1.006, 1.004 EPYC; 1.001, 1.012 [1.003, 1.022] Xeon).
+
+- (1) Every excluded case is on its walked form: in all eight runs its note in `N` names no
+  batched form and is identical to its note in `O`.
+- (2) No case of the eight runs is slower than 1 + band (no interval wholly above it). Xeon E5's
+  c2c 1024 × 64, P1's one slower case, is excluded and at 0.999 [0.996, 1.011].
+- (3) Geometric mean of N/O over the included cases: EPYC **0.549** (6 cases), Xeon **0.584** (6
+  cases), below 1 − band (and below P1's bar of 0.80) on both.
+- (4) Plans without edges compile to exactly `main`'s code: `describe()` and `workspace_bytes()` of
+  11,508 plain plans (c2c, r2c and c2r rows, planes and volumes, both precisions, in and out of
+  place, every runnable instruction set) identical at 7cb9bd4b and this branch on the M5 Max and on
+  a DMOG EPYC node; Clang 23 disassembly (arm64 on the Mac, x86-64 on DMOG) of `driver.cpp`,
+  `team_execute.cpp`, `executor_execute.cpp`, `edge_execute.cpp` and `work_graph.cpp` identical
+  function by function; in `plan_core.cpp` only construction differs (`build`, `build_core`, the
+  `plan_core` constructor and container helpers), `execute_core`, `execute_all` and
+  `execute_program` identical; `edge_driver.cpp` differs in `make_edge_forms` (the new check)
+  only on x86-64.
+
+No criterion was missed or nearly missed, so no re-run. The first run (informative, its notes
+without the forms' lines) agrees: EPYC 16 × 1024 0.437, 0.717, 0.743, 0.389 and 64 × 64 0.532,
+0.541, nothing slower beyond band.
+
+### P1 narrowed: verdict
+
+**Adopted** (AGENTS.md section 6, narrowing clause; the lead adopts under it and lists it for the
+maintainer's veto). `machine_profile::edge_batched_forms` = `leaf_rows` on Zen 3's class and the
+Xeon 6240's class (Intel's cores): plans of c2c rows whose line's transform is one leaf take the
+batched forms (rows of 16 and 64 points on these machines: 0.39–0.76 of their time); every other
+plan with edges keeps the walked form, as do all plans on other machines. **Excluded,** with their
+evidence from P1's runs (run 1 and run 2 above): chains of 256–1024 points (0.90–1.01; Xeon E5
+c2c 1024 × 64 1.029, slower beyond band), real rows (0.92–1.01), planes and volumes (0.94–1.00),
+and fused-factor rows whose chain has two passes (EPYC and Xeon 64 × 64 with a complex factor).
+Not measured, so `none`: Apple, other AArch64, Zen 4 and 5, Ice Lake's large-L3 key, Granite and
+Sapphire Rapids. Threads were not timed (one thread only, as P1's rule); teams take the forms
+over their own range, bitwise the walked form's.
