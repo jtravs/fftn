@@ -18,6 +18,7 @@ add_subdirectory(strategies)
 add_subdirectory(planner)
 add_subdirectory(threading)
 add_subdirectory(easy)
+add_subdirectory(c_api)
 
 # The build identifier of wisdom records (cmake/FftnBuildId.cmake): a hash of the library's
 # sources and of the configuration that changes its code, regenerated when any of them
