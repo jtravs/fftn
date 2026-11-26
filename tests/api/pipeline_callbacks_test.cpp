@@ -15,8 +15,11 @@
 // in place, fan-out and the depth-first pair (forced), for <C, C, C> and <T, C, T> on every
 // instruction set in both precisions; serial, pieces of the batch, teams (completion::all and own)
 // and an executor bitwise alike. A convolution nested in a middle, on the callback's scratch,
-// bitwise under teams and an executor. Expectations hold on every target: none assumes a target's
-// radices or strategy unless the test forces it.
+// bitwise under teams and an executor. Spectral pairs inverse first (task 5.3e): <C, C, C> with
+// the backward transform first and <C, T, C> (c2r, a real middle, r2c), with and without
+// callbacks, bands of the half spectrum, fan-out and the depth-first pair (forced), likewise.
+// Expectations hold on every target: none assumes a target's radices or strategy unless the test
+// forces it.
 
 #include "core/pipeline.hpp"
 #include "core/plan_core.hpp"
@@ -94,7 +97,8 @@ struct pcb_case {
   std::vector<run_spec> in{};
   std::vector<run_spec> out{};
   std::size_t scratch = 0;
-  bool per_row = false; // a kernel per line (the middle's batch stride)
+  bool backward = false; // <C, C, C>: the inverse transform first (task 5.3e)
+  bool per_row = false;  // a kernel per line (the middle's batch stride)
   // With a consumed fan-out: fanout_out_dist this value, which a store would refuse (0, or copies
   // overlapping lines), where `odd_copies` is set (DESIGN.md 18.2, "Callbacks" 14).
   bool odd_copies = false;
@@ -131,6 +135,11 @@ std::complex<R> cubic_mid(std::complex<R> y, std::size_t b, std::size_t t, std::
   const R c = static_cast<R>(0.01) * static_cast<R>(1 + (b * 3 + t * 5) % 5);
   const R g = R(1) + c * (y.real() * y.real() + y.imag() * y.imag()) / static_cast<R>(n);
   return {y.real() * g, y.imag() * g};
+}
+// A real middle's (<C, T, C>, task 5.3e): y (1 + c y^2 / n).
+template <class R> R cubic_mid(R y, std::size_t b, std::size_t t, std::size_t n) {
+  const R c = static_cast<R>(0.01) * static_cast<R>(1 + (b * 3 + t * 5) % 5);
+  return y * (R(1) + c * y * y / static_cast<R>(n));
 }
 template <class R> R gain_out(std::size_t j, std::size_t t, std::size_t k) {
   return static_cast<R>(0.02) * static_cast<R>(1 + (j * 5 + t + k * 3) % 5);
@@ -299,15 +308,17 @@ std::ptrdiff_t stored_of(const std::vector<run_spec>& runs, std::size_t j) {
 }
 
 // One case's buffers, description, callbacks' contexts and reference; E is the pipeline's In
-// and Out type (T for <T, C, T>, C for <C, C, C>).
-template <class T, class E> struct pcb_run {
-  static constexpr bool real_kind = std::is_same_v<E, T>;
+// and Out type and M its Mid: <C, C, C>, <T, C, T> (E = T) and <C, T, C> (M = T, task 5.3e).
+template <class T, class E, class M = std::complex<T>> struct pcb_run {
+  static constexpr bool real_side = std::is_same_v<E, T>;
+  static constexpr bool real_mid = std::is_same_v<M, T>;
   using C = std::complex<T>;
-  using desc_t = fftn::pipeline_desc<E, C, E>;
+  using desc_t = fftn::pipeline_desc<E, M, E>;
 
   pcb_case c;
   fftn::isa target;
-  std::size_t bins = 0;
+  std::size_t side_n = 0; // the sides' logical elements: n, or the n/2 + 1 bins of <C, T, C>
+  std::size_t bins = 0;   // the middle's: n, the n/2 + 1 bins of <T, C, T>, or n reals
   std::ptrdiff_t in_dist = 0;
   std::ptrdiff_t out_dist = 0;
   std::ptrdiff_t copy_dist = 0;
@@ -327,18 +338,24 @@ template <class T, class E> struct pcb_run {
   std::vector<E> captured;
   std::array<std::atomic<std::uint32_t>, 8> marks{};
   side_context<E> pro_ctx;
-  side_context<C> mid_ctx;
+  side_context<M> mid_ctx;
   side_context<E> epi_ctx;
 
   pcb_run(const pcb_case& pc, fftn::isa t, fftn::test::input_source& src)
-      : c(pc), target(t), bins(real_kind ? pc.n / 2 + 1 : pc.n) {
-    const std::size_t ein = extent_of(c.in, c.n);
-    const std::size_t eout = extent_of(c.out, c.n);
+      : c(pc), target(t), side_n(real_mid ? pc.n / 2 + 1 : pc.n),
+        bins(real_side ? pc.n / 2 + 1 : pc.n) {
+    // A real middle takes real factors only.
+    if (real_mid && c.mid_f == cplx) {
+      c.mid_f = real;
+    }
+    const std::size_t ein = extent_of(c.in, side_n);
+    const std::size_t eout = extent_of(c.out, side_n);
     in_dist = static_cast<std::ptrdiff_t>(ein) * c.in_stride + 2;
     out_dist = c.in_place ? in_dist : static_cast<std::ptrdiff_t>(eout) * c.out_stride + 2;
     copy_dist = out_dist * static_cast<std::ptrdiff_t>(c.count) + 3;
     mid_scale = c.mid_scale != 0.0 ? c.mid_scale : 1.0 / static_cast<double>(c.n);
 
+    desc.first = c.backward ? fftn::direction::backward : fftn::direction::forward;
     desc.line = {
         .n = c.n, .in_stride = c.in_stride, .out_stride = c.in_place ? c.in_stride : c.out_stride};
     desc.batches = {{.count = c.count, .in_dist = in_dist, .out_dist = out_dist}};
@@ -362,9 +379,9 @@ template <class T, class E> struct pcb_run {
         return {};
       }
       if (k == real) {
-        r = src.reals<T>(c.n);
+        r = src.reals<T>(side_n);
       } else {
-        z = src.complexes<T>(c.n);
+        z = src.complexes<T>(side_n);
       }
       return {.kind = k, .axis_strides = {1}, .batch_strides = {}};
     };
@@ -382,7 +399,7 @@ template <class T, class E> struct pcb_run {
           .fn = &produce_in<E>, .mode = fftn::callback_mode::produce, .scratch_bytes = sb};
     }
     if (c.mid) {
-      desc.middle.call = {.fn = &modify_mid<C>, .scratch_bytes = sb};
+      desc.middle.call = {.fn = &modify_mid<M>, .scratch_bytes = sb};
     }
     if (c.epi == epi_cb::modify) {
       desc.epilogue.call = {.fn = &modify_out<E>, .scratch_bytes = sb};
@@ -426,7 +443,7 @@ template <class T, class E> struct pcb_run {
     std::vector<bool> in_listed(x.size(), false);
     out_listed.assign(init.size(), false);
     for (std::size_t r = 0; r < c.count; ++r) {
-      for (std::size_t j = 0; j < c.n; ++j) {
+      for (std::size_t j = 0; j < side_n; ++j) {
         if (const std::ptrdiff_t at = stored_of(c.in, j); at >= 0) {
           in_listed[in_at(static_cast<std::size_t>(at), r)] = true;
         }
@@ -446,10 +463,10 @@ template <class T, class E> struct pcb_run {
         }
       }
     }
-    captured.assign(c.count * c.fanout * c.n, E{});
-    pro_ctx.length = c.n;
+    captured.assign(c.count * c.fanout * side_n, E{});
+    pro_ctx.length = side_n;
     mid_ctx.length = bins;
-    epi_ctx.length = c.n;
+    epi_ctx.length = side_n;
     for (auto* ctx : {&pro_ctx, &epi_ctx}) {
       ctx->n = c.n;
       ctx->count = c.count;
@@ -472,7 +489,7 @@ template <class T, class E> struct pcb_run {
   }
 
   static std::vector<E> values(fftn::test::input_source& src, std::size_t n) {
-    if constexpr (real_kind) {
+    if constexpr (real_side) {
       return src.reals<T>(n);
     } else {
       return src.complexes<T>(n);
@@ -490,6 +507,9 @@ template <class T, class E> struct pcb_run {
   }
   [[nodiscard]] bool epilogue_direct() const {
     return c.epi == epi_cb::modify && !c.accumulate && c.out.empty();
+  }
+  [[nodiscard]] bool any_callback() const {
+    return c.pro != pro_cb::off || c.mid || c.epi != epi_cb::off;
   }
 
   [[nodiscard]] fftn::exec_args args() {
@@ -577,8 +597,8 @@ template <class T, class E> struct pcb_run {
   // logical line with zeros elsewhere (or produced there), the prologue's callback in the
   // pipeline's precision, then its factor.
   [[nodiscard]] std::vector<std::complex<double>> logical_input(std::size_t r) const {
-    std::vector<std::complex<double>> line(c.n, 0.0);
-    for (std::size_t j = 0; j < c.n; ++j) {
+    std::vector<std::complex<double>> line(side_n, 0.0);
+    for (std::size_t j = 0; j < side_n; ++j) {
       const std::ptrdiff_t at = stored_of(c.in, j);
       if (at < 0) {
         continue;
@@ -597,16 +617,18 @@ template <class T, class E> struct pcb_run {
     return line;
   }
 
-  // The forward transform exactly, then (rounded to double) the prologue's scale and the middle's
-  // callback, then for each copy its kernel and the scales after the callback, the inverse
-  // transform exactly, the epilogue's factor and callback (in double), and the store, the
-  // accumulation or the capture, compared on the output's runs. Every element outside the copies'
-  // runs keeps its bits.
+  // The first transform exactly (<C, C, C> in `first`'s direction, r2c, or c2r for <C, T, C>),
+  // then (rounded to double) the prologue's scale and the middle's callback, then for each copy
+  // its kernel and the scales after the callback, the second transform exactly, the epilogue's
+  // factor and callback (in double), and the store, the accumulation or the capture, compared on
+  // the output's runs. Every element outside the copies' runs keeps its bits.
   void check(const std::vector<E>& y, const std::string& describe) const {
     const std::string what = std::string(c.name) + ", n = " + std::to_string(c.n) + ", " +
                              fftn::isa_name(target) + (sizeof(T) == 8 ? " double" : " float") +
-                             (real_kind ? ", real" : "");
+                             (real_side ? ", <t, c, t>" : (real_mid ? ", <c, t, c>" : "")) +
+                             (c.backward ? ", backward first" : "");
     SCOPED_TRACE(what);
+    const int first = c.backward ? +1 : -1;
     const double pre = c.mid ? c.pro_scale : 1.0;
     const double post = c.options_scale * mid_scale * c.epi_scale * (c.mid ? 1.0 : c.pro_scale);
     fftn::test::tolerance tol = fftn::test::derived_tolerance<T>(c.n, fftn::test::fftn_bound(c.n)) *
@@ -619,28 +641,40 @@ template <class T, class E> struct pcb_run {
     if (c.epi == epi_cb::modify) {
       tol = tol * 3;
     }
+    const auto rounded = [](const auto& v) {
+      std::vector<std::complex<double>> r(v.size());
+      for (std::size_t i = 0; i < v.size(); ++i) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(v[i])>, fftn::test::exact_real>) {
+          r[i] = v[i].hi;
+        } else {
+          r[i] = {v[i].re.hi, v[i].im.hi};
+        }
+      }
+      return r;
+    };
     fftn::test::outcome o;
     for (std::size_t r = 0; r < c.count; ++r) {
       const std::vector<std::complex<double>> line = logical_input(r);
-      std::vector<std::complex<double>> spectrum(bins);
-      if constexpr (real_kind) {
+      std::vector<std::complex<double>> spectrum;
+      if constexpr (real_side) {
         std::vector<double> re(c.n);
         for (std::size_t j = 0; j < c.n; ++j) {
           re[j] = line[j].real();
         }
-        const auto s = fftn::test::reference::r2c(re);
-        for (std::size_t b = 0; b < bins; ++b) {
-          spectrum[b] = std::complex<double>(s[b].re.hi, s[b].im.hi) * pre;
-        }
+        spectrum = rounded(fftn::test::reference::r2c(re));
+      } else if constexpr (real_mid) {
+        spectrum = rounded(fftn::test::reference::c2r(c.n, line));
       } else {
-        const auto s = fftn::test::reference::c2c(-1, line);
-        for (std::size_t b = 0; b < bins; ++b) {
-          spectrum[b] = std::complex<double>(s[b].re.hi, s[b].im.hi) * pre;
-        }
+        spectrum = rounded(fftn::test::reference::c2c(first, line));
       }
-      if (c.mid) {
-        for (std::size_t b = 0; b < bins; ++b) {
-          spectrum[b] = cubic_mid(spectrum[b], b, r, c.n);
+      for (std::size_t b = 0; b < bins; ++b) {
+        spectrum[b] *= pre;
+        if (c.mid) {
+          if constexpr (real_mid) {
+            spectrum[b] = cubic_mid(spectrum[b].real(), b, r, c.n);
+          } else {
+            spectrum[b] = cubic_mid(spectrum[b], b, r, c.n);
+          }
         }
       }
       for (std::size_t k = 0; k < c.fanout; ++k) {
@@ -648,38 +682,38 @@ template <class T, class E> struct pcb_run {
         for (std::size_t b = 0; b < bins; ++b) {
           z[b] = spectrum[b] * kernel_at(b, r, k) * post;
         }
-        std::vector<std::complex<double>> back(c.n);
-        if constexpr (real_kind) {
-          const auto v = fftn::test::reference::c2r(c.n, z);
+        std::vector<std::complex<double>> back;
+        if constexpr (real_side) {
+          back = rounded(fftn::test::reference::c2r(c.n, z));
+        } else if constexpr (real_mid) {
+          std::vector<double> re(c.n);
           for (std::size_t j = 0; j < c.n; ++j) {
-            back[j] = v[j].hi;
+            re[j] = z[j].real();
           }
+          back = rounded(fftn::test::reference::r2c(re));
         } else {
-          const auto v = fftn::test::reference::c2c(+1, z);
-          for (std::size_t j = 0; j < c.n; ++j) {
-            back[j] = {v[j].re.hi, v[j].im.hi};
-          }
+          back = rounded(fftn::test::reference::c2c(-first, z));
         }
         std::vector<E> got;
         std::vector<std::complex<double>> want;
-        for (std::size_t j = 0; j < c.n; ++j) {
+        for (std::size_t j = 0; j < side_n; ++j) {
           const std::ptrdiff_t at = stored_of(c.out, j);
           if (at < 0) {
             continue;
           }
           std::complex<double> v = back[j] * side_at(repi, cepi, j);
-          if constexpr (real_kind) {
+          if constexpr (real_side) {
             v = v.real();
           }
           if (c.epi == epi_cb::modify) {
-            if constexpr (real_kind) {
+            if constexpr (real_side) {
               v = cubic_out(v.real(), j, r, k);
             } else {
               v = cubic_out(v, j, r, k);
             }
           }
           if (c.epi == epi_cb::consume) {
-            got.push_back(captured[(r * c.fanout + k) * c.n + j]);
+            got.push_back(captured[(r * c.fanout + k) * side_n + j]);
           } else {
             const std::size_t i = out_at(static_cast<std::size_t>(at), r, k);
             if (c.accumulate) {
@@ -691,7 +725,7 @@ template <class T, class E> struct pcb_run {
         }
         const std::string where =
             what + ", line " + std::to_string(r) + ", copy " + std::to_string(k);
-        if constexpr (real_kind) {
+        if constexpr (real_side) {
           std::vector<fftn::test::exact_real> w;
           for (const auto& v : want) {
             w.push_back(fftn::test::exact_from(v.real()));
@@ -721,7 +755,9 @@ template <class T, class E> struct pcb_run {
 
   [[nodiscard]] d::pipeline_view view() const {
     return {
-        .kind = real_kind ? d::pipeline_kind::real_convolution : d::pipeline_kind::complex_pair,
+        .kind = real_side  ? d::pipeline_kind::real_convolution
+                : real_mid ? d::pipeline_kind::real_middle
+                           : d::pipeline_kind::complex_pair,
         .prec = sizeof(T) == 8 ? d::precision::f64 : d::precision::f32,
         .first = desc.first,
         .line = desc.line,
@@ -749,10 +785,13 @@ template <class T, class E> struct pcb_run {
 // output's captured blocks), every element passed exactly once, the input and the factors left as
 // they were. A produced input and a consumed output are passed as null, except serially, where
 // the output is checked unwritten.
-template <class T, class E>
-std::string run_core(pcb_run<T, E>& run, const d::build_settings& settings, bool threads,
-                     bool reference = true, const char* expect = "callbacks:") {
+template <class T, class E, class M>
+std::string run_core(pcb_run<T, E, M>& run, const d::build_settings& settings, bool threads,
+                     bool reference = true, const char* expect = nullptr) {
   const pcb_case& pc = run.c;
+  if (expect == nullptr) {
+    expect = run.any_callback() ? "callbacks:" : "fftn pipeline:";
+  }
   const std::shared_ptr<const d::plan_core> core = d::make_pipeline_core(
       run.view(), {.in_place = pc.in_place, .scale = pc.options_scale, .force_isa = run.target},
       settings);
@@ -832,13 +871,13 @@ std::string run_core(pcb_run<T, E>& run, const d::build_settings& settings, bool
   return describe;
 }
 
-template <class T, class E>
+template <class T, class E, class M = std::complex<T>>
 std::string run_case(const pcb_case& pc, fftn::isa t, bool threads,
                      const d::build_settings& settings = {}, bool reference = true,
-                     const char* expect = "callbacks:") {
+                     const char* expect = nullptr) {
   fftn::test::input_source src(0x53D0ULL + pc.n * 131 + pc.count * 7 + pc.fanout +
                                pc.out.size() * 3);
-  pcb_run<T, E> run(pc, t, src);
+  pcb_run<T, E, M> run(pc, t, src);
   return run_core(run, settings, threads, reference, expect);
 }
 
@@ -847,8 +886,10 @@ std::string run_case(const pcb_case& pc, fftn::isa t, bool threads,
 // callbacks in every mode, beside factors, scales and accumulation, strided and in place; with
 // fan-out (the middle once per line, the epilogue per copy, a consumed output in copy order); with
 // scratch; and (n at least 8) stored runs on either side.
-std::vector<pcb_case> sets(std::size_t n, bool real_kind) {
+std::vector<pcb_case> sets(std::size_t n, bool real_kind, std::size_t m = 0) {
   const factor_kind side = real_kind ? real : cplx;
+  // The sides' logical length, where the runs lie: n, or <C, T, C>'s n/2 + 1 bins.
+  m = m == 0 ? n : m;
   std::vector<pcb_case> s = {
       {.name = "the middle's alone", .n = n},
       {.name = "the middle's, no kernel, scaled", .n = n, .mid_scale = 0.5, .mid_f = none},
@@ -956,9 +997,9 @@ std::vector<pcb_case> sets(std::size_t n, bool real_kind) {
        .epi = epi_cb::modify,
        .epi_scale = 2.0},
   };
-  if (n >= 8) {
-    const std::size_t h = n / 2;
-    const std::size_t q = n / 4;
+  if (m >= 8) {
+    const std::size_t h = m / 2;
+    const std::size_t q = m / 4;
     const std::vector<pcb_case> runs = {
         {.name = "runs: valid half, all three",
          .n = n,
@@ -982,6 +1023,82 @@ std::vector<pcb_case> sets(std::size_t n, bool real_kind) {
          .out = {{1, 0, h - 1}, {h + 2, h, 2}}},
     };
     s.insert(s.end(), runs.begin(), runs.end());
+  }
+  return s;
+}
+
+// Spectral pairs inverse first and <C, T, C> (task 5.3e): sets' cases, and 5.2b's without
+// callbacks: kernels fused and in passes, factors, accumulation, fan-out, strides, in place, and
+// (m at least 8) bands of the sides at their edges and in their middle.
+std::vector<pcb_case> spectral_sets(std::size_t n, bool real_kind, std::size_t m, bool backward) {
+  const factor_kind side = real_kind ? real : cplx;
+  std::vector<pcb_case> s = {
+      {.name = "plain", .n = n, .mid = false},
+      {.name = "plain, a strided kernel, factors, scaled",
+       .n = n,
+       .mid = false,
+       .pro_scale = 2.0,
+       .epi_scale = 0.5,
+       .pro_f = side,
+       .mid_axis = 2,
+       .epi_f = side},
+      {.name = "plain, accumulated, strided",
+       .n = n,
+       .mid = false,
+       .accumulate = true,
+       .in_stride = 2,
+       .out_stride = 3},
+      {.name = "plain, in place", .n = n, .mid = false, .in_place = true},
+      {.name = "plain, real factors on the sides",
+       .n = n,
+       .mid = false,
+       .pro_scale = 0.5,
+       .pro_f = real,
+       .epi_f = real},
+      {.name = "real factors on the sides, all three callbacks",
+       .n = n,
+       .pro = pro_cb::modify,
+       .epi = epi_cb::modify,
+       .pro_scale = 2.0,
+       .pro_f = real,
+       .epi_f = real},
+      {.name = "plain, fan-out", .n = n, .fanout = 3, .mid = false},
+      {.name = "plain, fan-out, an epilogue factor, accumulated",
+       .n = n,
+       .fanout = 2,
+       .mid = false,
+       .epi_f = side,
+       .accumulate = true},
+  };
+  if (m >= 8) {
+    const std::size_t third = m / 3;
+    const std::vector<pcb_case> bands = {
+        {.name = "plain, bands at the edges",
+         .n = n,
+         .mid = false,
+         .in = {{0, 0, 3}, {m - 3, 3, 3}},
+         .out = {{m - 2, 0, 2}, {0, 2, 2}}},
+        {.name = "plain, a band in the middle, fan-out",
+         .n = n,
+         .fanout = 2,
+         .mid = false,
+         .in = {{third, 1, third}},
+         .out = {{third, 0, third + 1}}},
+        {.name = "bands, all three callbacks, accumulated",
+         .n = n,
+         .pro = pro_cb::modify,
+         .epi = epi_cb::modify,
+         .accumulate = true,
+         .in = {{1, 0, third}},
+         .out = {{m - third, 1, third}}},
+    };
+    s.insert(s.end(), bands.begin(), bands.end());
+  }
+  for (const pcb_case& pc : sets(n, real_kind, m)) {
+    s.push_back(pc);
+  }
+  for (pcb_case& pc : s) {
+    pc.backward = backward;
   }
   return s;
 }
@@ -1117,6 +1234,88 @@ TYPED_TEST(PipelineCallbacks, DepthFirstPairForced) {
                          fftn::isa::best, true, s, false, "the depth-first pair");
 }
 
+// Spectral pairs inverse first (task 5.3e): <C, C, C> with the backward transform first, and the
+// kind <C, T, C> (c2r, a real middle of n points, r2c), even and odd n, with and without
+// callbacks, bands of the half spectrum at its edges and in its middle, against the reference on
+// every instruction set.
+TYPED_TEST(PipelineCallbacks, InverseFirstOnEveryInstructionSet) {
+  using C = std::complex<TypeParam>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const std::size_t n : lengths()) {
+      for (const pcb_case& pc : spectral_sets(n, false, n, true)) {
+        run_case<TypeParam, C>(pc, t, false);
+      }
+    }
+  }
+}
+
+TYPED_TEST(PipelineCallbacks, RealMiddleOnEveryInstructionSet) {
+  using C = std::complex<TypeParam>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const std::size_t n : lengths()) {
+      for (const pcb_case& pc : spectral_sets(n, false, n / 2 + 1, false)) {
+        run_case<TypeParam, C, TypeParam>(pc, t, false);
+      }
+    }
+  }
+}
+
+// Both kinds inverse first under teams and an executor, bitwise as serial execution; odd n (15,
+// 257) takes <C, T, C>'s full-length route.
+TYPED_TEST(PipelineCallbacks, InverseFirstTeamsAgreeWithSerial) {
+  using C = std::complex<TypeParam>;
+  for (const std::size_t n : {15U, 16U, 256U, 257U, 1000U}) {
+    for (pcb_case pc : spectral_sets(n, false, n, true)) {
+      pc.count = 7;
+      run_case<TypeParam, C>(pc, fftn::isa::best, true, {}, n <= 16);
+    }
+    for (pcb_case pc : spectral_sets(n, false, n / 2 + 1, false)) {
+      pc.count = 7;
+      run_case<TypeParam, C, TypeParam>(pc, fftn::isa::best, true, {}, n <= 16);
+    }
+  }
+}
+
+// The depth-first pair (forced) with the backward chain first: its runs, fan-out and callbacks.
+TYPED_TEST(PipelineCallbacks, DepthFirstPairInverseFirst) {
+  using C = std::complex<TypeParam>;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    d::build_settings s;
+    s.strategy = d::strategy_choice::depth;
+    s.depth_tops = {8};
+    const std::size_t n = 1024;
+    const std::size_t h = n / 2;
+    const std::size_t q = n / 4;
+    for (const pcb_case& pc : {
+             pcb_case{.name = "depth inverse first: a kernel", .n = n, .count = 2, .mid = false},
+             pcb_case{.name = "depth inverse first: valid halves, scaled",
+                      .n = n,
+                      .count = 2,
+                      .mid = false,
+                      .epi_scale = 2.0,
+                      .in = {{0, 3, h}},
+                      .out = {{q, 5, h}}},
+             pcb_case{.name = "depth inverse first: fan-out, factors",
+                      .n = n,
+                      .count = 2,
+                      .fanout = 2,
+                      .mid = false,
+                      .pro_f = cplx,
+                      .epi_f = real},
+             pcb_case{.name = "depth inverse first: all three callbacks",
+                      .n = n,
+                      .count = 2,
+                      .pro = pro_cb::modify,
+                      .epi = epi_cb::modify,
+                      .pro_scale = 2.0},
+         }) {
+      pcb_case back = pc;
+      back.backward = true;
+      run_case<TypeParam, C>(back, t, true, s, true, "the depth-first pair");
+    }
+  }
+}
+
 // A consumed fan-out's copies are not placed (DESIGN.md 18.2, "Callbacks" 14): a fanout_out_dist
 // that a store refuses is taken with consume (the cases "fan-out: consumed, ..." above check its
 // results).
@@ -1149,6 +1348,34 @@ TYPED_TEST(PipelineCallbacks, DescribeNamesTheCallbacks) {
                            "in the backward chain's first pass, after the middle's callback"}) {
     EXPECT_NE(text.find(want), std::string::npos) << "no '" << want << "' in\n" << text;
   }
+  // Inverse first, and <C, T, C> (task 5.3e).
+  fftn::pipeline_desc<C, C, C> pair =
+      fftn::spectral_pair_rows<TypeParam>(64, 4, fftn::direction::backward);
+  const std::string back = fftn::pipeline(pair).describe();
+  for (const char* want : {"<c, c, c> backward then forward", "): backward "}) {
+    EXPECT_NE(back.find(want), std::string::npos) << "no '" << want << "' in\n" << back;
+  }
+  fftn::pipeline_desc<C, TypeParam, C> real_middle;
+  real_middle.line = {.n = 63};
+  real_middle.batches = {{.count = 3}};
+  real_middle.middle.mul = {.kind = real, .axis_strides = {1}};
+  const std::string rm = fftn::pipeline(real_middle).describe();
+  for (const char* want : {"<c, t, c> c2r then r2c", "the middle there on its n reals",
+                           "in a separate pass on the line's n reals"}) {
+    EXPECT_NE(rm.find(want), std::string::npos) << "no '" << want << "' in\n" << rm;
+  }
+  // The chains' names swap, nothing else; a real middle's callback is on its n reals.
+  EXPECT_EQ(rm.find("forward chain's first pass"), std::string::npos) << rm;
+  real_middle.middle.call = {.fn = &modify_mid<TypeParam>};
+  real_middle.middle.scale = 0.5;
+  real_middle.epilogue.mul = {.kind = cplx, .axis_strides = {1}};
+  const std::string rc = fftn::pipeline(real_middle).describe();
+  for (const char* want :
+       {"on each line's middle, its n reals", "two products around", "the r2c chain out of it"}) {
+    EXPECT_NE(rc.find(want), std::string::npos) << "no '" << want << "' in\n" << rc;
+  }
+  EXPECT_EQ(rc.find("line's spectrum"), std::string::npos) << rc;
+  EXPECT_EQ(rc.find("on the spectrum"), std::string::npos) << rc;
   // Without callbacks, nothing of them.
   const std::string plain =
       fftn::pipeline(fftn::complex_convolution_rows<TypeParam>(64, 4)).describe();
