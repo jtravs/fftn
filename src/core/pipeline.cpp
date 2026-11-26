@@ -610,7 +610,8 @@ void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
       // stages' end): copy k's middle from the spectrum into scratch a, then the backward chain.
       fan.loop = p.records.size();
       loop lp{.kind = loop_kind::lines, .count = d.fanout};
-      lp.step[1] = d.fanout_out_dist * complex_bytes;
+      // A consumed output is never addressed, and may be null (task 5.3d).
+      lp.step[1] = consumed(pl.epi) ? 0 : d.fanout_out_dist * complex_bytes;
       lp.serial_lines = true;
       p.records.emplace_back(lp);
       fan.mid_step = pl.mid.kind != factor_kind::none
