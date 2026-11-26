@@ -180,8 +180,10 @@ void dht_store_odd(const pass_args* a, const void* src, void* dst, std::size_t f
 }
 
 // The kinds' routes (DESIGN.md 5.7): the DHT's, Makhoul's for DCT-II and DST-II over the forward
-// transform, and its inverse for DCT-III and DST-III over the backward one.
-enum class route : unsigned char { dht, dct2, dct3, dst2, dst3 };
+// transform, its inverse for DCT-III and DST-III over the backward one, the twiddled half-length
+// (n odd: zero-padded double-length) complex transform for DCT-IV and DST-IV, and the even and odd
+// extensions for DCT-I and DST-I.
+enum class route : unsigned char { dht, dct2, dct3, dst2, dst3, dct4, dst4, dct1, dst1 };
 
 route route_of(r2r_kind k) {
   switch (k) {
@@ -193,7 +195,15 @@ route route_of(r2r_kind k) {
     return route::dst2;
   case r2r_kind::dst3:
     return route::dst3;
-  default:
+  case r2r_kind::dct4:
+    return route::dct4;
+  case r2r_kind::dst4:
+    return route::dst4;
+  case r2r_kind::dct1:
+    return route::dct1;
+  case r2r_kind::dst1:
+    return route::dst1;
+  case r2r_kind::dht:
     break;
   }
   return route::dht;
@@ -392,11 +402,152 @@ void dct3_store(const pass_args* a, const void* src, void* dst, std::size_t firs
   }
 }
 
+// The read stage of a DCT-IV line (Sine: DST-IV) of n reals. With p_j and q_k the twiddles
+// (pass_args::twiddles, per index p_j then q_j, interleaved): n even (h = n/2), unit j (0 .. h-1)
+// writes (x_2j + i x_(n-1-2j)) p_j, p_j = exp(-i pi j / n), whose forward complex transform of h
+// gives Y_2k = 2 Re(q_k Z_k) and Y_(n-1-2k) = -2 Im(q_k Z_k), q_k = exp(-i pi (4k + 1) / (4n));
+// n odd, unit j (0 .. n-1) writes x_j p_j, p_j = exp(-i pi j / (2n)), and a zero at n + j, whose
+// forward complex transform of 2n gives Y_k = 2 Re(q_k Z_k), q_k = exp(-i pi (2k + 1) / (4n)), for
+// k < n. DST-IV reads the line reversed, since dst4(x)_k = (-1)^k dct4(x reversed)_k.
+template <class T, bool Sine, bool Factor, bool Even>
+void dct4_read(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  const auto* x = static_cast<const T*>(src);
+  auto* z = static_cast<T*>(dst);
+  const auto* w = static_cast<const T*>(a->twiddles);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  const std::size_t n = a->n;
+  const auto in = [&](std::size_t j) {
+    return line_real<T, Factor>(a, x, f, Sine ? n - 1 - j : j);
+  };
+  for (std::size_t k = first; k < last; ++k) {
+    const T pr = w[4 * k];
+    const T pi = w[4 * k + 1];
+    if constexpr (Even) {
+      const T ur = in(2 * k);
+      const T ui = in(n - 1 - (2 * k));
+      z[2 * k] = ur * pr - ui * pi;
+      z[2 * k + 1] = ur * pi + ui * pr;
+    } else {
+      const T u = in(k);
+      z[2 * k] = u * pr;
+      z[2 * k + 1] = u * pi;
+      z[2 * (n + k)] = T{};
+      z[2 * (n + k) + 1] = T{};
+    }
+  }
+}
+
+// The store stage of a DCT-IV line (Sine: DST-IV) of n reals from Z (src, stride 1), the forward
+// complex transform of the read stage's line: unit k (n even: 0 .. h-1; odd: 0 .. n-1) forms
+// q_k Z_k (dct4_read) and writes Y_2k and Y_(n-1-2k), or Y_k. DST-IV negates the odd-indexed
+// outputs ((-1)^k), exactly; the factor 2 is exact too.
+template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate, bool Even>
+void dct4_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const auto* z = static_cast<const T*>(src);
+  auto* y = static_cast<T*>(dst);
+  const auto* w = static_cast<const T*>(a->twiddles);
+  const std::size_t n = a->n;
+  const auto out = [&](std::size_t p, T v) {
+    put<T, Factor, Scaled, Accumulate>(a, y, p, Sine && (p % 2) != 0 ? -v : v);
+  };
+  for (std::size_t k = first; k < last; ++k) {
+    const T zr = z[2 * k];
+    const T zi = z[2 * k + 1];
+    const T qr = w[4 * k + 2];
+    const T qi = w[4 * k + 3];
+    const T sr = qr * zr - qi * zi;
+    if constexpr (Even) {
+      const T si = qr * zi + qi * zr;
+      out(2 * k, T(2) * sr);
+      out(n - 1 - (2 * k), -(T(2) * si));
+    } else {
+      out(k, T(2) * sr);
+    }
+  }
+}
+
+// The read stage of a DCT-I line (Sine: DST-I) of n reals: units [first, last) of the even
+// extension of N = 2(n - 1) reals, e_l = x_l for l < n and x_(N-l) above (DST-I: the odd extension
+// of N = 2(n + 1), o_0 = o_(n+1) = 0, o_l = x_(l-1) for l <= n and -x_(N-1-l) above), packed as
+// the r2c packs a line of N: unit j is e_2j + i e_2j+1, N/2 units. The negations are exact.
+template <class T, bool Sine, bool Factor>
+void extension_read(const pass_args* a, const void* src, void* dst, std::size_t first,
+                    std::size_t last) {
+  const auto* x = static_cast<const T*>(src);
+  auto* z = static_cast<T*>(dst);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  const std::size_t n = a->n;
+  const std::size_t big = Sine ? 2 * (n + 1) : 2 * (n - 1);
+  const auto e = [&](std::size_t l) {
+    if constexpr (Sine) {
+      if (l == 0 || l == n + 1) {
+        return T{};
+      }
+      return l <= n ? line_real<T, Factor>(a, x, f, l - 1)
+                    : -line_real<T, Factor>(a, x, f, big - 1 - l);
+    } else {
+      return line_real<T, Factor>(a, x, f, l < n ? l : big - l);
+    }
+  };
+  for (std::size_t j = first; j < last; ++j) {
+    z[2 * j] = e(2 * j);
+    z[2 * j + 1] = e((2 * j) + 1);
+  }
+}
+
+// The store stage of a DCT-I line (Sine: DST-I) of n reals from Z (src, stride 1), the forward
+// complex transform of h = N/2 of the packed extension: bin m of the extension's real DFT by the
+// r2c's pairing (dht_store_even's; w^m = exp(-2 pi i m / N) at pass_args::twiddles, m = 0 .. h),
+// unit k (0 .. n-1) writing Y_k = Re X_k (DST-I: Y_k = -Im X_(k+1)). The extension's DFT is real
+// (DST-I: imaginary) and symmetric, so nothing else of it is formed.
+template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate>
+void extension_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+                     std::size_t last) {
+  const auto* z = static_cast<const T*>(src);
+  auto* y = static_cast<T*>(dst);
+  const auto* w = static_cast<const T*>(a->twiddles);
+  const std::size_t n = a->n;
+  const std::size_t h = Sine ? n + 1 : n - 1;
+  const T half = T(0.5);
+  for (std::size_t k = first; k < last; ++k) {
+    const std::size_t m = Sine ? k + 1 : k;
+    const std::size_t p = m == h ? 0 : m;
+    const std::size_t q = m == 0 ? 0 : h - m;
+    const T zr = z[2 * p];
+    const T zi = z[2 * p + 1];
+    const T cr = z[2 * q];
+    const T ci = -z[2 * q + 1];
+    const T o_re = (zi - ci) * half;
+    const T o_im = (cr - zr) * half;
+    const T wr = w[2 * m];
+    const T wi = w[2 * m + 1];
+    if constexpr (Sine) {
+      const T ei = (zi + ci) * half;
+      put<T, Factor, Scaled, Accumulate>(a, y, k, -(ei + (wr * o_im + wi * o_re)));
+    } else {
+      const T er = (zr + cr) * half;
+      put<T, Factor, Scaled, Accumulate>(a, y, k, er + (wr * o_re - wi * o_im));
+    }
+  }
+}
+
 template <class T, route R, bool Factor, bool Even> pass_fn read_of() {
   if constexpr (R == route::dht) {
     return &dht_read<T, Factor, Even>;
   } else if constexpr (R == route::dct2 || R == route::dst2) {
     return &dct2_read<T, R == route::dst2, Factor, Even>;
+  } else if constexpr (R == route::dct4 || R == route::dst4) {
+    return &dct4_read<T, R == route::dst4, Factor, Even>;
+  } else if constexpr (R == route::dct1 || R == route::dst1) {
+    return &extension_read<T, R == route::dst1, Factor>;
   } else {
     return &dct3_read<T, R == route::dst3, Factor, Even>;
   }
@@ -419,6 +570,14 @@ template <class T> pass_fn read_kernel(route r, bool factor, bool even) {
     return read_kernel_of<T, route::dst2>(factor, even);
   case route::dst3:
     return read_kernel_of<T, route::dst3>(factor, even);
+  case route::dct4:
+    return read_kernel_of<T, route::dct4>(factor, even);
+  case route::dst4:
+    return read_kernel_of<T, route::dst4>(factor, even);
+  case route::dct1:
+    return read_kernel_of<T, route::dct1>(factor, even);
+  case route::dst1:
+    return read_kernel_of<T, route::dst1>(factor, even);
   case route::dht:
     break;
   }
@@ -432,6 +591,10 @@ pass_fn store_of() {
                 : &dht_store_odd<T, Factor, Scaled, Accumulate>;
   } else if constexpr (R == route::dct2 || R == route::dst2) {
     return &dct2_store<T, R == route::dst2, Factor, Scaled, Accumulate, Even>;
+  } else if constexpr (R == route::dct4 || R == route::dst4) {
+    return &dct4_store<T, R == route::dst4, Factor, Scaled, Accumulate, Even>;
+  } else if constexpr (R == route::dct1 || R == route::dst1) {
+    return &extension_store<T, R == route::dst1, Factor, Scaled, Accumulate>;
   } else {
     return &dct3_store<T, R == route::dst3, Factor, Scaled, Accumulate, Even>;
   }
@@ -468,6 +631,14 @@ pass_fn store_kernel(route r, bool factor, bool scaled, bool accumulate, bool ev
     return store_kernel_of<T, route::dst2>(factor, scaled, accumulate, even);
   case route::dst3:
     return store_kernel_of<T, route::dst3>(factor, scaled, accumulate, even);
+  case route::dct4:
+    return store_kernel_of<T, route::dct4>(factor, scaled, accumulate, even);
+  case route::dst4:
+    return store_kernel_of<T, route::dst4>(factor, scaled, accumulate, even);
+  case route::dct1:
+    return store_kernel_of<T, route::dct1>(factor, scaled, accumulate, even);
+  case route::dst1:
+    return store_kernel_of<T, route::dst1>(factor, scaled, accumulate, even);
   case route::dht:
     break;
   }
@@ -493,6 +664,35 @@ template <class T> std::vector<T> dct_twiddles(std::size_t n) {
       const std::complex<T> t = unit_root<T>(-1, k, 4 * n);
       table.insert(table.end(), {t.real(), t.imag()});
     }
+  }
+  return table;
+}
+
+// The twiddles of a DCT-IV or DST-IV line of n (dct4_read, dct4_store): per index j of the read
+// stage's units, p_j then q_j, each correctly rounded. n even: p_j = exp(-i pi j / n),
+// q_j = exp(-i pi (4j + 1) / (4n)), j < n/2; odd: p_j = exp(-i pi j / (2n)),
+// q_j = exp(-i pi (2j + 1) / (4n)), j < n.
+template <class T> std::vector<T> dct4_twiddles(std::size_t n) {
+  const bool even = n % 2 == 0;
+  const std::size_t units = even ? n / 2 : n;
+  std::vector<T> table;
+  table.reserve(4 * units);
+  for (std::size_t j = 0; j < units; ++j) {
+    const std::complex<T> p = unit_root<T>(-1, j, even ? 2 * n : 4 * n);
+    const std::complex<T> q = unit_root<T>(-1, even ? (4 * j) + 1 : (2 * j) + 1, 8 * n);
+    table.insert(table.end(), {p.real(), p.imag(), q.real(), q.imag()});
+  }
+  return table;
+}
+
+// The pairing's twiddles w^k = exp(-2 pi i k / n), k = 0 .. n/2, of an r2c-packed line of even n
+// (dht_store_even, extension_store), interleaved.
+template <class T> std::vector<T> pairing_twiddles(std::size_t n) {
+  const std::vector<std::complex<T>> w = unit_roots<T>(-1, n);
+  std::vector<T> table(2 * ((n / 2) + 1));
+  for (std::size_t k = 0; k <= n / 2; ++k) {
+    table[2 * k] = w[k].real();
+    table[2 * k + 1] = w[k].imag();
   }
   return table;
 }
@@ -588,9 +788,18 @@ const char* place_text(slot src, slot dst) {
   return src == slot::block ? "from the block into the output" : "in place on the output";
 }
 
+// What build reports for describe(): the factor of the axes of one point without a phase (and
+// which they are), and whether any phase runs the backward chain.
+struct phase_summary {
+  double gain = 1.0;
+  std::string one_point;
+  bool forward = false;
+  bool backward = false;
+};
+
 template <class T>
-void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edges& e,
-           const build_settings& settings) {
+phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edges& e,
+                    const build_settings& settings) {
   const target_profile profile =
       plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
@@ -628,19 +837,34 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
   if (phases.empty()) {
     phases.push_back(r - 1);
   }
-  // An axis of one point without a phase is the identity for the DHT, DCT-III and DST-III, and
-  // multiplies by 2 for DCT-II and DST-II (Y_0 = 2 x_0): an exact factor, which joins the scales'
-  // product in the last store stage.
-  double gain = 1.0;
+  // An axis of one point without a phase is the identity for the DHT, DCT-III and DST-III,
+  // multiplies by 2 for DCT-II, DST-II and DST-I (Y_0 = 2 x_0) and by sqrt 2 for DCT-IV and DST-IV
+  // (Y_0 = 2 cos(pi / 4) x_0). The factors' product, a power of two times one correctly rounded
+  // sqrt 2 when the count of the latter is odd, joins the scales' product in the last store
+  // stage: no phase, and no rounding beyond the scales' one multiply (a phase of the axis would
+  // round its product with sqrt 2 once too).
+  int twos = 0;
+  int roots = 0;
+  phase_summary summary;
   for (std::size_t d = 0; d < r; ++d) {
     if (s.axes[d].n == 1 && std::ranges::find(phases, d) == phases.end()) {
       const route k = route_of(s.kinds[d]);
-      gain *= k == route::dct2 || k == route::dst2 ? 2.0 : 1.0;
+      const bool two = k == route::dct2 || k == route::dst2 || k == route::dst1;
+      const bool root = k == route::dct4 || k == route::dst4;
+      twos += two ? 1 : 0;
+      roots += root ? 1 : 0;
+      if (two || root) {
+        summary.one_point += std::string(summary.one_point.empty() ? "" : ", ") + axis_name(d) +
+                             " " + kind_text(s.kinds[d]) + (two ? " (2)" : " (sqrt 2)");
+      }
     }
   }
+  summary.gain = std::ldexp(roots % 2 != 0 ? std::sqrt(2.0) : 1.0, twos + (roots / 2));
+  const double gain = summary.gain;
   if (!scale_fits_precision(e.scale * gain, s.prec)) {
-    reject("options.scale", "times the factor 2 of each DCT-II or DST-II axis of one point is "
-                            "outside the range of the plan's precision");
+    reject("options.scale", "(times edges.in.scale and edges.out.scale) times the factor of the "
+                            "axes of one point (2 for each dct2, dst2 or dst1, sqrt 2 for each "
+                            "dct4 or dst4) is outside the range of the plan's precision");
   }
 
   const view in_view{.where = slot::in, .stride = l.in_stride};
@@ -693,31 +917,55 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
     const route rt = route_of(kind);
     const bool dht = rt == route::dht;
     const bool second = rt == route::dct2 || rt == route::dst2;
-    const bool sine = rt == route::dst2 || rt == route::dst3;
+    const bool fourth = rt == route::dct4 || rt == route::dst4;
+    const bool extension = rt == route::dct1 || rt == route::dst1;
+    const bool sine =
+        rt == route::dst2 || rt == route::dst3 || rt == route::dst4 || rt == route::dst1;
     const std::string kname = kind_text(kind);
     const bool even = n % 2 == 0;
-    const std::size_t m = even ? n / 2 : n;
     const std::size_t half_units = (n + 1) / 2;
+    // The complex chain's length: n/2 or n (the DHT, the kinds II and III), n/2 or 2n (the kinds
+    // IV), and half the extension, n - 1 or n + 1 (DCT-I, DST-I).
+    std::size_t m = even ? n / 2 : n;
+    if (fourth && !even) {
+      m = 2 * n;
+    } else if (extension) {
+      m = rt == route::dct1 ? n - 1 : n + 1;
+    }
     const bool read_factor = first && in_factor;
     const bool store_factor = last && out_factor;
     // DCT-III and DST-III: Makhoul's route inverted, over the backward transform.
-    const int sign = dht || second ? -1 : 1;
+    const int sign = rt == route::dct3 || rt == route::dst3 ? 1 : -1;
     const T* dct_table = nullptr;
     if (!dht) {
-      const std::vector<T> twiddles = dct_twiddles<T>(n);
+      std::vector<T> twiddles;
+      if (fourth) {
+        twiddles = dct4_twiddles<T>(n);
+      } else if (extension) {
+        twiddles = pairing_twiddles<T>(2 * m);
+      } else {
+        twiddles = dct_twiddles<T>(n);
+      }
       auto& table = tables_of<T>(c).emplace_back(twiddles.begin(), twiddles.end());
       dct_table = table.data();
     }
+    summary.forward = summary.forward || sign < 0;
+    summary.backward = summary.backward || sign > 0;
 
     std::vector<stage> line;
     stage rd;
-    rd.run = read_kernel<T>(rt, read_factor, even);
+    // The extensions' reads are packed whatever n's parity.
+    rd.run = read_kernel<T>(rt, read_factor, even || extension);
     rd.args.src_stride = src.stride[d];
     rd.args.src_qstride = read_factor ? e.in.axis_strides[d] : 0;
     rd.args.n = n;
     rd.src = src.where;
     rd.dst = slot::a;
-    rd.units = dht || second || even ? m : half_units;
+    if (fourth) {
+      rd.units = even ? m : n;
+    } else {
+      rd.units = dht || second || extension || even ? m : half_units;
+    }
     rd.chunks = chunks_of(rd.units, chunk);
     rd.moving_factors = read_factor ? moving_in_factor : 0;
     const std::string packing =
@@ -727,6 +975,17 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
     } else if (second) {
       rd.name = "r2r read: " + kname + " line" + (sine ? " with alternating signs" : "") +
                 " in Makhoul's order into scratch" + packing;
+    } else if (fourth) {
+      rd.args.twiddles = dct_table;
+      rd.name = "r2r read: " + kname + " line" + (sine ? " reversed" : "") +
+                (even ? ", x_2j + i x_(n-1-2j) twiddled into scratch as " + std::to_string(m) +
+                            " complex values"
+                      : " twiddled into scratch as " + std::to_string(n) +
+                            " complex values, zero-padded to " + std::to_string(m));
+    } else if (extension) {
+      rd.name = "r2r read: " + kname + " line's " + (sine ? "odd" : "even") + " extension of " +
+                std::to_string(2 * m) + " reals packed into scratch as " + std::to_string(m) +
+                " complex pairs";
     } else {
       rd.args.twiddles = dct_table;
       rd.name = "r2r read: " + kname + " line" + (sine ? " reversed" : "") +
@@ -748,20 +1007,16 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
     const bool scaled = scale != 1.0;
     const bool accumulate = last && e.out.accumulate;
     stage st;
-    st.run = store_kernel<T>(rt, store_factor, scaled, accumulate, even);
+    st.run = store_kernel<T>(rt, store_factor, scaled, accumulate, even || extension);
     st.args.dst_stride = dst.stride[d];
     st.args.src_qstride = store_factor ? e.out.axis_strides[d] : 0;
     st.args.n = n;
     st.args.scale = scaled ? scale : 1.0;
     if (dht && even) {
-      const std::vector<std::complex<T>> w = unit_roots<T>(-1, n);
-      auto& table = tables_of<T>(c).emplace_back(2 * (m + 1));
-      for (std::size_t k = 0; k <= m; ++k) {
-        table[2 * k] = w[k].real();
-        table[2 * k + 1] = w[k].imag();
-      }
+      const std::vector<T> twiddles = pairing_twiddles<T>(n);
+      auto& table = tables_of<T>(c).emplace_back(twiddles.begin(), twiddles.end());
       st.args.twiddles = table.data();
-    } else if (second) {
+    } else if (second || fourth || extension) {
       st.args.twiddles = dct_table;
     }
     st.src = z;
@@ -770,6 +1025,10 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
       st.units = even ? m + 1 : n;
     } else if (second) {
       st.units = even ? m + 1 : half_units;
+    } else if (fourth) {
+      st.units = even ? m : n;
+    } else if (extension) {
+      st.units = n;
     } else {
       st.units = m;
     }
@@ -781,6 +1040,15 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
     } else if (second) {
       store_what = std::string(even ? "the r2c pairing and the " : "the ") + kname + " twiddle" +
                    (sine ? ", reversed" : "");
+    } else if (fourth) {
+      store_what =
+          "the " + kname + " twiddle" +
+          (even ? ", Y_2k and Y_(n-1-2k) from bin k" : ", Y_k from the real part of bin k < n") +
+          (sine ? ", with alternating signs" : "");
+    } else if (extension) {
+      store_what =
+          std::string("the r2c pairing's ") +
+          (sine ? "imaginary parts of bins 1 .. n, negated" : "real parts of bins 0 .. n-1");
     } else {
       store_what = std::string(even ? "the c2r's unpacking" : "the real parts") +
                    " from Makhoul's order" + (sine ? ", with alternating signs" : "");
@@ -803,24 +1071,45 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
       route_text = std::string(" (") + (even ? "the r2c pairing fused with " : "") +
                    "Makhoul's twiddle" + (sine ? ", the sine kind by signs and reversal" : "") +
                    ")";
+    } else if (fourth) {
+      route_text = std::string(" (") +
+                   (even ? "the half-length route"
+                         : "the odd-length route: a zero-padded complex transform of 2n, about "
+                           "four times the even route's work") +
+                   (sine ? ", the sine kind by reversal and signs" : "") + ")";
+    } else if (extension) {
+      route_text = std::string(" (the ") + (sine ? "odd" : "even") +
+                   " extension: about twice the work of the kinds II and III)";
     } else {
       route_text = std::string(" (") + (even ? "the c2r's unpacking" : "the real parts") +
                    " back from Makhoul's order" +
                    (sine ? ", the sine kind by reversal and signs" : "") + ")";
     }
-    c.axis_notes.push_back("phase " + std::to_string(i + 1) + ": " + axis_name(d) +
-                           " (n = " + std::to_string(n) + "), " + kname + " " +
-                           place_text(src.where, dst.where) + ": the read stage into scratch" +
-                           (dht      ? std::string()
-                            : second ? " (Makhoul's order)"
-                                     : " (Makhoul's twiddle inverted)") +
-                           ", the " + (sign < 0 ? "forward" : "backward") + " complex chain of " +
-                           std::to_string(m) + (even ? "" : " (n odd)") + " there, radices " +
-                           (m == 1 ? std::string("none") : chain.radix_text(m)) +
-                           ", then the store stage" + route_text);
+    std::string read_note;
+    if (second) {
+      read_note = " (Makhoul's order)";
+    } else if (fourth) {
+      read_note = even ? " (pairs, twiddled)" : " (twiddled, zero-padded)";
+    } else if (extension) {
+      read_note = sine ? " (the odd extension)" : " (the even extension)";
+    } else if (!dht) {
+      read_note = " (Makhoul's twiddle inverted)";
+    }
+    c.axis_notes.push_back(
+        "phase " + std::to_string(i + 1) + ": " + axis_name(d) + " (n = " + std::to_string(n) +
+        "), " + kname + " " + place_text(src.where, dst.where) + ": the read stage into scratch" +
+        read_note + ", the " + (sign < 0 ? "forward" : "backward") + " complex chain of " +
+        std::to_string(m) + (even || fourth || extension ? "" : " (n odd)") + " there, radices " +
+        (m == 1 ? std::string("none") : chain.radix_text(m)) + ", then the store stage" +
+        route_text);
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
+  }
+  if (!summary.one_point.empty()) {
+    c.axis_notes.push_back("axes of one point: " + summary.one_point +
+                           ", no phase; their factor joins the scales' product in the last "
+                           "phase's store stage");
   }
 
   // The edge driver's records (core/edge_driver.hpp): a stage that reads a factor keeps its
@@ -855,9 +1144,12 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
 
   c.block_elements = through_block ? (transform_reals + 1) / 2 : 0;
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0); // no callbacks on r2r (refused)
+  return summary;
 }
 
-std::string edges_text(const r2r_edges& e, bool through_block) {
+// The edges note. The scales' product applied is e.scale times the axes of one point's factor
+// (`gain`), so the note follows that product: none applied when the two cancel.
+std::string edges_text(const r2r_edges& e, double gain, bool through_block) {
   std::string t;
   const auto add = [&t](const std::string& line) { t += (t.empty() ? "" : "\n") + line; };
   if (e.in.kind != factor_kind::none) {
@@ -871,7 +1163,14 @@ std::string edges_text(const r2r_edges& e, bool through_block) {
     add("output edge: " + what + " in the last phase's store stage");
   }
   if (e.scale != 1.0) {
-    add("scales: one product, applied once in the last phase's store stage");
+    if (e.scale * gain == 1.0) {
+      add("scales: their product cancels the factor of the axes of one point, so no stage "
+          "applies either");
+    } else {
+      add(std::string("scales: one product") +
+          (gain != 1.0 ? " with the factor of the axes of one point" : "") +
+          ", applied once in the last phase's store stage");
+    }
   }
   if (through_block) {
     add("accumulation over several axes: the phases before the last go through the workspace "
@@ -910,11 +1209,6 @@ std::shared_ptr<const plan_core> make_r2r_core(const shape_view& shape, const op
       reject(field(), "is r2r_kind::dct1 on an axis of one point (" + axis_name(d) +
                           ".n = 1); DCT-I needs n >= 2");
     }
-    if (k == r2r_kind::dct1 || k == r2r_kind::dct4 || k == r2r_kind::dst1 || k == r2r_kind::dst4) {
-      reject(field(), std::string("is r2r_kind::") + kind_text(k) +
-                          ", which is not built yet (task 6.5); built are dct2, dct3, dst2, "
-                          "dst3 and dht");
-    }
   }
   const r2r_edges e = resolve(shape, opts, edges);
 
@@ -934,11 +1228,9 @@ std::shared_ptr<const plan_core> make_r2r_core(const shape_view& shape, const op
   c->out_lo = layout.out_lo;
   c->out_hi = layout.out_hi;
   c->isa_target = plan_target_of(opts);
-  if (shape.prec == precision::f64) {
-    build<double>(*c, shape, layout, e, settings);
-  } else {
-    build<float>(*c, shape, layout, e, settings);
-  }
+  const phase_summary summary = shape.prec == precision::f64
+                                    ? build<double>(*c, shape, layout, e, settings)
+                                    : build<float>(*c, shape, layout, e, settings);
   mark_flat(c->prog, settings.unroll_calls);
   if (c->needs_args) {
     c->edge_batched = make_edge_forms(c->prog, c->edge_records, settings.unroll_calls, 0, 0, 0);
@@ -964,13 +1256,15 @@ std::shared_ptr<const plan_core> make_r2r_core(const shape_view& shape, const op
                       ", " + std::to_string(transforms) +
                       (transforms == 1 ? " transform" : " transforms") +
                       (opts.in_place ? ", in place" : ", out of place");
-  const bool backward = std::ranges::any_of(
-      shape.kinds, [](r2r_kind k) { return k == r2r_kind::dct3 || k == r2r_kind::dst3; });
+  // The chains' directions as the phases run them: an axis of one point has no phase, so a
+  // one-point dct3 or dst3 axis brings no backward chain.
   c->strategy_note = std::string("real-to-real (DESIGN.md 5.7): each axis a phase over its lines, "
                                  "each line packed into scratch by a read stage, through the ") +
-                     (backward ? "forward or backward" : "forward") +
+                     (summary.forward && summary.backward ? "forward or backward"
+                      : summary.backward                  ? "backward"
+                                                          : "forward") +
                      " complex chain there and out by a store stage, one line at a time";
-  c->edges_note = edges_text(e, c->block_elements != 0);
+  c->edges_note = edges_text(e, summary.gain, c->block_elements != 0);
   if (opts.effort != planning::rules || opts.use != nullptr) {
     c->planning_note = "by the rules: measured planning and wisdom take no real-to-real plans yet "
                        "(task 6.12)";
