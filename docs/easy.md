@@ -136,10 +136,16 @@ itself. Every real-to-real function works in place when the output is the input'
 the same strides. scipy's `n` and `s` (cropping and padding), its `orthogonalize=False` with
 `norm="ortho"`, and its `overwrite_x` and `workers` are not offered.
 
-The weights are real factors on the plan's edges (dev/DESIGN.md 12.1): their arrays, as long as
-the transformed axes' points (a dimension without weights broadcasts), are computed once and
-kept with the plan in the cache, so a call is bit for bit the core plan with those edges and the
-norm's scale.
+The weights cost almost nothing. Along one axis they are real factors on the plan's edges
+(dev/DESIGN.md 12.1), an array of n values kept with the plan in the cache, so such a call is
+bit for bit the core plan with those edges and the norm's scale. Over several axes a point's
+weight is the product of its axes' weights, which differ from 1 only on the first or last
+hyperplane of each axis. So the output's weights are a pass over those hyperplanes after the
+transform. Input weights (the DCT of types 1 and 3, the DST of type 3) work differently: the
+input is first copied into the output, its hyperplanes are weighted there, and the plan then
+runs in place on the output, so the input is never written. That costs no memory beyond the
+plan, and N/n points per axis of work plus the copy; the passes and the copy run on the
+calling thread.
 
 ## Frequencies and shifts
 

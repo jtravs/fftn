@@ -7,6 +7,7 @@
 #include "core/candidates.hpp"
 #include "core/plan_core.hpp"
 #include "core/runs.hpp"
+#include "core/wisdom_access.hpp"
 #include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/fftn.hpp"
@@ -32,13 +33,6 @@
 
 namespace fftn::inline v0 {
 namespace detail {
-
-struct wisdom_access {
-  static const std::string* find(const wisdom& w, const std::string& place) {
-    const auto it = w.index_.find(place);
-    return it == w.index_.end() ? nullptr : &w.entries_[it->second];
-  }
-};
 
 namespace {
 

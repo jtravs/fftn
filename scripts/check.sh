@@ -13,7 +13,7 @@
 #             executable in git                                    (tools/repo_lint.py)
 #   docs      Markdown links resolve, PLAN.md keeps its sections   (tools/repo_lint.py)
 #   knobs     experimental switches are registered and not expired (tools/repo_lint.py)
-#   format    clang-format (pinned), C++ sources and headers
+#   format    clang-format (pinned), C and C++ sources and headers
 #   python    ruff (pinned): lint and format of tools/, gen/, bench/
 #   shell     bash -n on scripts (shellcheck too when it is installed)
 #   gen       generated codelets are reproducible: regenerate and compare with the tree;
@@ -104,7 +104,7 @@ if stage knobs; then say "experimental switches"; py tools/repo_lint.py knobs; f
 
 if stage format; then
   say "clang-format $CLANG_FORMAT_VERSION"
-  cpp=$(files '*.cpp' '*.hpp' '*.h' '*.inl' | grep -v '^src/gen/' || true)
+  cpp=$(files '*.cpp' '*.hpp' '*.h' '*.c' '*.inl' | grep -v '^src/gen/' || true)
   if [[ -n $cpp ]]; then
     # shellcheck disable=SC2086
     uvx "clang-format==$CLANG_FORMAT_VERSION" --dry-run --Werror $cpp

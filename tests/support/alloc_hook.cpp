@@ -22,9 +22,11 @@ namespace {
 // before main (by static initialisers anywhere) are counted safely.
 std::atomic<std::size_t> news{0};
 std::atomic<std::size_t> deletes{0};
+std::atomic<std::size_t> bytes_new{0};
 
 void* allocate(std::size_t bytes) {
   news.fetch_add(1, std::memory_order_relaxed);
+  bytes_new.fetch_add(bytes, std::memory_order_relaxed);
   if (bytes == 0) {
     bytes = 1;
   }
@@ -43,6 +45,7 @@ void* allocate(std::size_t bytes) {
 
 void* allocate_aligned(std::size_t bytes, std::align_val_t align) {
   news.fetch_add(1, std::memory_order_relaxed);
+  bytes_new.fetch_add(bytes, std::memory_order_relaxed);
   if (bytes == 0) {
     bytes = 1;
   }
@@ -98,7 +101,8 @@ namespace fftn::test {
 
 allocation_counter::allocation_counter()
     : new_at_start_(news.load(std::memory_order_relaxed)),
-      delete_at_start_(deletes.load(std::memory_order_relaxed)) {}
+      delete_at_start_(deletes.load(std::memory_order_relaxed)),
+      bytes_at_start_(bytes_new.load(std::memory_order_relaxed)) {}
 
 std::size_t allocation_counter::allocations() const {
   return news.load(std::memory_order_relaxed) - new_at_start_;
@@ -106,6 +110,10 @@ std::size_t allocation_counter::allocations() const {
 
 std::size_t allocation_counter::deallocations() const {
   return deletes.load(std::memory_order_relaxed) - delete_at_start_;
+}
+
+std::size_t allocation_counter::bytes_allocated() const {
+  return bytes_new.load(std::memory_order_relaxed) - bytes_at_start_;
 }
 
 } // namespace fftn::test
