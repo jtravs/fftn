@@ -608,41 +608,55 @@ TYPED_TEST(easy_r2r_test, orthonormal_over_several_axes_against_the_reference) {
   }
 }
 
-// The weights over several axes cost no array: an orthonormal call allocates no more than the
-// same call without its norm, beyond what one axis of weights would take, for every kind, in
-// place and out of place. (An array of every transformed point would be 64 x 32 x 48 values.)
+// The weights over several axes cost no array: an orthonormal call's miss allocates no more than
+// building the core plan it uses and that plan's workspace (the same shape and options:
+// options::scale and, when the input is weighted out of place, in place on the output's layout),
+// beyond one axis of weights and the cache's own bookkeeping, for every kind, in place and out of
+// place. The same shape and options give the same plan on every target, so the bound does not
+// depend on the strategy a target chooses. (An array of every transformed point would be
+// 64 x 32 x 48 values.)
 TEST(easy_r2r, several_axes_keep_no_weight_array) {
   const dims_t ext{64, 32, 48};
   const std::size_t total = product(ext);
   const std::vector<double> x = values_of<double>(total, 21);
   std::vector<double> y(total);
   const std::size_t one_axis = 2 * 64 * sizeof(double);
+  const std::size_t bookkeeping = 4096; // the key's words and the cache's vector of entries
+  std::vector<fftn::axis> array;
+  for (const std::size_t e : ext) {
+    array.push_back(fftn::axis{.n = e});
+  }
+  const std::vector<std::size_t> all{0, 1, 2};
   for (const char* const function : {"dctn", "idctn", "dstn", "idstn"}) {
     for (int type = 1; type <= 4; ++type) {
       for (const bool in_place : {false, true}) {
-        const auto bytes = [&](easy::norm nm) {
-          easy::context ctx;
-          std::vector<double> z = x;
+        const r2r_kind k = kind_of(function, type);
+        double points = 1;
+        for (const std::size_t n : ext) {
+          points *= logical(k, n);
+        }
+        const bool copied = !in_place && has_input_weights(k);
+        const fftn::options opts{.in_place = in_place || copied, .scale = 1.0 / std::sqrt(points)};
+        const std::vector<r2r_kind> kinds(3, k);
+        const fftn::shape<double, double> s = fftn::axes_r2r<double>(array, all, kinds);
+        const auto core_bytes = [&] {
           const fftn::test::allocation_counter count;
-          call_n<double, 3>(ctx, function, type, ext, {}, nm, in_place ? z.data() : x.data(),
-                            in_place ? z.data() : y.data());
+          const fftn::plan<double, double> p(s, opts);
+          const fftn::workspace ws(p);
           return count.bytes_allocated();
         };
-        const std::size_t ortho = bytes(easy::norm::ortho);
-        // Out of place with input weights, the ortho plan runs in place on the output: compare
-        // it with the in-place plan of the backward norm.
-        const bool copied = !in_place && has_input_weights(kind_of(function, type));
-        std::size_t plain = 0;
+        static_cast<void>(core_bytes()); // any one-time state of the process first
+        const std::size_t core = core_bytes();
+        easy::context ctx;
+        std::vector<double> z = x;
+        std::size_t ortho = 0;
         {
-          easy::context ctx;
-          std::vector<double> z = x;
           const fftn::test::allocation_counter count;
-          call_n<double, 3>(ctx, function, type, ext, {}, easy::norm::backward,
-                            in_place || copied ? z.data() : x.data(),
-                            in_place || copied ? z.data() : y.data());
-          plain = count.bytes_allocated();
+          call_n<double, 3>(ctx, function, type, ext, {}, easy::norm::ortho,
+                            in_place ? z.data() : x.data(), in_place ? z.data() : y.data());
+          ortho = count.bytes_allocated();
         }
-        EXPECT_LE(ortho, plain + one_axis)
+        EXPECT_LE(ortho, core + one_axis + bookkeeping)
             << function << " type " << type << (in_place ? " in place" : "");
       }
     }
