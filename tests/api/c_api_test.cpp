@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <vector>
 
@@ -66,8 +68,8 @@ std::size_t side_reals(const ctest_case& c, bool input) {
     const std::size_t n = std::max<std::size_t>(c.axes[d].n, 1);
     const std::size_t len = halved && d + 1 == c.rank ? n / 2 + 1 : n;
     const std::ptrdiff_t given = input ? c.axes[d].in_stride : c.axes[d].out_stride;
-    const std::size_t stride =
-        given != 0 ? static_cast<std::size_t>(given < 0 ? -given : given) : tight;
+    const auto magnitude = static_cast<std::size_t>(given < 0 ? -given : given);
+    const std::size_t stride = given != 0 ? magnitude : tight;
     span += (len - 1) * stride;
     tight *= len;
   }
@@ -82,7 +84,7 @@ template <class T> std::vector<T> input_values(std::size_t reals) {
   std::uint32_t state = 12345;
   for (T& x : v) {
     state = state * 1664525U + 1013904223U;
-    x = static_cast<T>(static_cast<double>(state >> 8) / static_cast<double>(1U << 24) - 0.5);
+    x = static_cast<T>(static_cast<double>(state >> 8U) / static_cast<double>(1U << 24U) - 0.5);
   }
   return v;
 }
@@ -100,11 +102,13 @@ template <class In, class Out> fftn::shape<In, Out> cpp_shape(const ctest_case& 
   s.batches.push_back(
       {.count = c.batch.count, .in_dist = c.batch.in_dist, .out_dist = c.batch.out_dist});
   for (std::size_t r = 0; r < c.run_count; ++r) {
-    s.runs.push_back({.axis = c.runs[r].axis,
-                      .where = c.runs[r].where == FFTN_IN ? fftn::side::in : fftn::side::out,
-                      .logical = c.runs[r].logical,
-                      .stored = c.runs[r].stored,
-                      .count = c.runs[r].count});
+    s.runs.push_back({
+        .axis = c.runs[r].axis,
+        .where = c.runs[r].where == FFTN_IN ? fftn::side::in : fftn::side::out,
+        .logical = c.runs[r].logical,
+        .stored = c.runs[r].stored,
+        .count = c.runs[r].count,
+    });
   }
   if constexpr (std::is_same_v<In, Out>) {
     if (c.kind == FFTN_R2R) {
@@ -179,14 +183,14 @@ struct form_case {
   const char* name;
 };
 
-constexpr form_case forms[] = {
-    {CTEST_SERIAL, 1, 0, "serial"},
-    {CTEST_PIECES, 1, 0, "pieces"},
-    {CTEST_TEAM_ALL, 3, 0, "team of 3"},
-    {CTEST_TEAM_ALL, 4, 2, "team of 4 in pairs"},
-    {CTEST_TEAM_OWN, 3, 0, "team of 3, own"},
-    {CTEST_EXECUTOR, 3, 0, "C pool of 3"},
-    {CTEST_EXECUTOR, 4, 2, "C pool of 4 in pairs"},
+constexpr std::array forms = {
+    form_case{.form = CTEST_SERIAL, .lanes = 1, .group_size = 0, .name = "serial"},
+    form_case{.form = CTEST_PIECES, .lanes = 1, .group_size = 0, .name = "pieces"},
+    form_case{.form = CTEST_TEAM_ALL, .lanes = 3, .group_size = 0, .name = "team of 3"},
+    form_case{.form = CTEST_TEAM_ALL, .lanes = 4, .group_size = 2, .name = "team of 4 in pairs"},
+    form_case{.form = CTEST_TEAM_OWN, .lanes = 3, .group_size = 0, .name = "team of 3, own"},
+    form_case{.form = CTEST_EXECUTOR, .lanes = 3, .group_size = 0, .name = "C pool of 3"},
+    form_case{.form = CTEST_EXECUTOR, .lanes = 4, .group_size = 2, .name = "C pool of 4 in pairs"},
 };
 
 // Runs case `c` through the C API in every form and through the C++ API, and compares.
@@ -228,7 +232,7 @@ void check(const ctest_case& c, const std::string& name) {
   }
 }
 
-constexpr fftn_precision precisions[] = {FFTN_DOUBLE, FFTN_FLOAT};
+constexpr std::array precisions = {FFTN_DOUBLE, FFTN_FLOAT};
 
 TEST(CApi, ComplexPlansMatchCpp) {
   for (const fftn_precision p : precisions) {
@@ -261,8 +265,10 @@ TEST(CApi, RealPlansMatchCpp) {
 // refused from C with the C++ message (the check compares), and are tested as soon as they are
 // built.
 TEST(CApi, RealToRealPlansMatchCpp) {
-  constexpr fftn_r2r_kind kinds[] = {FFTN_DCT1, FFTN_DCT2, FFTN_DCT3, FFTN_DCT4, FFTN_DST1,
-                                     FFTN_DST2, FFTN_DST3, FFTN_DST4, FFTN_DHT};
+  constexpr std::array kinds = {
+      FFTN_DCT1, FFTN_DCT2, FFTN_DCT3, FFTN_DCT4, FFTN_DST1,
+      FFTN_DST2, FFTN_DST3, FFTN_DST4, FFTN_DHT,
+  };
   for (const fftn_precision p : precisions) {
     for (const fftn_r2r_kind k : kinds) {
       ctest_case c = base_case(FFTN_R2R, p);
@@ -413,8 +419,14 @@ TEST(CApi, WisdomFromC) {
 }
 
 TEST(CApi, LengthsMatchCpp) {
-  for (const std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{131}, std::size_t{1001},
-                              std::size_t{4093}, std::size_t{65537}}) {
+  for (const std::size_t n : {
+           std::size_t{0},
+           std::size_t{1},
+           std::size_t{131},
+           std::size_t{1001},
+           std::size_t{4093},
+           std::size_t{65537},
+       }) {
     fftn_error e{};
     EXPECT_EQ(ctest_next_fast_length(n, FFTN_LENGTH_COMPLEX, &e), fftn::next_fast_length(n));
     EXPECT_EQ(ctest_next_fast_length(n, FFTN_LENGTH_REAL, &e),
@@ -424,7 +436,7 @@ TEST(CApi, LengthsMatchCpp) {
     EXPECT_EQ(e.code, FFTN_OK);
   }
   fftn_error e{};
-  const std::size_t too_long = std::size_t{1} << 41;
+  const std::size_t too_long = std::size_t{1} << 41U;
   EXPECT_EQ(fftn_next_fast_length(too_long, FFTN_LENGTH_COMPLEX, &e), 0U);
   try {
     (void)fftn::next_fast_length(too_long);
@@ -446,16 +458,18 @@ TEST(CApi, WorkspacesAndReferences) {
   // A borrowed workspace of any alignment serves an execution.
   const fftn_axis axis{.n = 64, .in_stride = 0, .out_stride = 0};
   const fftn_batch batch{.count = 2, .in_dist = 0, .out_dist = 0};
-  const fftn_shape s{.kind = FFTN_C2C,
-                     .precision = FFTN_DOUBLE,
-                     .direction = FFTN_FORWARD,
-                     .rank = 1,
-                     .axes = &axis,
-                     .batch_rank = 1,
-                     .batches = &batch,
-                     .r2r_kinds = nullptr,
-                     .run_count = 0,
-                     .runs = nullptr};
+  const fftn_shape s{
+      .kind = FFTN_C2C,
+      .precision = FFTN_DOUBLE,
+      .direction = FFTN_FORWARD,
+      .rank = 1,
+      .axes = &axis,
+      .batch_rank = 1,
+      .batches = &batch,
+      .r2r_kinds = nullptr,
+      .run_count = 0,
+      .runs = nullptr,
+  };
   fftn_plan* plan = fftn_plan_create(&s, nullptr, &e);
   ASSERT_NE(plan, nullptr);
   ASSERT_LE(fftn_plan_workspace_bytes(plan, 1), memory.size() - 1);
@@ -474,7 +488,7 @@ TEST(CApi, WorkspacesAndReferences) {
 
 // Out of memory: the error, not an exception. A sanitizer's allocator stops the process on an
 // allocation this large instead of failing it, so the check runs only without one.
-#if defined(__has_feature)
+#ifdef __has_feature
 #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #define FFTN_TEST_SANITIZED 1
 #endif
@@ -484,7 +498,7 @@ TEST(CApi, WorkspacesAndReferences) {
 #endif
 
 TEST(CApi, OutOfMemoryIsAnError) {
-#if defined(FFTN_TEST_SANITIZED)
+#ifdef FFTN_TEST_SANITIZED
   GTEST_SKIP() << "the sanitizer's allocator does not fail allocations";
 #else
   fftn_error e{};
@@ -507,26 +521,31 @@ TEST(CApi, ThrowingExecutorIsAStatus) {
   // Large enough that the plan shares it out rather than running it on the caller.
   const fftn_axis axis{.n = 4096, .in_stride = 0, .out_stride = 0};
   const fftn_batch batch{.count = 64, .in_dist = 0, .out_dist = 0};
-  const fftn_shape s{.kind = FFTN_C2C,
-                     .precision = FFTN_DOUBLE,
-                     .direction = FFTN_FORWARD,
-                     .rank = 1,
-                     .axes = &axis,
-                     .batch_rank = 1,
-                     .batches = &batch,
-                     .r2r_kinds = nullptr,
-                     .run_count = 0,
-                     .runs = nullptr};
+  const fftn_shape s{
+      .kind = FFTN_C2C,
+      .precision = FFTN_DOUBLE,
+      .direction = FFTN_FORWARD,
+      .rank = 1,
+      .axes = &axis,
+      .batch_rank = 1,
+      .batches = &batch,
+      .r2r_kinds = nullptr,
+      .run_count = 0,
+      .runs = nullptr,
+  };
   fftn_plan* plan = fftn_plan_create(&s, nullptr, nullptr);
   ASSERT_NE(plan, nullptr);
   fftn_workspace* ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 4), nullptr);
   ASSERT_NE(ws, nullptr);
-  const fftn_executor ex{.self = nullptr,
-                         .concurrency = &throwing::concurrency,
-                         .bulk = &throwing::bulk,
-                         .group_size = nullptr};
-  const std::vector<std::complex<double>> in(4096 * 64);
-  std::vector<std::complex<double>> out(4096 * 64);
+  const fftn_executor ex{
+      .self = nullptr,
+      .concurrency = &throwing::concurrency,
+      .bulk = &throwing::bulk,
+      .group_size = nullptr,
+  };
+  constexpr std::size_t points = std::size_t{4096} * 64;
+  const std::vector<std::complex<double>> in(points);
+  std::vector<std::complex<double>> out(points);
   int status = FFTN_OK;
   EXPECT_NO_THROW(status = fftn_execute_on(plan, in.data(), out.data(), &ex, ws));
   EXPECT_EQ(status, FFTN_ERROR_EXECUTOR);

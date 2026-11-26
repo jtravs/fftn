@@ -197,11 +197,13 @@ struct converted_shape {
         refuse(where + ".runs[" + std::to_string(runs.size()) + "].where",
                "is " + std::to_string(side) + ", neither FFTN_IN nor FFTN_OUT");
       }
-      runs.push_back({.axis = r.axis,
-                      .where = side == FFTN_IN ? fftn::side::in : fftn::side::out,
-                      .logical = r.logical,
-                      .stored = r.stored,
-                      .count = r.count});
+      runs.push_back({
+          .axis = r.axis,
+          .where = side == FFTN_IN ? fftn::side::in : fftn::side::out,
+          .logical = r.logical,
+          .stored = r.stored,
+          .count = r.count,
+      });
     }
     if (kind == FFTN_R2R) {
       if (s->r2r_kinds == nullptr) {
@@ -262,7 +264,7 @@ fftn::team team_of(fftn_team t) noexcept {
 }
 
 // Takes ownership from a handle the C caller passed back.
-template <class T> void destroy(T* handle) noexcept { std::unique_ptr<T> owned(handle); }
+template <class T> void destroy(T* handle) noexcept { const std::unique_ptr<T> owned(handle); }
 
 } // namespace
 
@@ -355,6 +357,9 @@ fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error* er
 
 void fftn_workspace_destroy(fftn_workspace* workspace) { destroy(workspace); }
 
+// The workspace arguments stay non-const, as the header declares them (DESIGN.md 5.9): an
+// execution writes the workspace's memory and its team word.
+// NOLINTBEGIN(misc-const-correctness)
 void fftn_execute(const fftn_plan* plan, const void* in, void* out, fftn_workspace* workspace) {
   detail::execute_all(*plan->core, in, out, workspace->ws);
 }
@@ -390,6 +395,7 @@ int fftn_execute_on(const fftn_plan* plan, const void* in, void* out, const fftn
     return FFTN_ERROR_EXECUTOR;
   }
 }
+// NOLINTEND(misc-const-correctness)
 
 fftn_wisdom* fftn_wisdom_create(fftn_error* error) {
   try {

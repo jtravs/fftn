@@ -23,7 +23,7 @@ typedef enum ctest_form {
   CTEST_PIECES,   /* fftn_execute_transforms over pieces of the batch */
   CTEST_TEAM_ALL, /* fftn_execute_team, FFTN_COMPLETION_ALL, one thread per member */
   CTEST_TEAM_OWN, /* fftn_execute_team, FFTN_COMPLETION_OWN */
-  CTEST_EXECUTOR  /* fftn_execute_on a C thread pool */
+  CTEST_EXECUTOR, /* fftn_execute_on a C thread pool */
 } ctest_form;
 
 /* A shape of up to three axes and one batch dimension, with its options. */

@@ -42,8 +42,8 @@
 
 /* NOLINTBEGIN(modernize-use-using,modernize-redundant-void-arg,performance-enum-size): C */
 
-#if defined(FFTN_C_EXPORTS)
-#if defined(_WIN32)
+#ifdef FFTN_C_EXPORTS
+#ifdef _WIN32
 #define FFTN_C_API __declspec(dllexport)
 #else
 #define FFTN_C_API __attribute__((visibility("default")))
@@ -70,7 +70,7 @@ typedef enum fftn_status {
   FFTN_ERROR_OUT_OF_MEMORY = 2,    /**< memory ran out (std::bad_alloc) */
   FFTN_ERROR_INTERNAL = 3,         /**< any other failure inside FFTN */
   FFTN_ERROR_FILE = 4,             /**< a wisdom file could not be read or written */
-  FFTN_ERROR_EXECUTOR = 5          /**< the executor of fftn_execute_on failed */
+  FFTN_ERROR_EXECUTOR = 5,         /**< the executor of fftn_execute_on failed */
 } fftn_status;
 
 /**
@@ -88,19 +88,19 @@ typedef enum fftn_kind {
   FFTN_C2C, /**< complex to complex */
   FFTN_R2C, /**< real to complex (always forward) */
   FFTN_C2R, /**< complex to real (always backward) */
-  FFTN_R2R  /**< real to real, one fftn_r2r_kind per axis */
+  FFTN_R2R, /**< real to real, one fftn_r2r_kind per axis */
 } fftn_kind;
 
 /** The precision of a transform's values. */
 typedef enum fftn_precision {
   FFTN_DOUBLE, /**< double, and complex values of two doubles */
-  FFTN_FLOAT   /**< float, and complex values of two floats */
+  FFTN_FLOAT,  /**< float, and complex values of two floats */
 } fftn_precision;
 
 /** The direction of a complex transform, the values of fftn::direction. */
 enum {
-  FFTN_FORWARD = -1, /**< exponent -2 pi i jk / n */
-  FFTN_BACKWARD = +1 /**< exponent +2 pi i jk / n */
+  FFTN_FORWARD = -1,  /**< exponent -2 pi i jk / n */
+  FFTN_BACKWARD = +1, /**< exponent +2 pi i jk / n */
 };
 
 /**
@@ -117,13 +117,13 @@ typedef enum fftn_r2r_kind {
   FFTN_DST2, /**< DST-II, RODFT10 */
   FFTN_DST3, /**< DST-III, RODFT01 */
   FFTN_DST4, /**< DST-IV, RODFT11 */
-  FFTN_DHT   /**< the discrete Hartley transform */
+  FFTN_DHT,  /**< the discrete Hartley transform */
 } fftn_r2r_kind;
 
 /** A side of a transform, fftn::side. */
 typedef enum fftn_side {
-  FFTN_IN, /**< the input */
-  FFTN_OUT /**< the output */
+  FFTN_IN,  /**< the input */
+  FFTN_OUT, /**< the output */
 } fftn_side;
 
 /** One transformed dimension, fftn::axis: strides in elements of each side's own type. */
@@ -177,14 +177,14 @@ typedef enum fftn_isa {
   FFTN_ISA_AVX512,    /**< x86-64, AVX-512 F, DQ and VL */
   FFTN_ISA_NEON,      /**< AArch64, Advanced SIMD */
   FFTN_ISA_NEON_FCMA, /**< AArch64, Advanced SIMD with FCMA */
-  FFTN_ISA_BEST       /**< not a target: let the plan choose (the default) */
+  FFTN_ISA_BEST,      /**< not a target: let the plan choose (the default) */
 } fftn_isa;
 
 /** How plan construction chooses the program, fftn::planning. */
 typedef enum fftn_planning {
-  FFTN_PLANNING_RULES,  /**< the planner's rules (the default) */
-  FFTN_PLANNING_QUICK,  /**< a short measurement */
-  FFTN_PLANNING_MEASURE /**< the full measurement */
+  FFTN_PLANNING_RULES,   /**< the planner's rules (the default) */
+  FFTN_PLANNING_QUICK,   /**< a short measurement */
+  FFTN_PLANNING_MEASURE, /**< the full measurement */
 } fftn_planning;
 
 /** An opaque set of recorded programs, fftn::wisdom. */
@@ -214,7 +214,7 @@ typedef struct fftn_team {
 /** When a member's call of fftn_execute_team returns, fftn::completion. */
 typedef enum fftn_completion {
   FFTN_COMPLETION_ALL, /**< when the whole output is written, on every member */
-  FFTN_COMPLETION_OWN  /**< when this member's own transforms are written */
+  FFTN_COMPLETION_OWN, /**< when this member's own transforms are written */
 } fftn_completion;
 
 /** A range of a plan's transforms, fftn::transform_range. */
@@ -226,7 +226,7 @@ typedef struct fftn_transform_range {
 /** What a length is for, in fftn_next_fast_length: fftn::length_kind. */
 typedef enum fftn_length_kind {
   FFTN_LENGTH_COMPLEX, /**< a complex length, or a real transform's axis that is not halved */
-  FFTN_LENGTH_REAL     /**< the halved axis of a real transform */
+  FFTN_LENGTH_REAL,    /**< the halved axis of a real transform */
 } fftn_length_kind;
 
 /** An opaque plan of any kind and precision, fftn::plan: reference counted. */
