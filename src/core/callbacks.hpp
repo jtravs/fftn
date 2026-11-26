@@ -52,10 +52,16 @@ struct callback_site {
                  std::byte* data) noexcept = nullptr;
   std::uint8_t user = 0;   // 0: exec_args::in_user, 1: out_user
   std::size_t rank = 1;    // the transformed axes, origin's entries
-  std::size_t axis = 0;    // element_axis
+  std::size_t axis = 0;    // element_axis (an index into shape::axes)
   std::size_t logical = 0; // the logical position along `axis` of the stage's element 0
   std::size_t element_bytes = 0;
   std::size_t scratch_bytes = 0; // the callback's own (block_info::scratch's size)
+  // Where a block's lines advance (task 5.3c): consecutive transforms (along_transforms), or an
+  // axis of shape::axes, line k one element further along it than line k - 1 (a lanes column
+  // block's adjacent columns). `lines`: the lines a stage of the walked form passes (a column
+  // block's columns; 1 elsewhere, where a lanes program passes its block's rows instead).
+  std::size_t line_axis = along_transforms;
+  std::size_t lines = 1;
 };
 
 // What a callback stage needs of the execution and of the task it runs in.
@@ -64,6 +70,10 @@ struct callback_env {
   std::size_t transform = 0;    // the task's transform, numbered from the batch's first
   int member = 0;               // the lane running the stage
   std::byte* scratch = nullptr; // that lane's callback area (128-byte aligned), or null
+  // The logical coordinates the enclosing lines loops have reached, per axis of shape::axes
+  // (task 5.3c: the edge driver adds each loop's, edge_record::origin_axis): a block's origin
+  // is these plus its stage's own along its element and line axes.
+  std::array<std::size_t, 3> origin{};
   // Measured planning's stand-ins (DESIGN.md 12.3, "Planning"; task 5.3b): every callback
   // stage runs, with its copies and boundaries, but calls a function that does nothing, so
   // that planning never calls the application's code.

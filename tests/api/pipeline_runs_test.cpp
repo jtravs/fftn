@@ -21,6 +21,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -532,8 +533,7 @@ std::vector<runs_case> run_sets(std::size_t n) {
 std::vector<std::size_t> lengths() { return {8, 12, 15, 16, 32, 60, 64, 100, 128, 210, 256, 257}; }
 
 template <class T> class PipelineRuns : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(PipelineRuns, precisions);
+TYPED_TEST_SUITE(PipelineRuns, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(PipelineRuns, ComplexOnEveryInstructionSet) {
   using C = std::complex<TypeParam>;

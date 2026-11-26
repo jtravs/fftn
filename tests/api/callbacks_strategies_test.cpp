@@ -23,6 +23,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -1193,8 +1194,7 @@ std::vector<cb_case> rules_cases() {
 }
 
 template <class T> class CallbackStrategies : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(CallbackStrategies, precisions);
+TYPED_TEST_SUITE(CallbackStrategies, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(CallbackStrategies, EveryStrategyForcedOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -1219,15 +1219,15 @@ TYPED_TEST(CallbackStrategies, TheRulesStrategies) {
 // A callback forces no strategy: the plan with callbacks takes the strategy of the plan without
 // them (forced or by the rules), except where the output is consumed and that strategy writes
 // the output as its working memory, which describe() says.
-TEST(CallbackStrategies, NoStrategyForcedByACallback) {
-  using C = cd;
+TYPED_TEST(CallbackStrategies, NoStrategyForcedByACallback) {
+  using C = std::complex<TypeParam>;
   const knobs& k = knob();
   struct probe {
     fftn::shape<C, C> shape;
     const d::build_settings* settings;
   };
   const auto rows = [](std::size_t n, std::size_t count) {
-    return fftn::rows_c2c<double>(n, count, fftn::direction::forward);
+    return fftn::rows_c2c<TypeParam>(n, count, fftn::direction::forward);
   };
   const std::vector<probe> probes{
       {rows(16, 7), &k.lanes},       {rows(1024, 2), &k.grid},      {rows(1024, 2), &k.depth},

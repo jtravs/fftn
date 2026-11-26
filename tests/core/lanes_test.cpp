@@ -24,6 +24,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -411,45 +412,47 @@ template <class T> void real_cases(fftn::isa target) {
   }
 }
 
-TEST(Lanes, C2cEqualsTheChainBitForBit) {
+template <class T> class Lanes : public ::testing::Test {};
+TYPED_TEST_SUITE(Lanes, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Lanes, C2cEqualsTheChainBitForBit) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    c2c_cases<double>(t);
-    c2c_cases<float>(t);
+    c2c_cases<TypeParam>(t);
   }
 }
 
-TEST(Lanes, RealEqualsTheChainBitForBit) {
+TYPED_TEST(Lanes, RealEqualsTheChainBitForBit) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    real_cases<double>(t);
-    real_cases<float>(t);
+    real_cases<TypeParam>(t);
   }
 }
 
 // Where the lanes cannot run, a forced lanes plan is a chain, and describe() says so: one
 // row, a prime above the codelets (Bluestein), an input factor, a real row with a stride.
-TEST(Lanes, ForcedOnlyWhereTheRowsCanBeLanes) {
+TYPED_TEST(Lanes, ForcedOnlyWhereTheRowsCanBeLanes) {
   build_settings lanes;
   lanes.strategy = strategy_choice::lanes;
   const auto plan = [&](const auto& sh, const build_settings& s) {
     return make_plan_core(fftn::detail::view_of(sh), {}, s);
   };
-  EXPECT_TRUE(is_lanes(*plan(fftn::rows_c2c<double>(64, 2, fftn::direction::forward), lanes)));
-  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<double>(64, 1, fftn::direction::forward), lanes)));
-  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<double>(97, 8, fftn::direction::forward), lanes)));
-  EXPECT_FALSE(is_lanes(*plan(fftn::planes_c2c<double>(8, 8, 8, fftn::direction::forward), lanes)));
-  const std::vector<std::complex<double>> factor(16, {1.0, 0.0});
+  EXPECT_TRUE(is_lanes(*plan(fftn::rows_c2c<TypeParam>(64, 2, fftn::direction::forward), lanes)));
+  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<TypeParam>(64, 1, fftn::direction::forward), lanes)));
+  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<TypeParam>(97, 8, fftn::direction::forward), lanes)));
+  EXPECT_FALSE(
+      is_lanes(*plan(fftn::planes_c2c<TypeParam>(8, 8, 8, fftn::direction::forward), lanes)));
+  const std::vector<std::complex<TypeParam>> factor(16, {1.0, 0.0});
   build_settings with_factor = lanes;
   with_factor.in_factor = factor.data();
   EXPECT_FALSE(
-      is_lanes(*plan(fftn::rows_c2c<double>(16, 8, fftn::direction::forward), with_factor)));
-  fftn::shape<double, std::complex<double>> strided_real;
+      is_lanes(*plan(fftn::rows_c2c<TypeParam>(16, 8, fftn::direction::forward), with_factor)));
+  fftn::shape<TypeParam, std::complex<TypeParam>> strided_real;
   strided_real.axes = {{.n = 16, .in_stride = 2}};
   strided_real.batches = {{.count = 8, .in_dist = 1}};
   EXPECT_FALSE(is_lanes(*plan(strided_real, lanes)));
-  EXPECT_FALSE(is_lanes(*plan(fftn::rows_r2c<double>(7, 8), lanes))); // odd: the full route
+  EXPECT_FALSE(is_lanes(*plan(fftn::rows_r2c<TypeParam>(7, 8), lanes))); // odd: the full route
   build_settings chain;
   chain.strategy = strategy_choice::chain;
-  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<double>(64, 64, fftn::direction::forward), chain)));
+  EXPECT_FALSE(is_lanes(*plan(fftn::rows_c2c<TypeParam>(64, 64, fftn::direction::forward), chain)));
 }
 
 // The rules: a batch of at least C rows up to the profile's lanes_up_to (float, where X7
@@ -475,20 +478,26 @@ TEST(Lanes, PlannerChoice) {
 // A split run (DESIGN.md 6.3) forced on targets that do not choose one, so that the lanes'
 // split passes (s multiplied by the block) run here: c2c and both real kinds, against the
 // chain with the same forced split.
-template <class In, class Out>
+template <class T, class In, class Out>
 void split_case(fftn::isa t, const batch_case& bc, std::size_t in_extent, std::size_t out_extent,
                 const char* kind, const build_settings& split) {
   lanes_equal_chain<In, Out>(t, bc, in_extent, out_extent, 0,
-                             label<float>(t, kind, bc) + ", split forced", split);
+                             label<T>(t, kind, bc) + ", split forced", split);
   build_settings forced = split;
   forced.strategy = strategy_choice::lanes;
   const auto core =
       make_plan_core(fftn::detail::view_of(shape_of<In, Out>(bc)), {.force_isa = t}, forced);
-  EXPECT_NE(described(*core).find("split lane"), std::string::npos) << described(*core);
+  // Every target splits the lanes' passes in float; in double the 128-bit targets (neon,
+  // neon_fcma, x86_v2: one complex per register) keep them interleaved on the tile, so there only
+  // the bits above are checked.
+  if (std::is_same_v<T, float>) {
+    EXPECT_NE(described(*core).find("split lane"), std::string::npos) << described(*core);
+  }
 }
 
-TEST(Lanes, ForcedSplitRunEqualsTheChain) {
-  using cx = std::complex<float>;
+TYPED_TEST(Lanes, ForcedSplitRunEqualsTheChain) {
+  using T = TypeParam;
+  using cx = std::complex<T>;
   build_settings split;
   split.layout = fftn::detail::layout_choice::split;
   split.radices = {16, 4, 4};
@@ -501,12 +510,12 @@ TEST(Lanes, ForcedSplitRunEqualsTheChain) {
           .in = rows_with_gap(256, 3),
           .out = rows_with_gap(256, 1),
       };
-      split_case<cx, cx>(t, c2c, 256, 256, "c2c", split);
+      split_case<T, cx, cx>(t, c2c, 256, 256, "c2c", split);
       // Adjacent rows (element j of row t at count j + t): the split run's last pass writes a
       // tile, which is scattered a run of C rows per vector store.
       const side_layout interleaved{.stride = static_cast<std::ptrdiff_t>(count), .dist = 1};
       const batch_case adjacent{.n = 256, .count = count, .in = interleaved, .out = interleaved};
-      split_case<cx, cx>(t, adjacent, 256, 256, "c2c", split);
+      split_case<T, cx, cx>(t, adjacent, 256, 256, "c2c", split);
       // Real rows of 512 points: the half-length chain of 256 takes the forced radices.
       const batch_case r2c{
           .n = 512,
@@ -514,14 +523,14 @@ TEST(Lanes, ForcedSplitRunEqualsTheChain) {
           .in = rows_with_gap(512, 2),
           .out = rows_with_gap(257, 1),
       };
-      split_case<float, cx>(t, r2c, 512, 257, "r2c", split);
+      split_case<T, T, cx>(t, r2c, 512, 257, "r2c", split);
       const batch_case c2r{
           .n = 512,
           .count = count,
           .in = rows_with_gap(257, 1),
           .out = rows_with_gap(512, 2),
       };
-      split_case<cx, float>(t, c2r, 257, 512, "c2r", split);
+      split_case<T, cx, T>(t, c2r, 257, 512, "c2r", split);
     }
   }
 }

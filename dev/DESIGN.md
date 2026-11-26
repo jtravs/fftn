@@ -3279,8 +3279,7 @@ callback area's size to `lay_out_workspace` (0 for pipelines until then) and kee
 with callbacks off the batched forms that pipelines otherwise always take.
 
 As built (task 5.3b): rows of every kind (c2c, r2c, c2r) take callbacks on the strategy the rules,
-measured planning or a test choose; `core/edges.cpp` refuses them on planes and volumes only
-(5.3c). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
+measured planning or a test choose (planes and volumes from 5.3c, below). Where each strategy runs them (all in `build()`, `core/plan_core.cpp`, from two helpers,
 `callback_input_stages` and `callback_output_stages`: the copy, the callback, the vocabulary in
 place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
 values):
@@ -3327,6 +3326,49 @@ values):
   `edges_key`) has each side's mode and scratch, not the function.
 - **Produced input in place** may be null: the strategy then reads the output's slot (the same
   bytes; `retarget_input`).
+
+As built (task 5.3c; provisional with the rest of the API, second reader pending): planes and
+volumes of every kind take callbacks, the API unchanged. In `build()` (`core/plan_core.cpp`),
+`axes_callback` adds a callback stage to a line body, `column_callbacks` to a lanes column block
+(`column_hooks`, the stages before and after the block's own in `add_column_phase`):
+- **The input's** runs in the first phase (c2c and r2c: the last axis' rows; c2r: the first
+  complex axis' columns, lines alone or lanes column blocks): out of place a `modify` callback's
+  line is copied first into the phase's destination (c2c: the output, or the block for a consumed
+  output; c2r: the half spectrum's block), where the line's transform then runs in place. An
+  r2c's real row goes into its own complex row of the output where the output's rows are
+  contiguous, the r2c then in place there as an in-place plan's rows are, else into the
+  member's scratch line b, which the row's r2c reads once in its first stage (`build()` checks
+  this), and into the workspace block only beside a consumed output, which is there anyway; so
+  such a plan's `workspace_bytes()` is the plan's without the callback, or a strided output's
+  larger by at most a row per scratch line and lane (test
+  `RealInputCallbacksCostNoTransformOfWorkspace`; a whole transform in the block cost about the
+  half spectrum's bytes, the second reader's finding). `produce` writes where the copy would go;
+  in place the callback runs on the input itself. The copy is a stage of the line ("callback
+  in: the input copied"), not an edge pass.
+- **The output's** runs in the last phase (c2c and r2c: axis 0's columns, lines alone or lanes
+  column blocks; c2r: the real rows), after its last pass, on the output, or for `consume` on the
+  workspace block, where a c2r's real rows are written in place over the half spectrum (as an
+  in-place plan's are) and the output is never addressed. A volume a plane at a time takes the
+  input's inside the planes' loop.
+- **Blocks**: a line alone is one line a call; a lanes column block's valid columns are its
+  lines, adjacent along the last axis (`block_info::line_axis` that axis, `callback_site::lines`
+  the columns the walked form passes; a team program's narrower blocks pass fewer); the lanes over
+  adjacent transforms pass the block's transforms (`along_transforms`) in their first and last
+  lanes phases. `callback_cuts` cuts them as on rows.
+- **Coordinates**: the loops around a callback stage carry the axis of `shape::axes` they
+  advance and its step (`edge_loop::axis`, `edge_record::origin_*`; a lanes column block's loop
+  its columns from its first, a volume's planes' loop axis 0); the edge driver adds them to
+  `callback_env::origin` in its walked form, its lanes blocks and a team's lines
+  (`run_edge_lines`), only for loops that have them.
+- **A side whose factor or accumulation has an edge phase anyway** (5.1b-1) takes its callback
+  inside that phase, on the rows of the last axis, in 12.1's order (copy, callback, vocabulary;
+  vocabulary, callback, store or accumulation). describe() says where ("in the first phase ...",
+  "in the last phase ...", or "in the input edge's phase"), and the edges' line counts no pass
+  for a callback alone.
+- A plan with callbacks takes no c2r intermediate packed in the output (X60; describe() says so),
+  and its multi-axis program runs walked (the unrolled calls carry no callback sites).
+- Not built: callbacks beside stored runs on planes and volumes (refused, naming
+  `edges.in.call.fn` or `edges.out.call.fn`), whose edge phases are nests per run (`run_phase`).
 
 ### 12.4 Owner-computes
 
@@ -4825,6 +4867,7 @@ to change before a release.
 | 2026-11-26 | Step 6.3 (provisional, second reader to come): `r2r_kind`, `shape<T, T>` with `shape::kinds`, `rows_r2r`, `planes_r2r`, `volumes_r2r`, `axes_r2r`, `r2r_plan`, and the DHT as built in 5.7: a read stage, the r2c's complex chain in the member's scratch and a store stage fusing the r2c's pairing with the Hartley combination; the DCT and DST kinds refused until 6.4 and 6.5; real-to-real plans by the rules only | The 18.2 "Phase 6" proposals 9–13 taken as written; scratch rather than the block, because a phase's lines run on several members at once and the block is the task's |
 | 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
+| 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
 
 ---
 

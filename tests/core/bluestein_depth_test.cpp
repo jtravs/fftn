@@ -18,6 +18,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -140,27 +141,29 @@ template <class T> void every_case(fftn::isa target) {
       check_prime<T>(target, 2053, {}, fftn::direction::forward, 1.0 / 3, 3, 2053 + 5, true, 8192));
 }
 
-TEST(BluesteinDepth, EveryTargetPrecisionAndDirection) {
+template <class T> class BluesteinDepth : public ::testing::Test {};
+TYPED_TEST_SUITE(BluesteinDepth, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(BluesteinDepth, EveryTargetAndDirection) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    every_case<double>(t);
-    every_case<float>(t);
+    every_case<TypeParam>(t);
   }
 }
 
 // Tops given: one and two factors, on convolutions (forced) of 2^13 (tops of 8 and 16) and 10240
 // (tops of 20: the radix-20 top pass with the kernel-spectrum factor forward and the fused
 // chirp backward), with the scale and in place.
-TEST(BluesteinDepth, GivenTops) {
+TYPED_TEST(BluesteinDepth, GivenTops) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const std::vector<std::size_t>& tops : {
              std::vector<std::size_t>{16},
              std::vector<std::size_t>{8, 4},
              std::vector<std::size_t>{8, 8},
          }) {
-      EXPECT_TRUE(
-          check_prime<double>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053, false, 8192));
-      EXPECT_TRUE(
-          check_prime<float>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053, true, 8192));
+      EXPECT_TRUE(check_prime<TypeParam>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053,
+                                         false, 8192));
+      EXPECT_TRUE(check_prime<TypeParam>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053,
+                                         true, 8192));
     }
     // Tops of 20 run where C divides 20: the fused chirp passes read whole blocks of C
     // copies (chain_builder::bluestein_depth_fits: C divides the tops' product) and two tops
@@ -168,14 +171,14 @@ TEST(BluesteinDepth, GivenTops) {
     for (const std::vector<std::size_t>& tops :
          {std::vector<std::size_t>{20}, std::vector<std::size_t>{20, 4}}) {
       std::size_t lanes = 1;
-      const bool d = check_prime<double>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053,
-                                         false, 10240, &lanes);
+      const bool d = check_prime<TypeParam>(t, 2053, tops, fftn::direction::forward, 1.0, 1, 2053,
+                                            false, 10240, &lanes);
       EXPECT_EQ(d, tops[0] % lanes == 0);
-      const bool db = check_prime<double>(t, 2053, tops, fftn::direction::backward, 0.25, 2,
-                                          2053 + 3, true, 10240, &lanes);
+      const bool db = check_prime<TypeParam>(t, 2053, tops, fftn::direction::backward, 0.25, 2,
+                                             2053 + 3, true, 10240, &lanes);
       EXPECT_EQ(db, tops[0] % lanes == 0);
-      const bool f = check_prime<float>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053,
-                                        false, 10240, &lanes);
+      const bool f = check_prime<TypeParam>(t, 2053, tops, fftn::direction::backward, 0.5, 1, 2053,
+                                            false, 10240, &lanes);
       EXPECT_EQ(f, tops[0] % lanes == 0);
     }
   }
@@ -240,14 +243,13 @@ void rules_agree_with_chain(fftn::isa target, std::size_t q, fftn::direction dir
   EXPECT_LE(std::sqrt(diff / norm), tol.rms) << text;
 }
 
-TEST(BluesteinDepth, RulesPlanAgreesWithTheChain) {
+TYPED_TEST(BluesteinDepth, RulesPlanAgreesWithTheChain) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const auto dir : {fftn::direction::forward, fftn::direction::backward}) {
       for (const bool in_place : {false, true}) {
-        rules_agree_with_chain<double>(t, 16411, dir, in_place, in_place ? 0.5 : 1.0);
+        rules_agree_with_chain<TypeParam>(t, 16411, dir, in_place, in_place ? 0.5 : 1.0);
       }
     }
-    rules_agree_with_chain<float>(t, 16411, fftn::direction::forward, false, 1.0);
   }
 }
 
