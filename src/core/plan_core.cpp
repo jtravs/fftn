@@ -1874,13 +1874,13 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // transforms).
   const auto edge_phase = [&](program& q, std::vector<edge_loop>& loops, bool output,
                               const std::vector<std::size_t>& extent, const view& from,
-                              const view& to, const edge_rows& rows, std::size_t lines = 1) {
+                              const view& to, const edge_rows& rows, std::size_t line_count = 1) {
     const edge_side& e = output ? edge_ops->out : edge_ops->in;
     const bool real = output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
     const std::size_t row = r - 1;
     if (e.call.any()) {
       // A block callback on a row's edge phase (task 5.3b): real rows on the chain, and rows as
-      // the lanes over adjacent transforms (lines: the block's transforms, one element apart).
+      // the lanes over adjacent transforms (line_count: the block's transforms, one element apart).
       // Multi-axis plans take theirs inside their phases' line bodies in 5.3c (core/edges.cpp
       // refuses them until then).
       if (r != 1) {
@@ -1937,7 +1937,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         // the block where the side has any (src0).
         const endpoint mine{.where = slot::out, .stride = fe.stride};
         st.push_back(callback_stage(s.prec, real, e.call, false, n, 0, mine.where, mine.stride, 0,
-                                    block_bytes, c.callback_sites, lines, rows.src_dist));
+                                    block_bytes, c.callback_sites, line_count, rows.src_dist));
         if (has_vocabulary(e)) {
           st.push_back(edge_pass_stage(s.prec, vocabulary_of(e), false, n, mine.where, mine.stride,
                                        te.where, te.stride, settings.chunk_points, real, fs,
@@ -1948,7 +1948,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                               {.src_dist = rows.src_dist,
                                .dst_dist = rows.dst_dist,
                                .factor_step = rows.factor_step,
-                               .lines = lines},
+                               .lines = line_count},
                               settings.chunk_points, block_bytes, fs, c.callback_sites, st);
       } else if (!runs.empty()) {
         // The transform ended in the block: the scale, the callback on each run, then the runs
@@ -1983,7 +1983,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                {.src_dist = rows.dst_dist,
                                 .dst_dist = rows.src_dist,
                                 .factor_step = rows.factor_step,
-                                .lines = lines},
+                                .lines = line_count},
                                settings.chunk_points, block_bytes, fs, c.callback_sites, st);
       }
       for (stage& x : st) {
@@ -2331,7 +2331,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   };
   // The input edge's pass of a row strategy (rows: a lanes block's), or with a callback the
   // copy, the callback and the vocabulary (callback_input_stages), appended to st.
-  const auto row_input_stages = [&](const edge_rows& rows_of, std::size_t lines,
+  const auto row_input_stages = [&](const edge_rows& rows_of, std::size_t block_rows,
                                     std::vector<stage>& st) {
     const slot to = c.in_place ? slot::out : input_slot;
     const std::ptrdiff_t to_stride =
@@ -2348,11 +2348,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                           {.src_dist = rows_of.src_dist,
                            .dst_dist = rows_of.dst_dist,
                            .factor_step = rows_of.factor_step,
-                           .lines = lines},
+                           .lines = block_rows},
                           settings.chunk_points, block_bytes, fs, c.callback_sites, st);
   };
-  // describe()'s words for where a row strategy's callbacks run (lines: a lanes block's rows).
-  const auto note_row_callbacks = [&](std::size_t lines, const char* out_at) {
+  // describe()'s words for where a row strategy's callbacks run (block_rows: a lanes block's rows).
+  const auto note_row_callbacks = [&](std::size_t block_rows, const char* out_at) {
     if (!calls) {
       return;
     }
@@ -2365,13 +2365,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       in_at +=
           edge_ops->in.call.mode == callback_mode::produce ? "" : ", after a copy of the input";
     }
-    in_at += lines > 1 ? ", before the lanes" : ", before the row's strategy";
-    const std::string out_where = std::string("on each row ") + out_at +
-                                  (lines > 1 ? ", after the lanes" : ", after the row's strategy");
-    c.callbacks_note =
-        callbacks_text(edge_ops->in.call, edge_ops->out.call,
-                       callback_blocks(in_at, n_in, lines, in_element, block_bytes, what),
-                       callback_blocks(out_where, n_out, lines, out_element, block_bytes, what));
+    in_at += block_rows > 1 ? ", before the lanes" : ", before the row's strategy";
+    const std::string out_where =
+        std::string("on each row ") + out_at +
+        (block_rows > 1 ? ", after the lanes" : ", after the row's strategy");
+    c.callbacks_note = callbacks_text(
+        edge_ops->in.call, edge_ops->out.call,
+        callback_blocks(in_at, n_in, block_rows, in_element, block_bytes, what),
+        callback_blocks(out_where, n_out, block_rows, out_element, block_bytes, what));
   };
   if (use_edge_phases) {
     // Plans with edges whose strategy takes no separate passes are built on the axes' own
