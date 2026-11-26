@@ -1,9 +1,9 @@
 # X66: block callbacks outside the kernels against the user's loop and the vocabulary
 
-- **Status:** planned. The decision rules were drafted with 5.3's design (2026-11-26), before
+- **Status:** running (claimed 2026-11-26 evening). The decision rules were drafted with 5.3's design (2026-11-26), before
   anything was built. The agent who runs X66 claims it here and may adjust the rules only
   before the first judging run, stating each change and why.
-- **Owner:** unclaimed (task 5.3g)
+- **Owner:** X66 agent of the lead's evening session, 2026-11-26 (task 5.3g)
 - **Phase / task:** 5.3g, on 5.3a–5.3c as built
 
 ## Question
