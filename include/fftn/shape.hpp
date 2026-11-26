@@ -122,8 +122,9 @@ enum class r2r_kind : unsigned char {
 /// (r2r, whose `kinds` give each axis's transform), for `T` = `double` or `float`. Other
 /// combinations do not compile.
 ///
-/// Axes are listed slowest-varying first, as the dimensions of a C array; for real kinds
-/// the last axis is the halved one (n/2 + 1 complex values on the complex side). Batch
+/// Axes are listed slowest-varying first, as the dimensions of a C array; for r2c and c2r
+/// the last axis is the halved one (n/2 + 1 complex values on the complex side); r2r has no
+/// halved axis. Batch
 /// dimensions are listed slowest first too, and transforms are numbered in that order (the
 /// last batch dimension varies fastest).
 ///

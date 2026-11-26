@@ -42,7 +42,8 @@ enum class factor_kind : unsigned char {
 /// Preconditions, checked at plan construction (`std::invalid_argument` naming the field):
 /// with a factor, `axis_strides` has one stride per axis of the shape and `batch_strides`
 /// one per batch dimension or none, and the array's span in bytes fits `std::ptrdiff_t`; a complex
-/// factor is not allowed on a real side (the input of r2c, the output of c2r).
+/// factor is not allowed on a real side (the input of r2c, the output of c2r, both sides of
+/// r2r).
 struct factor {
   /// The kind of the array; `factor_kind::none` (the default) means no factor, and the
   /// strides are then ignored.
