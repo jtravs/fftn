@@ -3664,6 +3664,14 @@ What the experiments still require of the build:
   and on such processors dispatch falls back to the scalar target. Distributed builds keep
   the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the
   post-merge job "clang-23 no old x86"). The option is part of the wisdom build identifier.
+- The library's size has no budget (decision log, 2026-11-17), only an informational report:
+  `tools/size_report.py` reads the static library with `size` or `llvm-size` and tables the
+  text of each instruction-set target (its main, codelet-row and leaf units) and of the common
+  code. Every CI job that builds the Release configuration writes the table to its job summary
+  (`.github/workflows/gate.yml`, the step "Library size"): on pull requests Linux x86-64 with
+  GCC and macOS, on main also Clang, AArch64 and Windows. The step never fails a job. The text
+  column is the tool's first (`text`, or `__TEXT` on Mach-O), so numbers compare within one
+  platform and tool. Experiment files that add or remove code cite the table before and after.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
   the same implementation concatenated, not a separate code path. It is proposed against for
   the first release (18.2, "Phase 6"): compiled in the user's build it would take the user's
