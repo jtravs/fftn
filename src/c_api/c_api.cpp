@@ -9,20 +9,25 @@
 #include "fftn/c_api.h"
 
 #include "core/wisdom_access.hpp"
+#include "fftn/callback.hpp"
 #include "fftn/detail/core.hpp"
+#include "fftn/edges.hpp"
 #include "fftn/executor.h"
 #include "fftn/executor.hpp"
 #include "fftn/fftn.hpp"
 #include "fftn/isa.hpp"
 #include "fftn/lengths.hpp"
 #include "fftn/options.hpp"
+#include "fftn/pipeline.hpp"
 #include "fftn/shape.hpp"
 #include "fftn/team.hpp"
 #include "fftn/wisdom.hpp"
 #include "fftn/workspace.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <complex>
 #include <cstddef>
 #include <cstring>
 #include <exception>
@@ -41,6 +46,17 @@ struct fftn_plan {
   std::shared_ptr<const fftn::detail::plan_core> core;
   // The handle's references (fftn_plan_ref); the core is shared with nothing else.
   std::atomic<std::size_t> references{1};
+  // The C callbacks of the input edge, the middle (none for a plan) and the output edge. The
+  // core holds call_c's instantiations in their place, and each execution hands it a thunk
+  // with the C function and the caller's user pointer (c_exec_args).
+  std::array<fftn_block_fn, 3> calls{};
+};
+
+// A pipeline handle: as a plan's, around a pipeline's core.
+struct fftn_pipeline {
+  std::shared_ptr<const fftn::detail::plan_core> core;
+  std::atomic<std::size_t> references{1};
+  std::array<fftn_block_fn, 3> calls{};
 };
 
 struct fftn_workspace {
@@ -138,11 +154,33 @@ int report(fftn_error* error, bool file = false) noexcept {
 }
 
 // A C array of `count` elements: NULL only when it is empty.
-template <class T> std::span<const T> array_of(const T* data, std::size_t count, const char* name) {
+template <class T>
+std::span<const T> array_of(const T* data, std::size_t count, const std::string& where) {
   if (data == nullptr && count != 0) {
-    refuse(std::string("fftn_plan_create: shape.") + name, "is NULL but its count is not 0");
+    refuse(where, "is NULL but its count is not 0");
   }
   return data == nullptr ? std::span<const T>{} : std::span<const T>(data, count);
+}
+
+// The C stored runs as C++ ones; `where` names the array.
+std::vector<fftn::stored_run> runs_of(const fftn_stored_run* data, std::size_t count,
+                                      const std::string& where) {
+  std::vector<fftn::stored_run> runs;
+  for (const fftn_stored_run& r : array_of(data, count, where)) {
+    const int side = raw_value(r.where);
+    if (side != FFTN_IN && side != FFTN_OUT) {
+      refuse(where + "[" + std::to_string(runs.size()) + "].where",
+             "is " + std::to_string(side) + ", neither FFTN_IN nor FFTN_OUT");
+    }
+    runs.push_back({
+        .axis = r.axis,
+        .where = side == FFTN_IN ? fftn::side::in : fftn::side::out,
+        .logical = r.logical,
+        .stored = r.stored,
+        .count = r.count,
+    });
+  }
+  return runs;
 }
 
 // The C shape as the plan core's shape_view, with the arrays it borrows converted into
@@ -154,8 +192,9 @@ struct converted_shape {
   std::vector<fftn::r2r_kind> kinds;
   detail::shape_view view;
 
-  explicit converted_shape(const fftn_shape* s) {
-    const std::string where = "fftn_plan_create: shape";
+  // `function` names the C function in messages.
+  converted_shape(const fftn_shape* s, const std::string& function) {
+    const std::string where = function + ": shape";
     if (s == nullptr) {
       refuse(where, "is NULL");
     }
@@ -195,26 +234,13 @@ struct converted_shape {
     default:
       refuse(where + ".precision", "is " + std::to_string(precision) + ", not an fftn_precision");
     }
-    for (const fftn_axis& a : array_of(s->axes, s->rank, "axes")) {
+    for (const fftn_axis& a : array_of(s->axes, s->rank, where + ".axes")) {
       axes.push_back({.n = a.n, .in_stride = a.in_stride, .out_stride = a.out_stride});
     }
-    for (const fftn_batch& b : array_of(s->batches, s->batch_rank, "batches")) {
+    for (const fftn_batch& b : array_of(s->batches, s->batch_rank, where + ".batches")) {
       batches.push_back({.count = b.count, .in_dist = b.in_dist, .out_dist = b.out_dist});
     }
-    for (const fftn_stored_run& r : array_of(s->runs, s->run_count, "runs")) {
-      const int side = raw_value(r.where);
-      if (side != FFTN_IN && side != FFTN_OUT) {
-        refuse(where + ".runs[" + std::to_string(runs.size()) + "].where",
-               "is " + std::to_string(side) + ", neither FFTN_IN nor FFTN_OUT");
-      }
-      runs.push_back({
-          .axis = r.axis,
-          .where = side == FFTN_IN ? fftn::side::in : fftn::side::out,
-          .logical = r.logical,
-          .stored = r.stored,
-          .count = r.count,
-      });
-    }
+    runs = runs_of(s->runs, s->run_count, where + ".runs");
     if (kind == FFTN_R2R) {
       if (s->r2r_kinds == nullptr) {
         refuse(where + ".r2r_kinds", "is NULL; an FFTN_R2R shape needs one kind per axis");
@@ -237,11 +263,11 @@ struct converted_shape {
   }
 };
 
-fftn::options options_of(const fftn_options* o) {
+fftn::options options_of(const fftn_options* o, const std::string& function) {
   if (o == nullptr) {
     return {};
   }
-  const std::string where = "fftn_plan_create: options.";
+  const std::string where = function + ": options.";
   if (o->force_isa < FFTN_ISA_SCALAR || o->force_isa > FFTN_ISA_BEST) {
     refuse(where + "force_isa", "is " + std::to_string(o->force_isa) + ", not an fftn_isa");
   }
@@ -276,6 +302,233 @@ fftn::team team_of(fftn_team t) noexcept {
 // Takes ownership from a handle the C caller passed back.
 template <class T> void destroy(T* handle) noexcept { const std::unique_ptr<T> owned(handle); }
 
+// fftn_plan_ref and fftn_plan_release for either handle.
+template <class H> H* add_reference(H* h) noexcept {
+  if (h != nullptr) {
+    h->references.fetch_add(1, std::memory_order_relaxed);
+  }
+  return h;
+}
+
+template <class H> void drop_reference(H* h) noexcept {
+  // The last release frees the handle: every earlier release happens before it.
+  if (h != nullptr && h->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    destroy(h);
+  }
+}
+
+// ---- Fusion (step 6.9) ----
+
+static_assert(FFTN_FACTOR_NONE == static_cast<int>(fftn::factor_kind::none));
+static_assert(FFTN_FACTOR_REAL == static_cast<int>(fftn::factor_kind::real));
+static_assert(FFTN_FACTOR_COMPLEX == static_cast<int>(fftn::factor_kind::complex));
+static_assert(FFTN_CALLBACK_MODIFY == static_cast<int>(fftn::callback_mode::modify));
+static_assert(FFTN_CALLBACK_PRODUCE == static_cast<int>(fftn::callback_mode::produce));
+static_assert(FFTN_CALLBACK_CONSUME == static_cast<int>(fftn::callback_mode::consume));
+static_assert(FFTN_ALONG_TRANSFORMS == fftn::along_transforms);
+
+// What the core passes a C callback as its user pointer: the C function and the caller's own
+// pointer, built by each execution on its caller's stack (c_exec_args). A team member's
+// callbacks receive the pointers of its own call (edge_state_of copies them per member), and an
+// executor's tasks run within the call, so the thunk outlives every call that reads it.
+struct c_thunk {
+  fftn_block_fn fn = nullptr;
+  void* user = nullptr;
+};
+
+// The block_fn<E> the core calls in place of a C callback on elements of type E: it converts
+// the block's place into the C struct and calls the C function. One instantiation per element
+// type, so that the core calls it through its own type (core/callbacks.cpp, invoke_as). It is
+// noexcept: an exception thrown by a "C" callback written in C++ ends the program here
+// (std::terminate) and never reaches the caller of the execution (c_api.h, fftn_block_fn).
+template <class E> void call_c(void* user, const fftn::block_info& info, E* data) noexcept {
+  const auto* thunk = static_cast<const c_thunk*>(user);
+  const fftn_block_info c{
+      .transform = info.transform,
+      .rank = info.origin.size(),
+      .origin = info.origin.data(),
+      .element_axis = info.element_axis,
+      .line_axis = info.line_axis,
+      .length = info.length,
+      .lines = info.lines,
+      .element_stride = info.element_stride,
+      .line_stride = info.line_stride,
+      .group = info.group,
+      .group_stride = info.group_stride,
+      .copy = info.copy,
+      .member = info.member,
+      .scratch = info.scratch.empty() ? nullptr : info.scratch.data(),
+      .scratch_bytes = info.scratch.size(),
+  };
+  thunk->fn(thunk->user, &c, data);
+}
+
+template <class E> detail::erased_block_fn erased_call_c() noexcept {
+  // converted back to block_fn<E> before any call, as fftn::detail::view_of converts an edge's
+  return reinterpret_cast<detail::erased_block_fn>(&call_c<E>);
+}
+
+// The call_c for a side of complex or real elements in precision `p`.
+detail::erased_block_fn call_c_for(bool complex, detail::precision p) noexcept {
+  if (p == detail::precision::f64) {
+    return complex ? erased_call_c<std::complex<double>>() : erased_call_c<double>();
+  }
+  return complex ? erased_call_c<std::complex<float>>() : erased_call_c<float>();
+}
+
+// A C factor's kind and strides into `view`; `where` names the factor.
+void convert_factor(const fftn_factor& f, const std::string& where, detail::edge_view& view) {
+  const int kind = raw_value(f.kind);
+  if (kind < FFTN_FACTOR_NONE || kind > FFTN_FACTOR_COMPLEX) {
+    refuse(where + ".kind", "is " + std::to_string(kind) + ", not an fftn_factor_kind");
+  }
+  view.kind = static_cast<fftn::factor_kind>(kind);
+  view.axis_strides = array_of(f.axis_strides, f.axis_stride_count, where + ".axis_strides");
+  view.batch_strides = array_of(f.batch_strides, f.batch_stride_count, where + ".batch_strides");
+}
+
+// A C callback into `view`, whose side holds complex or real elements in precision `p`; the C
+// function goes to `keep`, the handle's.
+void convert_callback(const fftn_callback& c, const std::string& where, bool complex,
+                      detail::precision p, detail::edge_view& view, fftn_block_fn& keep) {
+  const int mode = raw_value(c.mode);
+  if (mode < FFTN_CALLBACK_MODIFY || mode > FFTN_CALLBACK_CONSUME) {
+    refuse(where + ".mode", "is " + std::to_string(mode) + ", not an fftn_callback_mode");
+  }
+  // Without a function the core sees none, and judges the mode and scratch as the C++
+  // constructor does (refused unless they are the defaults).
+  view.call = c.fn == nullptr ? nullptr : call_c_for(complex, p);
+  view.call_mode = static_cast<fftn::callback_mode>(mode);
+  view.call_scratch = c.scratch_bytes;
+  keep = c.fn;
+}
+
+// A C edge as the core's view; the strides stay borrowed from the C arrays.
+detail::edge_view edge_view_of(const fftn_edge& e, const std::string& where, bool complex,
+                               detail::precision p, fftn_block_fn& keep) {
+  detail::edge_view v;
+  v.scale = e.scale;
+  convert_factor(e.mul, where + ".mul", v);
+  v.accumulate = e.accumulate != 0;
+  convert_callback(e.call, where + ".call", complex, p, v, keep);
+  return v;
+}
+
+// The exec_args a core receives for a C execution: the factor arrays as given, and for each
+// edge with a C callback a thunk in place of the user pointer. It points into itself, so it is
+// built where the execution's call is and never copied or moved.
+struct c_exec_args {
+  std::array<c_thunk, 3> thunks{};
+  fftn::exec_args args{};
+
+  c_exec_args(const std::array<fftn_block_fn, 3>& calls, const fftn_exec_args* a) noexcept {
+    const fftn_exec_args given = a == nullptr ? fftn_exec_args{} : *a;
+    args.in_factor = given.in_factor;
+    args.mid_factor = given.mid_factor;
+    args.out_factor = given.out_factor;
+    const std::array<void*, 3> users = {given.in_user, given.mid_user, given.out_user};
+    const std::array<void**, 3> slots = {&args.in_user, &args.mid_user, &args.out_user};
+    for (std::size_t i = 0; i < 3; ++i) {
+      thunks.at(i) = {.fn = calls.at(i), .user = users.at(i)};
+      *slots.at(i) = calls.at(i) != nullptr ? &thunks.at(i) : users.at(i);
+    }
+  }
+  c_exec_args(const c_exec_args&) = delete;
+  c_exec_args& operator=(const c_exec_args&) = delete;
+  c_exec_args(c_exec_args&&) = delete;
+  c_exec_args& operator=(c_exec_args&&) = delete;
+  ~c_exec_args() = default;
+};
+
+// Whether a plan's input and output hold complex values.
+bool complex_input(detail::transform_kind k) noexcept {
+  return k == detail::transform_kind::c2c || k == detail::transform_kind::c2r;
+}
+bool complex_output(detail::transform_kind k) noexcept {
+  return k == detail::transform_kind::c2c || k == detail::transform_kind::r2c;
+}
+
+// A C pipeline description as the core's view, with the arrays it borrows converted.
+struct converted_pipeline {
+  std::vector<fftn::batch> batches;
+  std::vector<fftn::stored_run> runs;
+  std::array<fftn_block_fn, 3> calls{};
+  detail::pipeline_view view;
+
+  explicit converted_pipeline(const fftn_pipeline_desc* d) {
+    const std::string where = "fftn_pipeline_create: desc";
+    if (d == nullptr) {
+      refuse(where, "is NULL");
+    }
+    // Whether the input and output, and the middle, hold complex values.
+    bool complex_ends = true;
+    bool complex_middle = true;
+    const int kind = raw_value(d->kind);
+    switch (kind) {
+    case FFTN_PIPELINE_CCC:
+      view.kind = detail::pipeline_kind::complex_pair;
+      if (d->first != FFTN_FORWARD && d->first != FFTN_BACKWARD) {
+        refuse(where + ".first", "is " + std::to_string(d->first) +
+                                     ", neither FFTN_FORWARD (-1) nor FFTN_BACKWARD (+1)");
+      }
+      view.first = static_cast<fftn::direction>(d->first);
+      break;
+    case FFTN_PIPELINE_TCT:
+      view.kind = detail::pipeline_kind::real_convolution;
+      complex_ends = false;
+      break;
+    case FFTN_PIPELINE_CTC:
+      view.kind = detail::pipeline_kind::real_middle;
+      complex_middle = false;
+      break;
+    default:
+      refuse(where + ".kind", "is " + std::to_string(kind) + ", not an fftn_pipeline_kind");
+    }
+    const int precision = raw_value(d->precision);
+    if (precision != FFTN_DOUBLE && precision != FFTN_FLOAT) {
+      refuse(where + ".precision", "is " + std::to_string(precision) + ", not an fftn_precision");
+    }
+    view.prec = precision == FFTN_DOUBLE ? detail::precision::f64 : detail::precision::f32;
+    view.line = {.n = d->line.n, .in_stride = d->line.in_stride, .out_stride = d->line.out_stride};
+    for (const fftn_batch& b : array_of(d->batches, d->batch_rank, where + ".batches")) {
+      batches.push_back({.count = b.count, .in_dist = b.in_dist, .out_dist = b.out_dist});
+    }
+    runs = runs_of(d->runs, d->run_count, where + ".runs");
+    view.batches = batches;
+    view.runs = runs;
+    view.prologue =
+        edge_view_of(d->prologue, where + ".prologue", complex_ends, view.prec, calls[0]);
+    view.middle.scale = d->middle.scale;
+    convert_factor(d->middle.mul, where + ".middle.mul", view.middle);
+    convert_callback(d->middle.call, where + ".middle.call", complex_middle, view.prec, view.middle,
+                     calls[1]);
+    view.epilogue =
+        edge_view_of(d->epilogue, where + ".epilogue", complex_ends, view.prec, calls[2]);
+    view.fanout = d->fanout;
+    view.fanout_out_dist = d->fanout_out_dist;
+    view.fanout_factor_dist = d->fanout_factor_dist;
+  }
+};
+
+// fftn_execute_on's checks and statuses, for a plan or a pipeline, with the C arguments.
+template <class H>
+int execute_on_c(const H* h, const void* in, void* out, const fftn_executor* executor,
+                 fftn_workspace* workspace, const fftn_exec_args* args) noexcept {
+  if (executor == nullptr || executor->concurrency == nullptr || executor->bulk == nullptr ||
+      workspace == nullptr) {
+    return FFTN_ERROR_INVALID_ARGUMENT;
+  }
+  try {
+    const c_exec_args a(h->calls, args);
+    detail::execute_on(*h->core, in, out, fftn::executor_ref(*executor), workspace->ws, a.args);
+    return FFTN_OK;
+  } catch (const std::bad_alloc&) {
+    return FFTN_ERROR_OUT_OF_MEMORY;
+  } catch (...) {
+    return FFTN_ERROR_EXECUTOR;
+  }
+}
+
 } // namespace
 
 extern "C" {
@@ -296,9 +549,9 @@ fftn_options fftn_options_default(void) noexcept {
 fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options,
                             fftn_error* error) noexcept {
   try {
-    const converted_shape s(shape);
+    const converted_shape s(shape, "fftn_plan_create");
     auto plan = std::make_unique<fftn_plan>();
-    plan->core = detail::make_plan_core(s.view, options_of(options));
+    plan->core = detail::make_plan_core(s.view, options_of(options, "fftn_plan_create"));
     set_error(error, FFTN_OK, {});
     return plan.release();
   } catch (...) {
@@ -307,19 +560,9 @@ fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options
   }
 }
 
-fftn_plan* fftn_plan_ref(fftn_plan* plan) noexcept {
-  if (plan != nullptr) {
-    plan->references.fetch_add(1, std::memory_order_relaxed);
-  }
-  return plan;
-}
+fftn_plan* fftn_plan_ref(fftn_plan* plan) noexcept { return add_reference(plan); }
 
-void fftn_plan_release(fftn_plan* plan) noexcept {
-  // The last release frees the plan: every earlier release happens before it.
-  if (plan != nullptr && plan->references.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-    destroy(plan);
-  }
-}
+void fftn_plan_release(fftn_plan* plan) noexcept { drop_reference(plan); }
 
 size_t fftn_plan_workspace_bytes(const fftn_plan* plan, int lanes) noexcept {
   return detail::workspace_bytes(*plan->core, lanes);
@@ -528,5 +771,162 @@ const char* fftn_isa_name(int target) noexcept {
 }
 
 const char* fftn_version(void) noexcept { return fftn::version(); }
+
+// ---- Fusion (step 6.9) ----
+
+fftn_edge fftn_edge_default(void) noexcept {
+  const fftn::edge<double> d{};
+  fftn_edge e{};
+  e.scale = d.scale;
+  e.accumulate = d.accumulate ? 1 : 0;
+  return e;
+}
+
+fftn_plan* fftn_plan_create_edges(const fftn_shape* shape, const fftn_options* options,
+                                  const fftn_plan_edges* edges, fftn_error* error) noexcept {
+  try {
+    const std::string function = "fftn_plan_create_edges";
+    const converted_shape s(shape, function);
+    const fftn::options o = options_of(options, function);
+    auto plan = std::make_unique<fftn_plan>();
+    if (edges == nullptr) {
+      plan->core = detail::make_plan_core(s.view, o);
+    } else {
+      const detail::edges_view e{
+          .in = edge_view_of(edges->in, function + ": edges.in", complex_input(s.view.kind),
+                             s.view.prec, plan->calls[0]),
+          .out = edge_view_of(edges->out, function + ": edges.out", complex_output(s.view.kind),
+                              s.view.prec, plan->calls[2]),
+      };
+      plan->core = detail::make_plan_core_with_edges(s.view, o, e);
+    }
+    set_error(error, FFTN_OK, {});
+    return plan.release();
+  } catch (...) {
+    report(error);
+    return nullptr;
+  }
+}
+
+// NOLINTBEGIN(misc-const-correctness): as for the executions above
+void fftn_execute_args(const fftn_plan* plan, const void* in, void* out, fftn_workspace* workspace,
+                       const fftn_exec_args* args) noexcept {
+  const c_exec_args a(plan->calls, args);
+  detail::execute_all(*plan->core, in, out, workspace->ws, a.args);
+}
+
+void fftn_execute_transforms_args(const fftn_plan* plan, size_t first, size_t count, const void* in,
+                                  void* out, fftn_workspace* workspace,
+                                  const fftn_exec_args* args) noexcept {
+  const c_exec_args a(plan->calls, args);
+  detail::execute_core(*plan->core, first, count, in, out, workspace->ws, a.args);
+}
+
+void fftn_execute_team_args(const fftn_plan* plan, const void* in, void* out, fftn_team team,
+                            fftn_workspace* workspace, fftn_completion done,
+                            const fftn_exec_args* args) noexcept {
+  const c_exec_args a(plan->calls, args);
+  detail::execute_team(*plan->core, in, out, team_of(team), workspace->ws,
+                       raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
+                                                              : fftn::completion::all,
+                       a.args);
+}
+
+int fftn_execute_on_args(const fftn_plan* plan, const void* in, void* out,
+                         const fftn_executor* executor, fftn_workspace* workspace,
+                         const fftn_exec_args* args) noexcept {
+  return execute_on_c(plan, in, out, executor, workspace, args);
+}
+
+fftn_pipeline_desc fftn_pipeline_desc_default(void) noexcept {
+  const fftn::pipeline_desc<std::complex<double>, std::complex<double>, std::complex<double>> d{};
+  fftn_pipeline_desc c{};
+  c.kind = FFTN_PIPELINE_CCC;
+  c.precision = FFTN_DOUBLE;
+  c.first = static_cast<int>(d.first);
+  c.prologue = fftn_edge_default();
+  c.middle.scale = d.middle.scale;
+  c.epilogue = fftn_edge_default();
+  c.fanout = d.fanout;
+  return c;
+}
+
+fftn_pipeline* fftn_pipeline_create(const fftn_pipeline_desc* desc, const fftn_options* options,
+                                    fftn_error* error) noexcept {
+  try {
+    const converted_pipeline d(desc);
+    auto pipeline = std::make_unique<fftn_pipeline>();
+    pipeline->core =
+        detail::make_pipeline_core(d.view, options_of(options, "fftn_pipeline_create"));
+    pipeline->calls = d.calls;
+    set_error(error, FFTN_OK, {});
+    return pipeline.release();
+  } catch (...) {
+    report(error);
+    return nullptr;
+  }
+}
+
+fftn_pipeline* fftn_pipeline_ref(fftn_pipeline* pipeline) noexcept {
+  return add_reference(pipeline);
+}
+
+void fftn_pipeline_release(fftn_pipeline* pipeline) noexcept { drop_reference(pipeline); }
+
+size_t fftn_pipeline_workspace_bytes(const fftn_pipeline* pipeline, int lanes) noexcept {
+  return detail::workspace_bytes(*pipeline->core, lanes);
+}
+
+size_t fftn_pipeline_describe(const fftn_pipeline* pipeline, char* buffer, size_t size) noexcept {
+  try {
+    return copy_out(detail::describe(*pipeline->core), buffer, size);
+  } catch (...) {
+    return copy_out({}, buffer, size);
+  }
+}
+
+int fftn_pipeline_instruction_set(const fftn_pipeline* pipeline) noexcept {
+  return static_cast<int>(detail::instruction_set(*pipeline->core));
+}
+
+size_t fftn_pipeline_transform_count(const fftn_pipeline* pipeline) noexcept {
+  return detail::transform_count(*pipeline->core);
+}
+
+void fftn_pipeline_execute(const fftn_pipeline* pipeline, const void* in, void* out,
+                           fftn_workspace* workspace, const fftn_exec_args* args) noexcept {
+  const c_exec_args a(pipeline->calls, args);
+  detail::execute_all(*pipeline->core, in, out, workspace->ws, a.args);
+}
+
+void fftn_pipeline_execute_transforms(const fftn_pipeline* pipeline, size_t first, size_t count,
+                                      const void* in, void* out, fftn_workspace* workspace,
+                                      const fftn_exec_args* args) noexcept {
+  const c_exec_args a(pipeline->calls, args);
+  detail::execute_core(*pipeline->core, first, count, in, out, workspace->ws, a.args);
+}
+
+void fftn_pipeline_execute_team(const fftn_pipeline* pipeline, const void* in, void* out,
+                                fftn_team team, fftn_workspace* workspace, fftn_completion done,
+                                const fftn_exec_args* args) noexcept {
+  const c_exec_args a(pipeline->calls, args);
+  detail::execute_team(*pipeline->core, in, out, team_of(team), workspace->ws,
+                       raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
+                                                              : fftn::completion::all,
+                       a.args);
+}
+
+fftn_transform_range fftn_pipeline_transforms_of(const fftn_pipeline* pipeline,
+                                                 fftn_team team) noexcept {
+  const fftn::transform_range r = detail::transforms_of(*pipeline->core, team_of(team));
+  return {.first = r.first, .count = r.count};
+}
+
+int fftn_pipeline_execute_on(const fftn_pipeline* pipeline, const void* in, void* out,
+                             const fftn_executor* executor, fftn_workspace* workspace,
+                             const fftn_exec_args* args) noexcept {
+  return execute_on_c(pipeline, in, out, executor, workspace, args);
+}
+// NOLINTEND(misc-const-correctness)
 
 } // extern "C"
