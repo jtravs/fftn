@@ -58,9 +58,9 @@ namespace fftn::inline v0 {
 /// otherwise. The scales of the prologue, the middle, the epilogue and `options::scale` are
 /// applied as one product.
 ///
-/// Provisional (tasks 5.2b, 5.2c). A pipeline refuses, naming the field, what is not built yet:
-/// the inverse transform first (task 5.3), `fanout` above 1 (task 5.2e), stored runs (task 5.2d)
-/// and the kind `<C, T, C>` (task 5.3).
+/// Provisional (tasks 5.2b to 5.2d). A pipeline refuses, naming the field, what is not built yet:
+/// the inverse transform first (task 5.3), `fanout` above 1 (task 5.2e), the kind `<C, T, C>`
+/// (task 5.3), and stored runs on an in-place pipeline or beside a prologue or epilogue factor.
 template <class In, class Mid, class Out> struct pipeline_desc {
   static_assert(
       (std::is_same_v<In, std::complex<double>> && std::is_same_v<Mid, std::complex<double>> &&
@@ -91,7 +91,12 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// (`out_dist`, in `Out` elements); 0 for the tight default. None means a single line. Lines
   /// are numbered in batch order (the last batch dimension varies fastest).
   std::vector<batch> batches{};
-  /// Stored runs of the line (`stored_run`, axis 0): refused until task 5.2d.
+  /// Stored runs of the line (`stored_run`, axis 0; fftn/shape.hpp), on the input (`side::in`)
+  /// or the output (`side::out`), validated as a shape's runs: input elements outside the input's
+  /// runs are zero and not read, output elements outside the output's runs are not written, and
+  /// each side's default distances and reach are by its stored extent (the end of its last run).
+  /// The logical positions are those of the line's n elements on both sides, for `<T, C, T>` too.
+  /// Refused on an in-place pipeline and beside a prologue or epilogue factor (task 5.2d).
   std::vector<stored_run> runs{};
   /// The input edge: a scale and a factor applied to each input element before the first
   /// transform (`accumulate` is refused here; a block callback, `call`, until task 5.3d).
@@ -151,7 +156,7 @@ namespace detail {
 /// normalised: fold 1/n into the kernel or `middle.scale`.
 ///
 /// `runs`: stored runs of the rows (axis 0); the rows' distances are then their stored extents
-/// on each side, the end of their last run. (Pipelines refuse runs until task 5.2d.)
+/// on each side, the end of their last run (the zero-padded convolution's valid half, say).
 ///
 /// Throws `std::bad_alloc` when memory runs out. Guarantees: nothing is validated until a
 /// pipeline is built from the description. Provisional (task 5.2b).
@@ -173,8 +178,8 @@ complex_convolution_rows(std::size_t n, std::size_t count, std::span<const store
 /// its circular convolution with the kernel whose r2c transform the spectrum is, times n: fold
 /// 1/n into the kernel or `middle.scale`. A linear (zero-padded) convolution of a row of m values
 /// with a kernel of L taps is the circular one of a length n of at least m + L - 1, the row and
-/// the kernel padded with zeros; until stored runs are built (task 5.2d), the caller stores those
-/// zeros.
+/// the kernel padded with zeros; runs keep those zeros out of memory (an input run of the m values
+/// from logical 0, and an output run of the outputs wanted).
 ///
 /// `runs`: as for `complex_convolution_rows`. Exceptions, guarantees and status: as for
 /// `complex_convolution_rows` (task 5.2c).
@@ -236,7 +241,7 @@ spectral_pair_rows(std::size_t n, std::size_t count, direction first,
 /// between its read and its store). `effort` and `use` are ignored: pipelines are planned by
 /// the rules until task 5.2g, and `describe()` says so.
 ///
-/// Provisional (task 5.2b): see `pipeline_desc`.
+/// Provisional (tasks 5.2b to 5.2d): see `pipeline_desc`.
 template <class In, class Mid, class Out> class pipeline {
 public:
   /// Builds the pipeline `desc` with options `opts`.

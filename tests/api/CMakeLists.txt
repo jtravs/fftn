@@ -25,10 +25,16 @@ fftn_always_optimise(callbacks_test.cpp)
 fftn_add_test(fftn_callbacks_strategies_tests SOURCES callbacks_strategies_test.cpp
               LIBRARIES fftn_test_support)
 fftn_always_optimise(callbacks_strategies_test.cpp)
+# Block callbacks on planes and volumes (task 5.3c).
+fftn_add_test(fftn_callbacks_axes_tests SOURCES callbacks_axes_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(callbacks_axes_test.cpp)
 
 # Row pipelines (tasks 5.2b, 5.2c) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_test.cpp)
+# Stored runs and the depth-first pair on row pipelines (task 5.2d), likewise.
+fftn_add_test(fftn_pipeline_runs_tests SOURCES pipeline_runs_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_runs_test.cpp)
 
 # Real-to-real plans (task 6.3) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)

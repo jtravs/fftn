@@ -8,6 +8,7 @@
 #include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
+#include "core/runs.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/edges.hpp"
 #include "fftn/options.hpp"
@@ -24,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -57,6 +59,7 @@ template <class F> auto renaming(const F& f) {
     replace_all(m, "fftn::plan: ", "fftn::pipeline: ");
     replace_all(m, "shape.axes[0]", "desc.line");
     replace_all(m, "shape.batches", "desc.batches");
+    replace_all(m, "shape.runs", "desc.runs");
     replace_all(m, "shape (", "desc (");
     replace_all(m, "fftn::pipeline: shape ", "fftn::pipeline: desc ");
     replace_all(m, "the shape has", "the line has");
@@ -74,6 +77,16 @@ const void* const epilogue_tag = pipeline_tags.data() + 2;
 // Where the one product of the scales goes: a separate pass, or a free edge of a chain.
 enum class scale_at : std::uint8_t { none, pass, forward_in, inverse_in, inverse_out };
 
+// The vocabulary as validated (resolve_edge_side), before its placement: the three operations,
+// the one product of the scales, and the line's runs.
+struct vocab {
+  edge_side pro;
+  edge_side mid;
+  edge_side epi;
+  double scale = 1.0;
+  run_plan runs;
+};
+
 struct placed {
   edge_side pro;
   edge_side mid;
@@ -82,24 +95,28 @@ struct placed {
   scale_at at = scale_at::none;
 };
 
-// Each operation's place: with `fuse` (the <C, C, C> chain pair), a complex factor of stride 1
-// along the line (or on a line of one point) fuses into its chain's pass; anything else, and
-// accumulation, is an edge pass on the line in the workspace block. The real chain pair (`fuse`
-// false) fuses nothing: its sides take real factors, which no pass fuses, and a middle fused into
-// the pairing passes is an arm of experiment X67 (PLAN 5.2c). The scale goes to a separate pass
-// where there is one (it costs nothing there), else to the inverse chain's output, else (the
-// epilogue's factor fused) to its input.
-placed place(edge_side pro, edge_side mid, edge_side epi, double scale, std::size_t n, bool fuse) {
+// Each operation's place: a complex factor of stride 1 along the line (or on a line of one point)
+// fuses into its chain's pass where the pair has such a pass (`sides`: the prologue's and the
+// epilogue's, the <C, C, C> chain pair's; `middle`: the middle's, which the depth-first pair has
+// too); anything else, and accumulation, is a separate pass on the line. The real chain pair fuses
+// nothing: its sides take real factors, which no pass fuses, and a middle fused into the pairing
+// passes is an arm of experiment X67 (PLAN 5.2c). The scale goes to a separate pass where there is
+// one (it costs nothing there), else to the inverse chain's output, else (the epilogue's factor
+// fused) to its input. The sides' runs go with them (task 5.2d).
+placed place(const vocab& v, std::size_t n, bool sides, bool middle) {
   // A stride of 0 along a line of more than one point broadcasts one value, which the fused
   // passes (one value per element) cannot read (side_of gives 0 for a line of one point, where
   // the stride reads nothing more).
-  const auto fusable = [n, fuse](const edge_side& s) {
+  const auto fusable = [n](const edge_side& s, bool fuse) {
     return fuse && s.kind == factor_kind::complex &&
            (s.axis_stride == 1 || (s.axis_stride == 0 && n == 1));
   };
-  placed p{.pro = std::move(pro), .mid = std::move(mid), .epi = std::move(epi), .scale = scale};
+  const double scale = v.scale;
+  placed p{.pro = v.pro, .mid = v.mid, .epi = v.epi, .scale = scale};
+  p.pro.runs = v.runs.in;
+  p.epi.runs = v.runs.out;
   for (edge_side* s : {&p.pro, &p.mid, &p.epi}) {
-    s->fused = fusable(*s);
+    s->fused = fusable(*s, s == &p.mid ? middle : sides);
     s->separate = s->kind != factor_kind::none && !s->fused;
   }
   p.epi.fused = p.epi.fused && !p.epi.accumulate;
@@ -182,10 +199,11 @@ std::string operation_text(const char* name, const edge_side& s, const char* fus
 }
 
 // The middle's separate pass, in place on the spectrum of `bins` complex values in the workspace
-// block, its factor through the middle's cursor.
-stage middle_stage(precision prec, const edge_side& mid, std::size_t bins, std::size_t chunk) {
-  stage m = edge_pass_stage(prec, mid, true, bins, slot::block, 1, slot::block, 1, chunk, false,
-                            mid.axis_stride);
+// block (or, the depth-first pair's, in scratch a), its factor through the middle's cursor.
+stage middle_stage(precision prec, const edge_side& mid, std::size_t bins, std::size_t chunk,
+                   slot where = slot::block) {
+  stage m =
+      edge_pass_stage(prec, mid, true, bins, where, 1, where, 1, chunk, false, mid.axis_stride);
   m.moving_factors = moving_mid_out_factor;
   m.name.replace(0, std::string_view("edge out").size(), "edge middle");
   return m;
@@ -217,28 +235,157 @@ void end_program(program& p, std::vector<stage>& line) {
   }
 }
 
+// How a pair takes its line's runs (core/runs.hpp): the input's and the output's pruning.
+struct run_prunings {
+  run_pruning in = run_pruning::none;
+  run_pruning out = run_pruning::none;
+};
+
+// Whether a side's runs lie within the line's first half (n/2 elements), where the chain's
+// pruned first or last pass (task 5.1e) reads or writes them.
+bool within_half(const std::vector<line_run>& runs, std::size_t n) {
+  return std::ranges::all_of(runs, [n](const line_run& r) { return r.logical + r.count <= n / 2; });
+}
+
+// Whether the side is one run of exactly the line's first half, stored with stride 1: the pruned
+// pass then reads or writes it where it is stored.
+bool half_stored(const std::vector<line_run>& runs, std::size_t n, const endpoint& stored) {
+  return runs.size() == 1 && runs[0].logical == 0 && 2 * runs[0].count == n && stored.stride == 1;
+}
+
+// The depth-first pair (DESIGN.md 12.2, task 5.2d): batch loops, then the stages of one line,
+//
+//   [read stage into scratch b] -> forward depth-first chain (its first pass from the input or
+//   b, its sub-rows on their blocks of the workspace block, its top pass into scratch a times
+//   the middle's factor) -> [middle pass on a] -> backward depth-first chain (from a, its
+//   blocks in the block, its last top pass to the output, or in place) -> [store stage]
+//
+// built by chain_builder::depth_pair, which also builds Bluestein's depth-first convolution (X50:
+// for long lines, whose sub-rows then run in cache with loops moving the block, as a row of the
+// line's length would). One input run from logical 0 is read by the forward first pass, zeros
+// beyond; one output run from a logical start that C divides is written by the last top pass,
+// without accumulation; any other runs, a prologue or epilogue factor and accumulation go through
+// the read and store stages (run stages or edge passes), which sweep the line once more each. The
+// middle's factor of stride 1 fuses into the forward top pass, through the middle cursor.
 template <class T>
-void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const placed& pl,
-                const build_settings& settings) {
+void build_depth_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const placed& pl,
+                      const build_settings& settings, chain_builder<T>& chain,
+                      const std::vector<std::size_t>& tops, run_prunings& pr) {
+  program& p = c.prog;
+  const std::size_t n = d.line.n;
+  const std::size_t lanes = of<T>(*find_kernels(c.isa_target)).complex_lanes;
+  const std::size_t chunk = settings.chunk_points;
+  const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
+  add_batch_loops(p, d, l, complex_bytes);
+  typename chain_builder<T>::depth_pair_form form;
+  form.kernel = pl.mid.fused ? middle_tag : nullptr;
+  form.out = pl.at == scale_at::inverse_out ? edge_op::scale : edge_op::none;
+  form.scale = pl.scale;
+  std::vector<stage> read;
+  std::vector<stage> store;
+  slot src = slot::in;
+  slot dst = slot::out;
+  if (pl.pro.runs.any()) {
+    const std::vector<line_run>& runs = pl.pro.runs.of(0);
+    if (runs.size() == 1 && runs[0].logical == 0) {
+      form.in_count = runs[0].count;
+      form.in_offset = runs[0].stored;
+      pr.in = run_pruning::direct;
+    } else {
+      run_line_stages(c.prec, pl.pro, false, n, runs, {.src = slot::in, .dst = slot::b}, chunk,
+                      false, read);
+      src = slot::b;
+    }
+  } else if (pl.pro.separate) {
+    read.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, 1, slot::b, 1, chunk, false,
+                                   pl.pro.axis_stride));
+    src = slot::b;
+  }
+  if (pl.epi.runs.any()) {
+    const std::vector<line_run>& runs = pl.epi.runs.of(0);
+    if (runs.size() == 1 && runs[0].logical % lanes == 0 && !pl.epi.accumulate) {
+      form.out_logical = runs[0].logical;
+      form.out_count = runs[0].count;
+      form.out_offset = runs[0].stored;
+      pr.out = run_pruning::direct;
+    } else {
+      run_line_stages(c.prec, pl.epi, true, n, runs, {.src = slot::block, .dst = slot::out}, chunk,
+                      false, store);
+      dst = slot::block;
+    }
+  } else if (pl.epi.separate) {
+    store.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, 1, chunk,
+                                    false, pl.epi.axis_stride));
+    dst = slot::block;
+  }
+  typename chain_builder<T>::bluestein_depth_stages parts =
+      chain.depth_pair(n, tops, src, dst, form);
+  const std::size_t subs = checked_product(tops);
+  const auto stages = [&p](std::vector<stage>& from) {
+    for (stage& st : from) {
+      p.records.emplace_back(std::move(st));
+    }
+  };
+  // A lines loop of `count` iterations moving the block by `step` elements: within one line, a
+  // phase whose lines a team's members run on their own scratch, the owner's block shared.
+  const auto looped = [&](std::size_t count, std::size_t step, std::vector<stage>& body) {
+    const std::size_t first = p.records.size();
+    loop lp{.kind = loop_kind::lines, .count = count};
+    lp.step[2] = static_cast<std::ptrdiff_t>(step) * complex_bytes;
+    p.records.emplace_back(lp);
+    stages(body);
+    std::get<loop>(p.records[first]).body_end = static_cast<std::uint32_t>(p.records.size());
+  };
+  stages(read);
+  for (typename chain_builder<T>::depth_stages* half : {&parts.forward, &parts.backward}) {
+    stages(half->first);
+    looped(subs, n / subs, half->sub);
+    if (!half->mid.empty()) {
+      looped(tops[0], n / tops[0], half->mid);
+    }
+    stages(half->top);
+    if (half == &parts.forward && pl.mid.separate) {
+      p.records.emplace_back(middle_stage(c.prec, pl.mid, n, chunk, slot::a));
+    }
+  }
+  stages(store);
+  for (std::size_t b = 0; b < p.batch_loops; ++b) {
+    std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
+  }
+  c.block_elements = n;
+  c.depth_tops = tops;
+  lay_out_workspace(c, parts.scratch, 2 * sizeof(T), false, 0);
+  c.axis_notes.push_back("line (n = " + std::to_string(n) + "): " + chain.depth_pair_text(n, tops));
+}
+
+// The pair a <C, C, C> line takes and its stages: the depth-first pair where it is forced
+// (convolution_depth_tops, for contiguous lines only: its passes read and write stride 1; the
+// rules' choice waits for X67), otherwise the chain pair (below). Returns whether it is the
+// depth-first pair.
+template <class T>
+bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const vocab& v,
+                const build_settings& settings, placed& pl, run_prunings& pr) {
   const target_profile profile =
       plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t n = d.line.n;
+  if (l.in_stride == 1 && l.out_stride == 1) {
+    if (const std::vector<std::size_t> tops =
+            convolution_depth_tops<T>(n, settings, chain, c.isa_target);
+        !tops.empty()) {
+      pl = place(v, n, false, true);
+      build_depth_pair<T>(c, d, l, pl, settings, chain, tops, pr);
+      return true;
+    }
+  }
+  pl = place(v, n, true, true);
   add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(2 * sizeof(T)));
 
   std::vector<stage> line;
   std::size_t scratch = 0;
   const std::size_t chunk = settings.chunk_points;
-  // The forward transform reads the input, or the prologue's pass has put the line in the block.
-  endpoint forward_src{.where = slot::in, .stride = l.in_stride};
-  bool forward_aliased = false;
-  if (pl.pro.separate) {
-    line.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, l.in_stride, slot::block, 1,
-                                   chunk, false, pl.pro.axis_stride));
-    forward_src = {.where = slot::block, .stride = 1};
-    forward_aliased = true;
-  }
+  const endpoint home{.where = slot::block, .stride = 1};
   line_edges forward;
   forward.scale = pl.scale;
   if (pl.pro.fused) {
@@ -251,7 +398,33 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
     forward.out = edge_op::factor;
     forward.out_factor = middle_tag;
   }
-  const endpoint home{.where = slot::block, .stride = 1};
+  // The forward transform reads the input, or the prologue's pass (or the input's runs, with
+  // zeros elsewhere) has put the line in the block.
+  endpoint forward_src{.where = slot::in, .stride = l.in_stride};
+  bool forward_aliased = false;
+  const endpoint stored_out{.where = slot::out, .stride = l.out_stride};
+  if (pl.pro.runs.any()) {
+    // Pruning as a plan's c2c row (task 5.1e): runs within the line's first half and a first
+    // pass of an even codelet radix read the half only, where the one run of the half is
+    // stored (stride 1: no read stage), else through the block's half.
+    const std::vector<line_run>& runs = pl.pro.runs.of(0);
+    forward.in_head = forward.in == edge_op::none && within_half(runs, n) && chain.head_first(n);
+    if (forward.in_head && half_stored(runs, n, forward_src)) {
+      forward.in_offset = runs[0].stored * 2 * sizeof(T);
+      pr.in = run_pruning::direct;
+    } else {
+      run_line_stages(c.prec, pl.pro, false, forward.in_head ? n / 2 : n, runs,
+                      {.src = slot::in, .src_stride = l.in_stride}, chunk, false, line);
+      forward_src = home;
+      forward_aliased = true;
+      pr.in = forward.in_head ? run_pruning::half : run_pruning::none;
+    }
+  } else if (pl.pro.separate) {
+    line.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, l.in_stride, slot::block, 1,
+                                   chunk, false, pl.pro.axis_stride));
+    forward_src = home;
+    forward_aliased = true;
+  }
   scratch =
       std::max(scratch, chain.c2c_line(n, -1, forward_src, home, forward_aliased, forward, line));
   if (pl.mid.separate) {
@@ -262,7 +435,27 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   if (pl.at == scale_at::inverse_in) {
     inverse.in = edge_op::scale;
   }
-  if (pl.epi.separate) {
+  if (pl.epi.runs.any()) {
+    // The output's runs: the inverse chain ends in the block, then the store stage writes (or
+    // accumulates) only the runs; or its pruned last pass writes the one run of the line's
+    // first half where it is stored (no store stage), as a plan's c2c row.
+    const std::vector<line_run>& runs = pl.epi.runs.of(0);
+    if (pl.at == scale_at::inverse_out) {
+      inverse.out = edge_op::scale;
+    }
+    inverse.out_head = inverse.out != edge_op::factor && within_half(runs, n) && chain.head_last(n);
+    if (inverse.out_head && !pl.epi.accumulate && half_stored(runs, n, stored_out)) {
+      inverse.out_offset = runs[0].stored * 2 * sizeof(T);
+      scratch = std::max(scratch, chain.c2c_line(n, +1, home, stored_out, false, inverse, line));
+      pr.out = run_pruning::direct;
+    } else {
+      scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, line));
+      run_line_stages(c.prec, pl.epi, true, n, runs,
+                      {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
+                      false, line);
+      pr.out = inverse.out_head ? run_pruning::half : run_pruning::none;
+    }
+  } else if (pl.epi.separate) {
     scratch = std::max(scratch, chain.c2c_line(n, +1, home, home, true, inverse, line));
     line.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, l.out_stride,
                                    chunk, false, pl.epi.axis_stride));
@@ -283,6 +476,7 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
   const std::string radices = chain.radix_text(n);
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " + radices +
                          ", then backward " + radices + " (shared twiddle tables)");
+  return false;
 }
 
 // The real chain pair (<T, C, T>, task 5.2c): batch loops, then the stages of one line,
@@ -298,8 +492,9 @@ void build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
 // pass on the line in cache (place, fuse false); the scales' product goes to such a pass, else to
 // the c2r chain's output.
 template <class T>
-void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const placed& pl,
-                     const build_settings& settings) {
+void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const vocab& v,
+                     const build_settings& settings, placed& pl) {
+  pl = place(v, d.line.n, false, false);
   const target_profile profile =
       plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
@@ -313,7 +508,14 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   const std::size_t chunk = settings.chunk_points;
   endpoint forward_src{.where = slot::in, .stride = l.in_stride};
   bool forward_aliased = false;
-  if (pl.pro.separate) {
+  if (pl.pro.runs.any()) {
+    // The input's runs (task 5.2d), read into the block with zeros elsewhere: real lines take no
+    // pruned passes yet (DESIGN.md 12.1).
+    run_line_stages(c.prec, pl.pro, false, n, pl.pro.runs.of(0),
+                    {.src = slot::in, .src_stride = l.in_stride}, chunk, true, line);
+    forward_src = {.where = slot::block, .stride = 1};
+    forward_aliased = true;
+  } else if (pl.pro.separate) {
     line.push_back(edge_pass_stage(c.prec, pl.pro, false, n, slot::in, l.in_stride, slot::block, 1,
                                    chunk, true, pl.pro.axis_stride));
     forward_src = {.where = slot::block, .stride = 1};
@@ -324,7 +526,14 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   if (pl.mid.separate) {
     line.push_back(middle_stage(c.prec, pl.mid, bins, chunk));
   }
-  if (pl.epi.separate) {
+  if (pl.epi.runs.any()) {
+    // The output's runs: the c2r chain ends in the block, the store stage writes the runs.
+    const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
+    scratch = std::max(scratch, chain.c2r_line(n, home, home, scale, line));
+    run_line_stages(c.prec, pl.epi, true, n, pl.epi.runs.of(0),
+                    {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk, true,
+                    line);
+  } else if (pl.epi.separate) {
     scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, line));
     line.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out, l.out_stride,
                                    chunk, true, pl.epi.axis_stride));
@@ -337,11 +546,40 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   end_program(p, line);
   c.block_elements = bins;
   lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
-  const bool strided_in = !pl.pro.separate && l.in_stride != 1;
-  const bool strided_out = !pl.epi.separate && l.out_stride != 1;
+  const bool strided_in = !pl.pro.separate && !pl.pro.runs.any() && l.in_stride != 1;
+  const bool strided_out = !pl.epi.separate && !pl.epi.runs.any() && l.out_stride != 1;
   c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
                          chain.real_text(n, true, strided_in) + ", then backward " +
                          chain.real_text(n, false, strided_out));
+}
+
+// describe()'s line for the runs of a depth-first pair: one run per side read by the forward
+// first pass or written by the last top pass (run_pruning::direct), others through scratch b or
+// from the workspace block.
+std::string depth_runs_text(const run_plan& runs, bool accumulate, const run_prunings& pr,
+                            std::size_t passes) {
+  const auto count = [](const side_runs& r) {
+    const std::size_t k = r.of(0).size();
+    return std::to_string(k) + (k == 1 ? " run of " : " runs of ") +
+           std::to_string(r.positions(0)) + (r.positions(0) == 1 ? " position" : " positions");
+  };
+  std::string text = "stored runs:";
+  if (runs.in.any()) {
+    text += " the input's " + count(runs.in) +
+            (pr.in == run_pruning::direct
+                 ? ", read where it is stored by the forward chain's first pass, zeros beyond"
+                 : ", read with zeros elsewhere into scratch in a separate pass");
+  }
+  if (runs.out.any()) {
+    text += std::string(runs.in.any() ? ";" : "") + " the output's " + count(runs.out) +
+            ", the rest not written, " +
+            (pr.out == run_pruning::direct
+                 ? "written where it is stored by the backward chain's last top pass"
+                 : std::string(accumulate ? "accumulated" : "stored") +
+                       " from the workspace block in a separate pass");
+  }
+  return text + "; they cost " + std::to_string(passes) +
+         (passes == 1 ? " separate pass" : " separate passes") + " over the line";
 }
 
 } // namespace
@@ -370,10 +608,6 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   if (d.fanout > 1) {
     refuse("desc.fanout", "is above 1: fan-out is not built yet (task 5.2e)");
   }
-  if (!d.runs.empty()) {
-    refuse("desc.runs",
-           "are given: stored runs on a pipeline's line are not built yet (task 5.2d)");
-  }
   if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
     refuse("options.measure_seconds", "must be finite and not negative");
   }
@@ -384,7 +618,29 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       .axes = std::span<const axis>(&d.line, 1),
       .batches = d.batches,
   };
-  const row_layout layout = renaming([&] { return resolve_row_layout(line, opts.in_place, real); });
+  // Stored runs of the line (task 5.2d), validated as a plan's (core/runs.hpp) on the line's c2c
+  // shape (n logical positions on each side, for <T, C, T> too): their stored extents set the
+  // default distances and the reach.
+  run_plan runs;
+  if (!d.runs.empty()) {
+    if (opts.in_place) {
+      refuse("desc.runs", "are not taken by an in-place pipeline yet (task 5.2d builds them out "
+                          "of place)");
+    }
+    shape_view with_runs = line;
+    with_runs.runs = d.runs;
+    runs = renaming([&] { return resolve_runs(with_runs, options{}); });
+    // DESIGN.md 18.2, proposal 8: as plans refuse runs beside an edge's factor (task 5.1d).
+    for (const auto& [e, name] : {std::pair{&d.prologue, "desc.prologue.mul.kind"},
+                                  std::pair{&d.epilogue, "desc.epilogue.mul.kind"}}) {
+      if (e->kind != factor_kind::none) {
+        refuse(name, "is a factor, which a pipeline with stored runs does not take yet (DESIGN.md "
+                     "18.2, proposal 8)");
+      }
+    }
+  }
+  const row_layout layout =
+      renaming([&] { return resolve_row_layout(line, opts.in_place, real, runs); });
 
   // The vocabulary, judged as a plan's edges are: on the line's c2c shape, or for <T, C, T> the
   // prologue on the input of its r2c shape and the epilogue on the output of its c2r shape (real
@@ -407,7 +663,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   r2c_line.kind = transform_kind::r2c;
   shape_view c2r_line = line;
   c2r_line.kind = transform_kind::c2r;
-  const placed pl = renaming([&] {
+  const vocab v = renaming([&] {
     check_edge_scale(opts.scale, d.prec, "options.scale");
     edge_view middle = d.middle;
     middle.accumulate = false;
@@ -428,7 +684,11 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       refuse("desc.epilogue.accumulate", "is refused on an in-place pipeline, whose output's "
                                          "prior values are its input");
     }
-    return place(std::move(pro), std::move(mid), std::move(epi), scale, d.line.n, !real);
+    return vocab{.pro = std::move(pro),
+                 .mid = std::move(mid),
+                 .epi = std::move(epi),
+                 .scale = scale,
+                 .runs = runs};
   });
 
   auto c = std::make_shared<plan_core>();
@@ -448,16 +708,19 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     c->isa_target = plan_target_of(opts);
     return 0;
   });
+  placed pl;
+  run_prunings pr;
+  bool depth = false;
   if (real) {
     if (d.prec == precision::f64) {
-      build_real_pair<double>(*c, d, layout, pl, settings);
+      build_real_pair<double>(*c, d, layout, v, settings, pl);
     } else {
-      build_real_pair<float>(*c, d, layout, pl, settings);
+      build_real_pair<float>(*c, d, layout, v, settings, pl);
     }
   } else if (d.prec == precision::f64) {
-    build_pair<double>(*c, d, layout, pl, settings);
+    depth = build_pair<double>(*c, d, layout, v, settings, pl, pr);
   } else {
-    build_pair<float>(*c, d, layout, pl, settings);
+    depth = build_pair<float>(*c, d, layout, v, settings, pl, pr);
   }
   c->edge_records = mark_cursors(c->prog, pl);
   c->factor_args =
@@ -477,8 +740,10 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->graph = build_work_graph(c->prog, d.line.n, settings.chunk_points);
   c->profile = settings.profile;
   c->runs_inline = runs_inline(c->graph, c->profile);
-  c->built = strategy_choice::chain;
-  c->strategy_name = real ? "the real chain pair" : "the chain pair";
+  c->built = depth ? strategy_choice::depth : strategy_choice::chain;
+  c->strategy_name = real    ? "the real chain pair"
+                     : depth ? "the depth-first pair"
+                             : "the chain pair";
 
   // describe().
   const std::size_t lines = c->prog.transforms;
@@ -492,9 +757,14 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       real ? "the real chain pair: each line through the r2c chain into the workspace block (its "
              "scratch-resident home, which the batch loops never move), the middle there on its "
              "n/2 + 1 bins, then the c2r chain out of it (DESIGN.md 12.2)"
-           : "the chain pair: each line through the forward chain into the workspace block (its "
-             "scratch-resident home, which the batch loops never move), the middle there, then "
-             "the backward chain out of it (DESIGN.md 12.2)";
+      : depth
+          ? "the depth-first pair: each line through the forward depth-first chain (its sub-rows "
+            "finished one at a time on their blocks of the workspace block), its top pass into "
+            "scratch with the middle, then the backward depth-first chain from there (DESIGN.md "
+            "12.2)"
+          : "the chain pair: each line through the forward chain into the workspace block (its "
+            "scratch-resident home, which the batch loops never move), the middle there, then "
+            "the backward chain out of it (DESIGN.md 12.2)";
   const auto stages = std::ranges::count_if(
       c->prog.records, [](const record& r) { return std::holds_alternative<stage>(r); });
   const std::size_t calls = c->needs_args ? c->edge_batched.calls.size() : c->prog.calls.size();
@@ -506,18 +776,24 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   } else {
     c->axis_notes.push_back("form: walked, the program's records per line");
   }
-  const std::size_t passes =
-      (pl.pro.separate ? 1U : 0U) + (pl.mid.separate ? 1U : 0U) + (pl.epi.separate ? 1U : 0U);
-  std::string ops = operation_text("prologue", pl.pro, "in the forward chain's first pass",
-                                   "in a separate pass into the workspace block") +
-                    "\n" +
-                    operation_text("middle", pl.mid, "in the forward chain's last pass",
-                                   real ? "in a separate pass on the line's n/2 + 1 bins in the "
-                                          "workspace block"
-                                        : "in a separate pass on the line in the workspace block") +
-                    "\n" +
-                    operation_text("epilogue", pl.epi, "in the backward chain's last pass",
-                                   "in a separate pass from the workspace block");
+  // A side with runs has their read or store stage instead (runs_text below counts them).
+  const std::size_t passes = (pl.pro.separate && !runs.in.any() ? 1U : 0U) +
+                             (pl.mid.separate ? 1U : 0U) +
+                             (pl.epi.separate && !runs.out.any() ? 1U : 0U);
+  std::string ops =
+      operation_text("prologue", pl.pro, "in the forward chain's first pass",
+                     depth ? "in a separate pass into scratch"
+                           : "in a separate pass into the workspace block") +
+      "\n" +
+      operation_text("middle", pl.mid,
+                     depth ? "in the forward chain's last top pass"
+                           : "in the forward chain's last pass",
+                     real ? "in a separate pass on the line's n/2 + 1 bins in the workspace block"
+                     : depth ? "in a separate pass on the line in scratch"
+                             : "in a separate pass on the line in the workspace block") +
+      "\n" +
+      operation_text("epilogue", pl.epi, "in the backward chain's last pass",
+                     "in a separate pass from the workspace block");
   if (pl.scale != 1.0) {
     const char* where = "a separate pass";
     switch (pl.at) {
@@ -528,7 +804,7 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       where = "the backward chain's first pass";
       break;
     case scale_at::inverse_out:
-      where = "the backward chain's last pass";
+      where = depth ? "the backward chain's last top pass" : "the backward chain's last pass";
       break;
     case scale_at::none:
     case scale_at::pass:
@@ -536,11 +812,21 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
     }
     ops += std::string("\nscales: one product, applied once in ") + where;
   }
+  // The depth-first pair's line is beyond the cache its sub-rows run in: a separate pass sweeps it.
+  const char* sweep =
+      depth ? " over the line, each a sweep of it" : " on the line in cache, no sweep of memory";
   ops += "\nthe vocabulary costs " +
-         (passes == 0
-              ? std::string("no separate pass")
-              : std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes") +
-                    " on the line in cache, no sweep of memory");
+         (passes == 0 ? std::string("no separate pass")
+                      : std::to_string(passes) +
+                            (passes == 1 ? " separate pass" : " separate passes") + sweep);
+  if (runs.any()) {
+    const std::size_t run_passes = (runs.in.any() && pr.in != run_pruning::direct ? 1U : 0U) +
+                                   (runs.out.any() && pr.out != run_pruning::direct ? 1U : 0U);
+    ops += "\n" + (depth ? depth_runs_text(runs, pl.epi.accumulate, pr, run_passes)
+                         : runs_text(runs, pl.epi.accumulate, "the workspace block", run_passes,
+                                     pr.in, pr.out) +
+                               " on the line in cache");
+  }
   c->edges_note = ops;
   if (opts.effort != planning::rules || opts.use != nullptr) {
     c->planning_note = "by the rules: options.effort and options.use are ignored for pipelines "

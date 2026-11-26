@@ -341,9 +341,16 @@ struct view {
 // The bytes a lines loop of an edge phase (build, edge_phase) moves the input's and the
 // output's factor cursors per iteration: the edge driver's records of a plan with edges
 // (mark_cursors, edge_record::factor_step). Batch loops take theirs from the batch strides.
+// A lines loop around a callback stage of a multi-axis plan (task 5.3c) also moves the
+// callbacks' coordinates (edge_record::origin_axis): `axis` (an index into shape::axes; none:
+// no_origin) by `axis_step` per iteration, and every axis by `start` before the first.
+inline constexpr std::size_t no_origin = SIZE_MAX;
 struct edge_loop {
   std::size_t record = 0;
   factor_steps step{};
+  std::size_t axis = no_origin;
+  std::size_t axis_step = 1;
+  std::array<std::size_t, 3> start{};
 };
 
 // The bytes `elements` steps along axis e move each of the views' slots, as a loop's step
@@ -371,21 +378,47 @@ std::array<std::ptrdiff_t, moving_slots> slot_bytes_along(std::size_t e, std::pt
   return step;
 }
 
+// slot_bytes_along with a third view `also` (null: none), whose slot neither of the others names
+// or which moves it by the same bytes (task 5.3c: a real input's copy in the workspace block,
+// between the input and the output).
+std::array<std::ptrdiff_t, moving_slots> slot_bytes_along(std::size_t e, std::ptrdiff_t elements,
+                                                          const view& src, const view& dst,
+                                                          const view* also) {
+  std::array<std::ptrdiff_t, moving_slots> step = slot_bytes_along(e, elements, src, dst);
+  if (also != nullptr) {
+    const std::array<std::ptrdiff_t, moving_slots> more =
+        slot_bytes_along(e, elements, *also, *also);
+    for (std::size_t k = 0; k < moving_slots; ++k) {
+      if (more[k] != 0 && step[k] != 0 && more[k] != step[k]) {
+        throw std::logic_error("fftn: internal: three views move one slot differently");
+      }
+      step[k] = more[k] != 0 ? more[k] : step[k];
+    }
+  }
+  return step;
+}
+
 // Appends the loops over the lines of every axis but `axis` and `skip` (outermost first),
-// returning their records' indices for close_loops.
+// returning their records' indices for close_loops. `origin` (null: none): each loop's record
+// and the axis of `extent` it advances, one element an iteration, for a multi-axis plan's
+// callbacks (task 5.3c; build maps the axis to shape::axes). `also`: a third view the loops move.
 std::vector<std::size_t> open_loops(program& p, std::size_t axis, std::size_t skip,
                                     const std::vector<std::size_t>& extent, const view& src,
-                                    const view& dst) {
+                                    const view& dst, std::vector<edge_loop>* origin = nullptr,
+                                    const view* also = nullptr) {
   std::vector<std::size_t> open;
   for (std::size_t e = 0; e < extent.size(); ++e) {
     if (e == axis || e == skip || extent[e] == 1) {
       continue;
     }
     open.push_back(p.records.size());
+    if (origin != nullptr) {
+      origin->push_back({.record = p.records.size(), .axis = e});
+    }
     p.records.emplace_back(loop{
         .kind = loop_kind::lines,
         .count = extent[e],
-        .step = slot_bytes_along(e, 1, src, dst),
+        .step = slot_bytes_along(e, 1, src, dst, also),
     });
   }
   return open;
@@ -412,8 +445,9 @@ bool lines_share_cache_lines(std::size_t line_bytes, std::size_t row_bytes,
 // Appends the loops over the lines of every axis but `axis` (outermost first), the line's
 // stages inside them, and closes the loops.
 void add_phase(program& p, std::size_t axis, const std::vector<std::size_t>& extent,
-               const view& src, const view& dst, std::vector<stage>&& line) {
-  const std::vector<std::size_t> open = open_loops(p, axis, axis, extent, src, dst);
+               const view& src, const view& dst, std::vector<stage>&& line,
+               std::vector<edge_loop>* origin = nullptr, const view* also = nullptr) {
+  const std::vector<std::size_t> open = open_loops(p, axis, axis, extent, src, dst, origin, also);
   for (stage& st : line) {
     p.records.emplace_back(std::move(st));
   }
@@ -973,26 +1007,48 @@ column_radices(std::size_t n, std::ptrdiff_t stride, const build_settings& setti
   return rad;
 }
 
+// What a lanes column phase's blocks take beside their own stages (task 5.3c: a multi-axis plan's
+// callbacks in its first or last phase): `before(rows, st)` appends the stages that run on a
+// block's `rows` valid columns before the lanes' (which then read the destination: the phase
+// is built in place there), `after(rows, st)` those after them; `origin` (null: none) receives
+// the loops' records and the axes of `extent` they advance (open_loops), the blocks' loop
+// advancing the last axis by its block's columns from its first.
+struct column_hooks {
+  std::function<void(std::size_t rows, std::vector<stage>& st)> before;
+  std::function<void(std::size_t rows, std::vector<stage>& st)> after;
+  std::vector<edge_loop>* origin = nullptr;
+};
+
 // Appends a lanes column phase (column_block) and returns the scratch it needs: the loops
 // over the other axes, then over the whole blocks of `block` adjacent columns along the
 // last axis, each block's stages inside (strategies/lanes.cpp, pass_args::rows the block's
 // columns); then the same nest once for the columns left over, as one narrower block rounded
-// up to C whose idle lanes read nothing and are never written.
+// up to C whose idle lanes read nothing and are never written. hooks: column_hooks (null: none).
 template <class T>
 std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t axis,
                              const std::vector<std::size_t>& extent, const view& src,
                              const view& dst, int sign, const line_edges& edges, std::size_t block,
                              std::size_t c, const std::vector<std::size_t>& rad,
-                             std::size_t cache_line, bool fair) {
+                             std::size_t cache_line, bool fair,
+                             const column_hooks* hooks = nullptr) {
   const std::size_t last = extent.size() - 1;
   const std::size_t whole = extent[last] / block;
   const std::size_t left = extent[last] % block;
   std::size_t need = 0;
+  // With stages before the lanes' the block is copied or produced into the destination first.
+  const bool before = hooks != nullptr && hooks->before;
+  const view& from = before ? dst : src;
   const auto nest = [&](std::size_t count, std::size_t width, std::size_t rows,
                         std::size_t first_column) {
     const std::size_t outermost = p.records.size();
-    std::vector<std::size_t> open = open_loops(p, axis, last, extent, src, dst);
+    std::vector<edge_loop>* origin = hooks != nullptr ? hooks->origin : nullptr;
+    std::vector<std::size_t> open = open_loops(p, axis, last, extent, src, dst, origin);
     open.push_back(p.records.size());
+    if (origin != nullptr) {
+      edge_loop blocks{.record = p.records.size(), .axis = last, .axis_step = width};
+      blocks.start.at(last) = first_column;
+      origin->push_back(blocks);
+    }
     p.records.emplace_back(loop{
         .kind = loop_kind::lines,
         .count = count,
@@ -1000,11 +1056,20 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
         .start = slot_bytes_along(last, static_cast<std::ptrdiff_t>(first_column), src, dst),
     });
     std::vector<stage> st;
-    need = std::max(need, chain.c2c_lanes(extent[axis], sign, {src.where, src.stride[axis]},
-                                          src.stride[last], {dst.where, dst.stride[axis]},
+    if (before) {
+      hooks->before(rows, st);
+    }
+    need = std::max(need, chain.c2c_lanes(extent[axis], sign, {from.where, from.stride[axis]},
+                                          from.stride[last], {dst.where, dst.stride[axis]},
                                           dst.stride[last], edges, width, st, true, rad));
+    if (hooks != nullptr && hooks->after) {
+      hooks->after(rows, st);
+    }
     for (stage& x : st) {
-      x.args.rows = static_cast<std::uint32_t>(rows);
+      // A callback stage's rows are its blocks' lines a call (set_callback_blocks).
+      if ((x.moving_factors & moving_callback) == 0) {
+        x.args.rows = static_cast<std::uint32_t>(rows);
+      }
       p.records.emplace_back(std::move(x));
     }
     close_loops(p, open);
@@ -1032,9 +1097,11 @@ std::size_t add_column_phase(program& p, chain_builder<T>& chain, std::size_t ax
 // loop's iterations are whole planes, so the work graph makes it one phase of whole planes
 // per member (threading/work_graph.cpp). Every line computes what it computes when the
 // axes run one by one over the whole volume: only the order of the lines changes.
+// `origin` (null: none): the planes' loop, which advances axis 0 (open_loops).
 template <class Phases>
 void add_volume_planes(program& p, const std::vector<std::size_t>& extent, const view& src,
-                       const view& dst, const Phases& phases) {
+                       const view& dst, const Phases& phases,
+                       std::vector<edge_loop>* origin = nullptr) {
   const auto inner = [](const view& v) {
     return view{
         .where = v.where,
@@ -1043,6 +1110,9 @@ void add_volume_planes(program& p, const std::vector<std::size_t>& extent, const
     };
   };
   const std::size_t planes = p.records.size();
+  if (origin != nullptr) {
+    origin->push_back({.record = planes, .axis = 0});
+  }
   p.records.emplace_back(loop{
       .kind = loop_kind::lines,
       .count = extent[0],
@@ -1286,6 +1356,27 @@ template chain_builder<double> plan_chain<double>(plan_core& c, const target_pro
                                                   const build_settings& settings);
 template chain_builder<float> plan_chain<float>(plan_core& c, const target_profile& profile,
                                                 const build_settings& settings);
+
+template <class T>
+std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_settings& settings,
+                                                const chain_builder<T>& chain, target isa) {
+  // Forced only: when the rules take the pair is experiment X67's to decide (task 5.2g; AGENTS.md
+  // section 6), so a pipeline by the rules keeps the chain pair.
+  if (settings.strategy != strategy_choice::depth ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  return depth_tops_for<T>(n, settings, chain, isa, true);
+}
+
+template std::vector<std::size_t> convolution_depth_tops<double>(std::size_t n,
+                                                                 const build_settings& settings,
+                                                                 const chain_builder<double>& chain,
+                                                                 target isa);
+template std::vector<std::size_t> convolution_depth_tops<float>(std::size_t n,
+                                                                const build_settings& settings,
+                                                                const chain_builder<float>& chain,
+                                                                target isa);
 
 namespace {
 
@@ -1616,10 +1707,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const view out_view{.where = slot::out, .stride = out.stride, .element_bytes = out.element_bytes};
   std::size_t scratch = 0;
   const auto lines = [&](std::size_t axis, const std::vector<std::size_t>& extent, const view& src,
-                         const view& dst, std::size_t line_scratch, std::vector<stage>&& stages) {
+                         const view& dst, std::size_t line_scratch, std::vector<stage>&& stages,
+                         std::vector<edge_loop>* origin = nullptr, const view* also = nullptr) {
     scratch = std::max(scratch, line_scratch);
     const std::size_t outermost = p.records.size();
-    add_phase(p, axis, extent, src, dst, std::move(stages));
+    add_phase(p, axis, extent, src, dst, std::move(stages), origin, also);
     // Columns alone through the chain (not the rows of the last axis).
     const std::size_t last = extent.size() - 1;
     if (settings.profile.fair_line_runs && extent.size() == 2 && axis != last &&
@@ -1651,6 +1743,38 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t block_bytes = settings.profile.callback_block_bytes;
   const std::size_t in_element = s.kind == transform_kind::r2c ? sizeof(T) : 2 * sizeof(T);
   const std::size_t out_element = s.kind == transform_kind::c2r ? sizeof(T) : 2 * sizeof(T);
+  // Block callbacks on a multi-axis plan (task 5.3c) run inside the transform's phases, never in
+  // a phase of their own, which would be the extra sweep DESIGN.md 12.3 rules out: the input's
+  // in the first phase's line bodies, before each line's (or lanes block's) first pass, the
+  // output's in the last phase's, after its last pass, on the block of lines the phase runs at
+  // once (a line, a lanes column block's columns, a block of adjacent transforms). A side whose
+  // factor or accumulation has an edge phase anyway (5.1b-1) takes its callback inside that
+  // phase instead (edge_phase), in 12.1's order, which costs no sweep either.
+  const bool in_inside = calls && r > 1 && edge_ops->in.call.any() && !edge_ops->in.separate;
+  const bool out_inside = calls && r > 1 && edge_ops->out.call.any() && !edge_ops->out.separate;
+  // A modify callback must not change an out-of-place plan's input: the first phase copies each
+  // line where its transform then runs (c2c and c2r: the phase's destination, the phase then in
+  // place there; r2c: the real rows' copy in the workspace block, src0 below).
+  const bool in_copy = in_inside && edge_ops->in.call.mode == callback_mode::modify && !c.in_place;
+  // describe()'s words for where those callbacks run (the first block built of each side).
+  std::optional<callback_place> in_place_note;
+  std::optional<callback_place> out_place_note;
+  // The loops around them move the callbacks' coordinates: `local`'s axes are those of an extent
+  // `shift` axes into the plan's (a volume's plane: 1), mapped here to shape::axes.
+  const auto adopt = [&](const std::vector<edge_loop>& local, std::size_t shift,
+                         std::vector<edge_loop>& loops) {
+    for (edge_loop l : local) {
+      std::array<std::size_t, 3> start{};
+      for (std::size_t a = 0; a + shift < r && a < start.size(); ++a) {
+        start.at(listed(a + shift)) = l.start.at(a);
+      }
+      l.start = start;
+      if (l.axis != no_origin) {
+        l.axis = listed(l.axis + shift);
+      }
+      loops.push_back(l);
+    }
+  };
   // The edges of a multi-axis or real plan (core/edges.hpp; c2c rows place theirs in the row's
   // chain, c2c_axis below): every factor and accumulation is an edge phase, a phase of its own
   // over the rows of the edge's side (the last axis), the input's before the transform and the
@@ -1669,6 +1793,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   view block_real{
       .where = slot::block, .stride = {}, .element_bytes = static_cast<std::ptrdiff_t>(sizeof(T))};
   std::size_t edge_block = 0;
+  // An r2c plane's or volume's input callback out of place (task 5.3c) on a real row that is not
+  // in the workspace block: its copy or produced row in a scratch line of the member running it
+  // (slot b, which the row's r2c reads first, below), where the output's rows are strided.
+  bool r2c_scratch_row = false;
   if (edge_phases) {
     const std::size_t last_n =
         s.kind == transform_kind::c2c ? c.lengths[r - 1] : c.lengths[r - 1] / 2 + 1;
@@ -1686,8 +1814,27 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // A consumed output (task 5.3b) likewise: the callback takes the transform there.
     const bool to_block = edge_ops->out.accumulate || edge_ops->out.runs.any() || consumed;
     // An input callback out of place runs on a copy (or the produced row) in the block; in place
-    // on the input itself, which an in-place plan may write.
-    if (edge_ops->in.separate || (edge_ops->in.call.any() && !c.in_place)) {
+    // on the input itself, which an in-place plan may write. On a multi-axis plan (in_inside) a
+    // c2c or c2r first phase reads the input to copy it into its destination (in_copy), the
+    // phase then in place there, so src0 stays the input; a produced input is written there.
+    const bool copy_in_phase = in_copy && s.kind != transform_kind::r2c;
+    // An r2c's real rows go to the block only for a consumed output, which is there anyway: where
+    // the output's rows are contiguous each real row is copied (or produced) into its own complex
+    // row of the output and the r2c runs there in place, as an in-place plan's rows do; otherwise
+    // into a scratch line. A copy in the block would make it one whole transform for rows that
+    // are used one at a time (about the half spectrum's bytes more workspace).
+    const bool r2c_rows = in_inside && !c.in_place && s.kind == transform_kind::r2c && !to_block;
+    if (r2c_rows && out.stride[r - 1] == 1) {
+      src0 = view{.where = slot::out,
+                  .stride = out.stride,
+                  .element_bytes = static_cast<std::ptrdiff_t>(sizeof(T))};
+      for (std::size_t d = 0; d + 1 < r; ++d) {
+        src0.stride[d] = 2 * out.stride[d];
+      }
+    } else if (r2c_rows) {
+      r2c_scratch_row = true;
+    } else if (edge_ops->in.separate ||
+               (edge_ops->in.call.any() && !c.in_place && !copy_in_phase)) {
       src0 = s.kind == transform_kind::c2c && !to_block
                  ? out_view
                  : (s.kind == transform_kind::r2c ? block_real : block_complex);
@@ -1878,14 +2025,35 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     const edge_side& e = output ? edge_ops->out : edge_ops->in;
     const bool real = output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
     const std::size_t row = r - 1;
+    // The loops over the other axes (open_loops' records `open`): the factor's cursor moved by
+    // its axis strides, and the callbacks' coordinates one element of the axis an iteration.
+    const auto note_loops = [&](const std::vector<std::size_t>& open) {
+      std::size_t k = 0;
+      for (std::size_t d = 0; d < extent.size(); ++d) {
+        if (d == row || extent[d] == 1) {
+          continue; // open_loops opens no loop for these
+        }
+        edge_loop l{.record = open.at(k++)};
+        if (e.kind != factor_kind::none) {
+          l.step[output ? 1 : 0] =
+              e.axis_strides.at(listed(d)) * static_cast<std::ptrdiff_t>(e.factor_bytes);
+        }
+        if (e.call.any()) {
+          l.axis = listed(d);
+        }
+        loops.push_back(l);
+      }
+    };
     if (e.call.any()) {
       // A block callback on a row's edge phase (task 5.3b): real rows on the chain, and rows as
-      // the lanes over adjacent transforms (line_count: the block's transforms, one element apart).
-      // Multi-axis plans take theirs inside their phases' line bodies in 5.3c (core/edges.cpp
-      // refuses them until then).
-      if (r != 1) {
-        throw std::logic_error("fftn: internal: a callback on a multi-axis edge phase");
+      // the lanes over adjacent transforms (line_count: the block's transforms, one element apart);
+      // on a multi-axis plan (task 5.3c) in the edge phase its factor or accumulation has anyway,
+      // on each row of the last axis inside the loops over the others. Not beside stored runs
+      // there (build_with_runs refuses them).
+      if (r != 1 && e.runs.any()) {
+        throw std::logic_error("fftn: internal: a callback beside runs on a multi-axis plan");
       }
+      const std::size_t sites_before = c.callback_sites.size();
       const std::size_t n = extent[row];
       const endpoint fe = at(from, row);
       const endpoint te = at(to, row);
@@ -1986,9 +2154,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                                 .lines = line_count},
                                settings.chunk_points, block_bytes, fs, c.callback_sites, st);
       }
+      for (std::size_t k = sites_before; k < c.callback_sites.size(); ++k) {
+        c.callback_sites[k]->rank = r;
+        c.callback_sites[k]->axis = listed(row);
+      }
+      const std::vector<std::size_t> open = open_loops(q, row, row, extent, from, to);
       for (stage& x : st) {
         q.records.emplace_back(std::move(x));
       }
+      close_loops(q, open);
+      note_loops(open);
       return;
     }
     if (e.runs.any()) {
@@ -2002,28 +2177,17 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                         e.kind != factor_kind::none ? e.axis_strides.at(listed(row)) : 0,
                         e.accumulate ? edge_mode::accumulate : edge_mode::store, rows));
     close_loops(q, open);
-    std::size_t k = 0;
-    for (std::size_t d = 0; d < extent.size(); ++d) {
-      if (d == row || extent[d] == 1) {
-        continue; // open_loops opens no loop for these
-      }
-      edge_loop l{.record = open.at(k++)};
-      if (e.kind != factor_kind::none) {
-        l.step[output ? 1 : 0] =
-            e.axis_strides.at(listed(d)) * static_cast<std::ptrdiff_t>(e.factor_bytes);
-      }
-      loops.push_back(l);
-    }
+    note_loops(open);
   };
   // A strided complex axis d as the lanes over blocks of adjacent columns where they fit
   // (column_block; DESIGN.md 9.3, experiments X40 and X41): returns whether it was built.
   // `axis` names d in describe() when `extent` is not the plan's (a volume's plane). `real`:
   // column_block's rule for the complex axes of a real plan (rows of n/2 + 1 columns), by
-  // default where the plan is real.
+  // default where the plan is real. hooks: the blocks' callbacks (column_hooks; null: none).
   const auto complex_columns = [&](std::size_t d, const std::vector<std::size_t>& extent,
                                    const view& src, const view& dst, const line_edges& edges,
                                    int dir, const char* what, std::size_t axis = SIZE_MAX,
-                                   int real_rule = -1) {
+                                   int real_rule = -1, const column_hooks* hooks = nullptr) {
     const bool real = real_rule < 0 ? s.kind != transform_kind::c2c : real_rule != 0;
     const std::size_t block =
         column_block<T>(d, extent, src, dst, edges, settings, chain, kernels.complex_lanes, real);
@@ -2045,7 +2209,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     scratch = std::max(scratch,
                        add_column_phase<T>(p, chain, d, extent, src, dst, dir, edges, block,
                                            kernels.complex_lanes, rad, settings.profile.line_bytes,
-                                           settings.profile.fair_line_runs));
+                                           settings.profile.fair_line_runs, hooks));
     c.axis_notes.push_back("axis " + std::to_string(listed(axis == SIZE_MAX ? d : axis)) +
                            " (n = " + std::to_string(n) + "): " + what +
                            (what[0] != '\0' ? ", " : "") + "lanes over blocks of " +
@@ -2054,6 +2218,80 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     c.strategy_note = "chain for the last axis' rows, the lanes over blocks of adjacent columns "
                       "for the others; each transform finished before the next";
     return true;
+  };
+  // A multi-axis plan's callback stage (task 5.3c), appended to st: on lines of n elements along
+  // plan axis d at `where`, at most `lines_n` lines a block, line_dist elements apart along plan
+  // axis line_d (no_origin: consecutive transforms, a lanes program's block, which passes its
+  // rows), `walked` of them a call in the walked form (a column block's valid columns; 1 for one
+  // line). With the input's in_copy, the lines copied from `from` (from_dist apart) to `where`
+  // first, so that the callback never changes the plan's input. `real`: the side's real values.
+  const auto axes_callback = [&](bool output, std::size_t d, std::size_t n, endpoint from,
+                                 std::ptrdiff_t from_dist, endpoint where, bool real,
+                                 std::size_t lines_n, std::ptrdiff_t line_dist, std::size_t line_d,
+                                 std::size_t walked, std::vector<stage>& st) {
+    const edge_side& e = output ? edge_ops->out : edge_ops->in;
+    if (!output && in_copy) {
+      stage cp = edge_copy_stage(s.prec, n, from.where, from.stride, where.where, where.stride,
+                                 settings.chunk_points, real,
+                                 {.src_dist = from_dist, .dst_dist = line_dist});
+      // Not an edge pass (edge_passes): a copy of each line inside the first phase.
+      cp.name = "callback in: the input copied for its callback";
+      st.push_back(std::move(cp));
+    }
+    st.push_back(callback_stage(s.prec, real, e.call, output, n, 0, where.where, where.stride, 0,
+                                block_bytes, c.callback_sites, lines_n, line_dist));
+    callback_site& site = *c.callback_sites.back();
+    site.rank = r;
+    site.axis = listed(d);
+    site.line_axis = line_d == no_origin ? along_transforms : listed(line_d);
+    site.lines = walked;
+    // describe(): the first block of each side's built (a narrower last block is not the shape).
+    std::optional<callback_place>& note = output ? out_place_note : in_place_note;
+    if (!note) {
+      std::string place;
+      if (where.where == slot::block) {
+        place = "in the workspace block";
+      } else if (where.where == slot::b) {
+        place = "in a scratch line of the member running it";
+      } else {
+        place = c.in_place ? "in the input's memory, in place" : "in the output";
+      }
+      if (!output && in_copy) {
+        place += ", after a copy of the input";
+      }
+      const char* what = line_d != no_origin ? "columns" : (lines_n > 1 ? "transforms" : "lines");
+      const char* lines_of = line_d != no_origin
+                                 ? " (blocks of adjacent columns)"
+                                 : (lines_n > 1 ? " (blocks of adjacent transforms)" : "");
+      note = callback_blocks(std::string(output ? "in the last phase, axis "
+                                                : "in the first phase, "
+                                                  "axis ") +
+                                 std::to_string(listed(d)) + "'s lines" + lines_of + ", " + place +
+                                 (output ? ", after their last pass" : ", before their first pass"),
+                             n, lines_n, real ? sizeof(T) : 2 * sizeof(T), block_bytes, what);
+    }
+  };
+  // The hooks of a lanes column phase of plan axis d (axis e of an extent whose last axis is plan
+  // axis `last_d`) from `src` to `dst` with the input's callback (first) or the output's: on each
+  // block's valid columns, adjacent along last_d; its loops' coordinates into `origin`.
+  const auto column_callbacks = [&](bool output, std::size_t d, std::size_t e, std::size_t last_d,
+                                    std::size_t n, const view& src, const view& dst,
+                                    std::vector<edge_loop>& origin) {
+    column_hooks h;
+    h.origin = &origin;
+    const std::size_t last = src.stride.size() - 1;
+    const auto stages = [&axes_callback, output, d, e, last, last_d, n, src,
+                         dst](std::size_t rows, std::vector<stage>& st) {
+      axes_callback(output, d, n, {.where = src.where, .stride = src.stride[e]}, src.stride[last],
+                    {.where = dst.where, .stride = dst.stride[e]}, false, rows, dst.stride[last],
+                    last_d, rows, st);
+    };
+    if (output) {
+      h.after = stages;
+    } else {
+      h.before = stages;
+    }
+    return h;
   };
 
   // Rows with edges whose factors are not fused (5.1b-2): the strategy the rules choose, with
@@ -2383,10 +2621,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       throw std::logic_error("fftn: internal: an edge phase with a strategy that takes none");
     }
     c.block_elements = edge_block;
-    if (edge_ops->in.separate || edge_ops->in.call.any()) {
+    if (edge_ops->in.separate || (edge_ops->in.call.any() && !in_inside)) {
       edge_phase(p, edge_loops, false, in.extent, in_view, src0, edge_rows{});
     }
-    if (calls) {
+    // A multi-axis plan's line comes once its phases are built (below).
+    if (calls && r == 1) {
       std::string in_at = "on each row in the input, in place";
       if (src0.where == slot::block) {
         in_at = std::string("on each row in the workspace block") +
@@ -2424,7 +2663,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // with edge phases, whose transform ends where the output edge's phase reads it.
   const bool packed_plane = c2r_packed(s, in, out, c.in_place, settings, c.isa_target);
   if (packed_plane && edge_phases) {
-    edge_fallback = "an edge phase takes no intermediate packed in the output";
+    // Callbacks never run on the packed half spectrum (DESIGN.md 12.3), nor do edge phases.
+    edge_fallback = edge_ops->in.separate || edge_ops->out.separate
+                        ? "an edge phase takes no intermediate packed in the output"
+                        : "a callback takes no intermediate packed in the output";
   }
   if (lanes != 0) {
     // The lanes strategy (DESIGN.md 8.5): blocks of `lanes` rows of the innermost batch
@@ -2558,9 +2800,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // (src0), where the axes then run in place, the output edge's in place on the output.
     // The input edge's phase writes the output (c2c, no accumulation: in place too), where the
     // first axis then reads; src0 is the output only for edge phases (r > 1), not for rows.
+    // A multi-axis plan's callbacks (task 5.3c) run in the first and last lanes phases instead,
+    // on the block's transforms: the input's on each line copied (in_copy) or produced into the
+    // output, or in place, the first phase then in place there.
     const bool adjacent_input =
-        edge_ops != nullptr && (edge_ops->in.separate || edge_ops->in.call.any());
-    const view& first_src = adjacent_input ? out_view : in_view;
+        edge_ops != nullptr && (edge_ops->in.separate || (edge_ops->in.call.any() && !in_inside));
+    const view& first_src = adjacent_input || (in_inside && !in_copy) ? out_view : in_view;
     const auto steps_back = [](const edge_side& e) {
       return e.kind != factor_kind::none ? e.batch_steps.back() : 0;
     };
@@ -2577,13 +2822,28 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         const std::size_t d = active[i];
         const view& src = i == 0 ? first_src : out_view;
         std::vector<stage> st;
+        const bool first_cb = i == 0 && in_inside;
+        const bool last_cb = i + 1 == active.size() && out_inside;
+        if (first_cb) {
+          axes_callback(false, d, c.lengths[d], at(in_view, d), in.dist.back(), at(out_view, d),
+                        false, block, out.dist.back(), no_origin, 1, st);
+        }
         scratch = std::max(
-            scratch, chain.c2c_lanes(c.lengths[d], sign, at(src, d), 1, at(out_view, d), 1,
+            scratch, chain.c2c_lanes(c.lengths[d], sign, first_cb ? at(out_view, d) : at(src, d), 1,
+                                     at(out_view, d), 1,
                                      c2c_edges(opts, settings, i == 0, i + 1 == active.size()),
                                      block, st, true, rad[d]));
-        add_phase(q, d, in.extent, src, out_view, std::move(st));
+        if (last_cb) {
+          axes_callback(true, d, c.lengths[d], {}, 0, at(out_view, d), false, block,
+                        out.dist.back(), no_origin, 1, st);
+        }
+        std::vector<edge_loop> lanes_origin;
+        add_phase(q, d, in.extent, src, out_view, std::move(st),
+                  first_cb || last_cb ? &lanes_origin : nullptr);
+        adopt(lanes_origin, 0, loops);
       }
-      if (edge_ops != nullptr && (edge_ops->out.separate || edge_ops->out.call.any())) {
+      if (edge_ops != nullptr &&
+          (edge_ops->out.separate || (edge_ops->out.call.any() && !out_inside))) {
         edge_phase(q, loops, true, out.extent, out_view, out_view,
                    {.src_dist = out.dist.back(),
                     .dst_dist = out.dist.back(),
@@ -2852,6 +3112,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       line_edges line = c2c_edges(opts, settings, d + 1 == r, d == 0);
       std::vector<stage> st;
       std::size_t need = 0;
+      // The loops around a callback (task 5.3c): their coordinates (adopt).
+      std::vector<edge_loop> local_origin;
+      std::vector<edge_loop>* origin = nullptr;
       if (edge_ops != nullptr && r == 1 &&
           (edge_ops->in.separate || edge_ops->out.separate || any_callback(*edge_ops))) {
         // The edges' separate passes (core/edges.hpp) through the workspace block: the input's
@@ -3018,17 +3281,40 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
               std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
         }
       } else {
-        if (complex_columns(e, extent, src, dst, line, sign, "", d)) {
+        // A multi-axis plan's callbacks (task 5.3c): the input's in the first phase (the last
+        // axis' rows, never lanes columns), on each line copied (in_copy) or produced into the
+        // destination, or in place, the line's chain then in place there; the output's in the
+        // last phase, after each line's chain or each lanes column block.
+        const bool first_cb = in_inside && d + 1 == r;
+        const bool last_cb = out_inside && d == 0;
+        if (first_cb || last_cb) {
+          origin = &local_origin;
+        }
+        const std::size_t shift = d - e;
+        const column_hooks hooks = column_callbacks(last_cb, d, e, extent.size() - 1 + shift,
+                                                    c.lengths[d], src, dst, local_origin);
+        if (complex_columns(e, extent, src, dst, line, sign, "", d, -1,
+                            first_cb || last_cb ? &hooks : nullptr)) {
+          adopt(local_origin, shift, edge_loops);
           return;
         }
-        need = chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, line, st);
+        endpoint from = at(src, e);
+        if (first_cb) {
+          axes_callback(false, d, c.lengths[d], from, 0, at(dst, e), false, 1, 0, no_origin, 1, st);
+          from = at(dst, e);
+        }
+        need = chain.c2c_line(c.lengths[d], sign, from, at(dst, e), first_cb || aliased, line, st);
+        if (last_cb) {
+          axes_callback(true, d, c.lengths[d], {}, 0, at(dst, e), false, 1, 0, no_origin, 1, st);
+        }
         // A row's chain with fused factors, where the reach is leaf_rows: the batched forms for
         // a line of one leaf (as above).
         if (edge_ops != nullptr && r == 1 && forms_reach == edge_forms_reach::leaf_rows) {
           c.edge_batched_on = st.size() == 1 && st[0].leaf != nullptr;
         }
       }
-      lines(e, extent, src, dst, need, std::move(st));
+      lines(e, extent, src, dst, need, std::move(st), origin);
+      adopt(local_origin, d - e, edge_loops);
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
                              " (n = " + std::to_string(c.lengths[d]) + "): radices " +
                              chain.radix_text(c.lengths[d]));
@@ -3041,12 +3327,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     if (r == 3 && in.extent[0] > 1 &&
         (settings.volume_planes || (settings.team_program && settings.profile.team_volume_planes &&
                                     in.extent[0] >= team_min_planes))) {
+      // The planes' loop holds the first phase, so it moves the input callback's coordinates.
+      std::vector<edge_loop> planes_origin;
       add_volume_planes(
           p, in.extent, src0, dst0,
           [&](const std::vector<std::size_t>& plane, const view& src, const view& dst) {
             c2c_axis(2, 1, plane, src, dst);
             c2c_axis(1, 0, plane, dst, dst);
-          });
+          },
+          in_inside ? &planes_origin : nullptr);
+      adopt(planes_origin, 0, edge_loops);
       c2c_axis(0, 0, in.extent, dst0, dst0);
       c.strategy_note = volume_note;
     } else {
@@ -3065,11 +3355,47 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // src0 and dst0: the caller's arrays, or with edge phases the workspace block (where the
     // rows then run in place when both are, as an in-place plan's do).
     std::vector<stage> st;
-    const std::size_t need =
-        chain.r2c_line(c.lengths[r - 1], at(src0, r - 1), at(dst0, r - 1),
-                       src0.where == slot::in ? c.in_place : src0.where == dst0.where,
-                       r == 1 ? opts.scale : 1.0, st);
-    lines(r - 1, in.extent, src0, dst0, need, std::move(st));
+    // A multi-axis plan's input callback (task 5.3c) on each real row where the r2c then reads
+    // it: its copy (in_copy) or the produced row in the workspace block (src0), or the input
+    // itself in place (through the output slot, which the loops move by the same bytes).
+    std::vector<edge_loop> rows_origin;
+    const endpoint scratch_row{.where = slot::b, .stride = 1};
+    const endpoint row_src = r2c_scratch_row ? scratch_row : at(src0, r - 1);
+    if (in_inside) {
+      const endpoint where =
+          c.in_place ? endpoint{.where = slot::out, .stride = in.stride[r - 1]} : row_src;
+      axes_callback(false, r - 1, c.lengths[r - 1], at(in_view, r - 1), 0, where, true, 1, 0,
+                    no_origin, 1, st);
+    }
+    const std::size_t row_first = st.size();
+    std::size_t need = chain.r2c_line(
+        c.lengths[r - 1], row_src, at(dst0, r - 1),
+        r2c_scratch_row ? false : (src0.where == slot::in ? c.in_place : src0.where == dst0.where),
+        r == 1 ? opts.scale : 1.0, st);
+    if (r2c_scratch_row) {
+      // A strided output's r2c reads its source once, in its first stage, into scratch line a;
+      // a stage after it that touches b first writes it (the chain's own use of b).
+      bool sound =
+          st.size() > row_first && st[row_first].src == slot::b && st[row_first].dst != slot::b;
+      for (std::size_t k = row_first + 1; sound && k < st.size(); ++k) {
+        if (st[k].src == slot::b || st[k].dst == slot::b) {
+          sound = st[k].dst == slot::b && st[k].src != slot::b;
+          break;
+        }
+      }
+      if (!sound) {
+        throw std::logic_error("fftn: internal: an r2c row that reads a scratch line twice");
+      }
+      // The row's own scratch chain (h or n complex values) already makes the lines hold n reals.
+      if (need < (c.lengths[r - 1] + 1) / 2) {
+        throw std::logic_error("fftn: internal: a scratch line shorter than the r2c row it holds");
+      }
+    }
+    // The loops move the input for the copy, and the output; with a produced row only the output.
+    lines(r - 1, in.extent, in_copy ? in_view : (r2c_scratch_row ? dst0 : src0), dst0, need,
+          std::move(st), in_inside ? &rows_origin : nullptr,
+          in_copy && !r2c_scratch_row ? &src0 : nullptr);
+    adopt(rows_origin, 0, edge_loops);
     c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
                            " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
                            chain.real_text(c.lengths[r - 1], true,
@@ -3083,12 +3409,22 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         done[e] = true;
       }
       pruned(d, out.extent, dst0, dst0, done, [&](const std::vector<std::size_t>& extent) {
-        if (complex_columns(d, extent, dst0, dst0, edges, -1, "c2c forward")) {
+        // The output callback (task 5.3c) in the last phase, the columns of axis 0.
+        const bool last_cb = out_inside && d == 0;
+        std::vector<edge_loop> cols_origin;
+        const column_hooks hooks = column_callbacks(true, d, d, r - 1, n, dst0, dst0, cols_origin);
+        if (complex_columns(d, extent, dst0, dst0, edges, -1, "c2c forward", SIZE_MAX, -1,
+                            last_cb ? &hooks : nullptr)) {
+          adopt(cols_origin, 0, edge_loops);
           return;
         }
         std::vector<stage> cs;
         const std::size_t cneed = chain.c2c_line(n, -1, at(dst0, d), at(dst0, d), true, edges, cs);
-        lines(d, extent, dst0, dst0, cneed, std::move(cs));
+        if (last_cb) {
+          axes_callback(true, d, n, {}, 0, at(dst0, d), false, 1, 0, no_origin, 1, cs);
+        }
+        lines(d, extent, dst0, dst0, cneed, std::move(cs), last_cb ? &cols_origin : nullptr);
+        adopt(cols_origin, 0, edge_loops);
         c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                                "): c2c forward, radices " + chain.radix_text(n));
       });
@@ -3244,14 +3580,27 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         done[e] = true;
       }
       pruned(d, in.extent, src, work, done, [&](const std::vector<std::size_t>& extent) {
-        if (complex_columns(d, extent, src, work, line_edges(), +1, "c2c backward")) {
+        const std::size_t n = c.lengths[d];
+        // The input callback (task 5.3c) in the first phase: on each column (or lanes column
+        // block) copied (in_copy) or produced into the block, or in place, before its first pass.
+        const bool first_cb = in_inside && d + 2 == r;
+        std::vector<edge_loop> cols_origin;
+        const column_hooks hooks = column_callbacks(false, d, d, r - 1, n, src, work, cols_origin);
+        if (complex_columns(d, extent, src, work, line_edges(), +1, "c2c backward", SIZE_MAX, -1,
+                            first_cb ? &hooks : nullptr)) {
+          adopt(cols_origin, 0, edge_loops);
           return;
         }
         std::vector<stage> cs;
-        const std::size_t n = c.lengths[d];
-        const std::size_t cneed = chain.c2c_line(n, +1, at(src, d), at(work, d),
-                                                 src.where == work.where, line_edges(), cs);
-        lines(d, extent, src, work, cneed, std::move(cs));
+        endpoint from = at(src, d);
+        if (first_cb) {
+          axes_callback(false, d, n, from, 0, at(work, d), false, 1, 0, no_origin, 1, cs);
+          from = at(work, d);
+        }
+        const std::size_t cneed = chain.c2c_line(
+            n, +1, from, at(work, d), first_cb || src.where == work.where, line_edges(), cs);
+        lines(d, extent, src, work, cneed, std::move(cs), first_cb ? &cols_origin : nullptr);
+        adopt(cols_origin, 0, edge_loops);
         c.axis_notes.push_back("axis " + std::to_string(listed(d)) + " (n = " + std::to_string(n) +
                                "): c2c backward, radices " + chain.radix_text(n));
       });
@@ -3266,14 +3615,23 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       std::vector<stage> st;
       const std::size_t need =
           chain.c2r_line(c.lengths[r - 1], at(src, r - 1), at(dst0, r - 1), opts.scale, st);
-      lines(r - 1, extent, src, dst0, need, std::move(st));
+      // The output callback (task 5.3c) in the last phase, on each real row where the c2r wrote
+      // it: the output, or for a consumed output the workspace block, which also holds the half
+      // spectrum the rows were computed from (in place, as an in-place plan's rows are).
+      std::vector<edge_loop> rows_origin;
+      if (out_inside) {
+        axes_callback(true, r - 1, c.lengths[r - 1], {}, 0, at(dst0, r - 1), true, 1, 0, no_origin,
+                      1, st);
+      }
+      lines(r - 1, extent, src, dst0, need, std::move(st), out_inside ? &rows_origin : nullptr);
+      adopt(rows_origin, 0, edge_loops);
       c.axis_notes.push_back("axis " + std::to_string(listed(r - 1)) +
                              " (n = " + std::to_string(c.lengths[r - 1]) + "): " +
                              chain.real_text(c.lengths[r - 1], false,
                                              src.stride[r - 1] != 1 || dst0.stride[r - 1] != 1));
     });
   }
-  if (use_edge_phases && (edge_ops->out.separate || edge_ops->out.call.any())) {
+  if (use_edge_phases && (edge_ops->out.separate || (edge_ops->out.call.any() && !out_inside))) {
     // The output edge's phase: from dst0 (the output itself, in place, or the block) to the
     // output.
     edge_phase(p, edge_loops, true, out.extent, dst0, out_view, edge_rows{});
@@ -3363,6 +3721,29 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       edge_fallback = batch_one_row_reason;
     }
     c.edge_fallback = edge_fallback;
+    if (calls && r > 1) {
+      // Where a multi-axis plan's callbacks ran (task 5.3c): inside the first or last phase
+      // (axes_callback's words), or in the side's own edge phase, which its factor or
+      // accumulation has anyway.
+      const auto place = [&](bool output) -> callback_place {
+        const std::optional<callback_place>& inside = output ? out_place_note : in_place_note;
+        if (inside) {
+          return *inside;
+        }
+        const std::size_t n = output ? out.extent[r - 1] : in.extent[r - 1];
+        const std::size_t lines_n = adjacent != 0 ? adjacent : 1;
+        return callback_blocks(
+            std::string(output ? "in the output edge's phase (its factor's or accumulation's), on "
+                                 "each row of axis "
+                               : "in the input edge's phase (its factor's), on each row of axis ") +
+                std::to_string(listed(r - 1)) + (lines_n > 1 ? " of the block's transforms" : "") +
+                (output ? ", before the store" : ", before the factor"),
+            n, lines_n, output ? out_element : in_element, block_bytes,
+            lines_n > 1 ? "transforms" : "rows");
+      };
+      c.callbacks_note =
+          callbacks_text(edge_ops->in.call, edge_ops->out.call, place(false), place(true));
+    }
     if (calls) {
       c.edges_note += "\n" + c.callbacks_note;
     }
@@ -3506,7 +3887,14 @@ std::vector<edge_record> mark_cursors(std::vector<record>& records, std::size_t 
     if (!std::holds_alternative<loop>(records.at(l.record))) {
       throw std::logic_error("fftn: internal: an edge phase's loop is not a loop");
     }
-    e[l.record].factor_step = l.step;
+    edge_record& x = e[l.record];
+    x.factor_step = l.step;
+    if (l.axis != no_origin || std::ranges::any_of(l.start, [](std::size_t v) { return v != 0; })) {
+      x.moves_origin = true;
+      x.origin_axis = static_cast<std::uint8_t>(l.axis != no_origin ? l.axis : 0);
+      x.origin_step = l.axis != no_origin ? l.axis_step : 0;
+      x.origin_start = l.start;
+    }
   }
   return e;
 }
@@ -3758,17 +4146,16 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   return build_core(s, opts, given, edges, true);
 }
 
-row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real) {
+row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real, const run_plan& runs) {
   check_counts(s);
-  if (s.kind != transform_kind::c2c || s.axes.size() != 1 || !s.runs.empty()) {
-    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows without runs");
+  if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
+    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows");
   }
   const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
   const auto cb = static_cast<std::ptrdiff_t>(real ? real_bytes : 2 * real_bytes);
   const std::vector<std::size_t> full{s.axes[0].n};
-  const side_runs none;
-  const side in = resolve(s, full, full[0], true, true, cb, none);
-  const side out = resolve(s, full, full[0], false, true, cb, none);
+  const side in = resolve(s, full, full[0], true, true, cb, runs.in);
+  const side out = resolve(s, full, full[0], false, true, cb, runs.out);
   check_reach(s, in, true);
   check_reach(s, out, false);
   check_no_overlap(s, out);
