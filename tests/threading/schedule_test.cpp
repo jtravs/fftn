@@ -764,6 +764,10 @@ TEST(Schedule, GridSizesFromCaches) {
   using fftn::detail::edge_forms_reach;
   EXPECT_EQ(machine_profile{}.edge_batched_forms, edge_forms_reach::none);
   EXPECT_EQ(epyc86.edge_batched_forms, edge_forms_reach::leaf_rows);
+  // Zen 3's caches on an Intel or unknown vendor's cores: not measured there.
+  for (const auto v : {fftn::detail::cpu_vendor::intel, fftn::detail::cpu_vendor::unknown}) {
+    EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs", v).edge_batched_forms, edge_forms_reach::none);
+  }
   EXPECT_EQ(xeon86.edge_batched_forms, edge_forms_reach::leaf_rows);
   EXPECT_EQ(
       x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).edge_batched_forms,

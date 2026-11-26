@@ -189,8 +189,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   }
   // X65's P1, narrowed (machine_profile::edge_batched_forms): plans of c2c rows on one leaf with
   // factor edges run in the edge driver's batched forms, where it was measured: Zen 3's class
-  // (EPYC 7763, `avx2`) and the Xeon 6240's (`avx512`, Intel's cores only).
-  if (zen3_like || xeon6240_like) {
+  // (EPYC 7763, `avx2`; AMD's cores only, by the maintainer's policy that a rule measured on one
+  // vendor is keyed to it) and the Xeon 6240's (`avx512`, Intel's cores only).
+  if ((zen3_like && p.vendor == cpu_vendor::amd) || xeon6240_like) {
     p.edge_batched_forms = edge_forms_reach::leaf_rows;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
