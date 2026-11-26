@@ -81,8 +81,9 @@ struct cb_case {
   std::size_t scratch = 0;
   const d::build_settings* settings = nullptr; // null: the rules
   const char* strategy = nullptr;              // in describe()'s strategy line, where given
-  // Where given, the input callback's calls take at least this many rows at once on the strategy
-  // named (a block of several rows cut by rows, not by elements).
+  // Where given, the input callback's serial calls take at least this many rows at once on the
+  // strategy named, or always where none is (a block of several rows cut by rows, not by
+  // elements).
   std::size_t min_lines = 0;
 };
 
@@ -589,8 +590,9 @@ template <class T, transform_kind K> void run_case(const cb_case& cc, fftn::isa 
   run.prepare(1);
   d::execute_core(*core, 0, cc.count, in_of(serial, xs, false), serial.data(), ws, args);
   run.expect_clean("serial");
-  if (cc.min_lines != 0 && cc.strategy != nullptr &&
-      text.find(cc.strategy, text.find("\nstrategy: ")) != std::string::npos) {
+  if (cc.min_lines != 0 &&
+      (cc.strategy == nullptr ||
+       text.find(cc.strategy, text.find("\nstrategy: ")) != std::string::npos)) {
     EXPECT_GE(run.in_ctx.widest.load(), cc.min_lines) << "blocks of several rows not passed";
   }
   // Rows too long for the quadruple-precision reference are checked by coverage and bitwise
@@ -681,6 +683,10 @@ struct knobs {
   d::build_settings lanes_small;    // the lanes, blocks of 1 KiB: a lanes block in several calls
   d::build_settings adjacent_small; // the adjacent transforms, blocks of 4 KiB
   d::build_settings copy_out;       // the chain's copy into the output (callback_copy_out)
+  // The edge driver's batched forms (5.2a) with callbacks: batch leaves in row blocks, and the
+  // flat form of short rows on the chain.
+  d::build_settings leaf_blocks;
+  d::build_settings flat;
   knobs() {
     lanes.strategy = d::strategy_choice::lanes;
     grid.strategy = d::strategy_choice::grid;
@@ -704,6 +710,13 @@ struct knobs {
     copy_out.strategy = d::strategy_choice::chain;
     copy_out.batch_leaves = d::batch_leaf_choice::never;
     copy_out.callback_copy_out = true;
+    leaf_blocks = leaves;
+    leaf_blocks.profile.edge_batched_forms = d::edge_forms_reach::all;
+    // The leaf_rows machines' block size (half the EPYC 7763's and Xeon 6240's 32 KiB L1d),
+    // whatever the machine running the test.
+    leaf_blocks.profile.callback_block_bytes = std::uint32_t{16} * 1024;
+    flat = chain;
+    flat.profile.edge_batched_forms = d::edge_forms_reach::all;
     // The walked form, whose blocks are single rows (no row blocks on any profile).
     chain.profile.edge_batched_forms = d::edge_forms_reach::none;
     copy_out.profile.edge_batched_forms = d::edge_forms_reach::none;
@@ -906,6 +919,59 @@ std::vector<cb_case> strategy_cases() {
        .count = 1,
        .out = out_kind::consume,
        .settings = &k.grid,
+       .strategy = chain},
+      // Row blocks (the batched forms): a block's rows in one call, leaves once per block.
+      {.name = "row blocks, both modify",
+       .n = 16,
+       .count = 21,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .scratch = 16,
+       .settings = &k.leaf_blocks},
+      {.name = "row blocks, produce and consume, input factor",
+       .n = 8,
+       .count = 300,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .in_factor = cplx,
+       .settings = &k.leaf_blocks},
+      // Blocks of 128 rows of 256 bytes (double; 128, float), over the 16 KiB block size: whole
+      // rows, 64 a call (128, float), never half of each row's elements.
+      {.name = "row blocks over the block size",
+       .n = 16,
+       .count = 300,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .settings = &k.leaf_blocks,
+       .min_lines = 64},
+      {.name = "row blocks in place, strided",
+       .n = 32,
+       .count = 70,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .in_place = true,
+       .in_stride = 2,
+       .settings = &k.leaf_blocks},
+      {.name = "row blocks, accumulate",
+       .n = 12,
+       .count = 9,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .accumulate = true,
+       .settings = &k.leaf_blocks},
+      {.name = "the flat form, both modify",
+       .n = 16,
+       .count = 1,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .settings = &k.flat,
+       .strategy = chain},
+      {.name = "the flat form, produce, consume",
+       .n = 64,
+       .count = 1,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .settings = &k.flat,
        .strategy = chain},
       // Batch leaves (where the target's precision has them), one row at a time.
       {.name = "batch leaves, both modify",
@@ -1244,6 +1310,19 @@ TEST(CallbackStrategies, DescribeNamesWhereAndTheBlocks) {
        k.copy_out,
        {"the input's (modify) on each row in the output, which the chain then transforms in "
         "place, after a copy of the input"}},
+      {fftn::rows_c2c<double>(16, 21, fftn::direction::forward),
+       k.leaf_blocks,
+       {"edge row blocks: the rows in blocks of", "blocks of up to", "rows together"}},
+      // Row blocks of 128 rows of 256 bytes over 16 KiB: 64 whole rows a call, no sweep, and
+      // not where a team walks.
+      {fftn::rows_c2c<double>(16, 300, fftn::direction::forward),
+       k.leaf_blocks,
+       {"edge row blocks: the rows in blocks of 128",
+        "blocks of up to 64 rows together, whole in the row blocks (fewer in a short batch; one "
+        "row a call where a team runs the walked form)"}},
+      {fftn::rows_c2c<double>(64, 1, fftn::direction::forward),
+       k.flat,
+       {"edge forms: the flat form"}},
   };
   for (const expect& e : cases) {
     const auto core =
