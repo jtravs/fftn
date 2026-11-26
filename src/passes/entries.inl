@@ -100,6 +100,25 @@ template <class T, std::size_t R, edge_op OutOp> consteval pass_fn depth_top_chi
   }
 }
 
+// The pruned edge passes (task 5.1e), or null where radix R has no pruned codelet.
+template <std::size_t R> inline constexpr bool pruned_radix = has_pruned_codelet(R);
+
+template <class T, std::size_t R, int Sign> consteval pass_fn grouped_head_entry() {
+  if constexpr (pruned_radix<R>) {
+    return &grouped_pass<T, R, Sign, nop, true>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R, int Sign, edge_op OutOp> consteval pass_fn last_head_entry() {
+  if constexpr (pruned_radix<R>) {
+    return &lane_pass<T, R, Sign, false, OutOp, factor_sharing::none, true>;
+  } else {
+    return nullptr;
+  }
+}
+
 template <class T, std::size_t R, bool Scaled> consteval pass_fn r2c_last_entry() {
   if constexpr (phase_radix<R>) {
     return &r2c_last<T, R, Scaled>;
@@ -176,6 +195,16 @@ template <class T, std::size_t I> struct radix_entries {
                   &lane_pass<T, R, +1, false, scl>,
                   &lane_pass<T, R, +1, false, fac>,
               },
+          },
+      .grouped_head =
+          {
+              grouped_head_entry<T, R, -1>(),
+              grouped_head_entry<T, R, +1>(),
+          },
+      .last_head =
+          {
+              {last_head_entry<T, R, -1, nop>(), last_head_entry<T, R, -1, scl>()},
+              {last_head_entry<T, R, +1, nop>(), last_head_entry<T, R, +1, scl>()},
           },
       .leaf =
           {

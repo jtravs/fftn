@@ -2305,7 +2305,29 @@ both: the c2r rows from the half spectrum to the real rows, both in the workspac
 the output has runs, run over every line. Not yet built: runs on in-place plans and beside a factor (both refused, naming the
 field), runs in the lanes, grid and depth-first strategies (`describe()` names the strategy the
 plan without runs takes), and measured planning and wisdom for runs (planned by the rules; the
-wisdom key carries the runs). 5.1e adds pruned codelets within the line.
+wisdom key carries the runs).
+
+Pruned codelets as built (task 5.1e; gen/README.md, "Pruned codelets"): the even codelet radices
+have `dif_head` (inputs from R/2 on known zero, not read) and `plain_head` (outputs from R/2 on
+not computed), verified exactly like every codelet. A chain's first pass of radix R reads leg j
+at elements m j to m (j + 1) − 1, so its first R/2 legs are the line's first half whatever the
+even R; the last pass's first R/2 legs write it. A c2c row (one axis) whose input runs lie in the
+first half and whose chain starts with a grouped pass of an even codelet radix takes the pruned
+first pass; one whose output runs lie in the first half and whose chain ends in a codelet lane
+pass of an even radix takes the pruned last pass (`chain_builder::head_first`, `head_last`; not
+for lines that are one leaf or pair leaf, nor a last Bluestein stage, nor a chain that ends in
+split arithmetic: a split run ends in an untwiddled last kernel, and turning it off cost more than
+the pruning saved, 1.27 of the unpruned time on 16384-point rows of the EPYC 7513, informative
+run). Where the side has one run
+of exactly n/2 from logical 0, stored with stride 1 (and, for the output, not accumulated), the
+pass reads or writes it where it is stored and the side has no separate pass; otherwise the
+separate pass moves the runs through the block's first half only, zeros there alone. A pruned
+last pass's destination is not used as a scratch line. `describe()` says which (`run_pruning`)
+and counts the separate passes left.
+The codelets save a tenth to a quarter of the pass's arithmetic and a quarter of its memory
+accesses; the separate pass that no longer runs is the larger gain. Not yet: pruned passes on
+real rows and on the lines of multi-axis plans (edge phases, as 5.1d built them), and runs
+outside the line's first half.
 
 Batched forms on the edge driver (task 5.2a, X65's P1): where the profile says
 (`machine_profile::edge_batched_forms`), a plan whose edges have factors runs whole executions
@@ -4151,6 +4173,7 @@ to change before a release.
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 | 2026-11-25 | X65 (task 5.1f, section 12.1): no fused edge variant is built yet; the separate edge pass stays baseline code; batched forms for plans with edges come first (proposal, the maintainer's decision) | Edges cost 1.5–6 times the plain plan on batched rows of 16–256 points whether fused or separate, more than the user's own loop, because such plans lose the batched program forms; a vectorised separate pass moved its cases by 0.99 on the EPYC (arm V, rejected) |
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
+| 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 
 ---

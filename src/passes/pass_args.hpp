@@ -126,6 +126,10 @@ enum class factor_sharing : std::uint8_t { none, input, output };
 [[nodiscard]] constexpr bool has_split_codelet(std::size_t r) noexcept {
   return std::ranges::any_of(gen::split_radices, [r](std::size_t q) { return q == r; });
 }
+// Whether the pruned codelets of radix r (dif_head, plain_head; task 5.1e) exist.
+[[nodiscard]] constexpr bool has_pruned_codelet(std::size_t r) noexcept {
+  return std::ranges::any_of(gen::pruned_radices, [r](std::size_t q) { return q == r; });
+}
 // Every radix from 2 to this one has a codelet; the planner and the grid choose pass radices
 // up to it, and prime factors above it are the generic pass's or Bluestein's.
 inline constexpr std::size_t dense_codelet_radix = 16;
@@ -163,6 +167,13 @@ struct radix_passes {
   pass_fn last_shared_out;
   // Its last pass (m = 1): lanes over copies, no twiddles; output edge.
   pass_fn last[2][edge_op_count];
+  // The edge passes of a line with stored runs (task 5.1e), on the pruned codelets: the first
+  // pass reading legs 0 .. R/2 - 1 only (dif_head), from src_cols bytes after its source; the
+  // last pass storing legs 0 .. R/2 - 1 only (plain_head), from dst_cols bytes after its
+  // destination [output edge none or scale]. Null for the radices without pruned codelets
+  // (gen::pruned_radices).
+  pass_fn grouped_head[2];
+  pass_fn last_head[2][2];
   // A whole transform of n = radix in registers; input edge, output edge.
   leaf_fn leaf[2][edge_op_count][edge_op_count];
   // The same for lines of stride 1 on both sides (experiment X28b, passes/unit_leaf.inl);

@@ -24,8 +24,8 @@ uv run python -m unittest discover -s gen/tests -t gen   # the generator's tests
 Generation builds and verifies every codelet before writing anything; a codelet that fails
 verification raises and no file changes. `--check` is what the gate runs (about 12 s since radix
 64), then the tests (about 40 s). `--table` prints the operation counts of every forward codelet next
-to the reference, and exits 1 if a codelet misses the reference other than by a recorded
-gap.
+to the reference, then the pruned codelets against their full ones ("Pruned codelets"), and exits
+1 if a codelet misses the reference other than by a recorded gap.
 
 ## Files
 
@@ -77,7 +77,7 @@ For each radix R, variant and direction (`codelet.build`):
    associativity, distributivity, sign and rotation. Constants are folded (c·(d·x) is
    (cd)·x, 1·x is x), negative constants become a rotation of 2, and a node whose values
    are zero is the zero term, which `add` and `scale` drop. Only nodes reachable from the
-   outputs are lowered (dead-code elimination; pruned variants will rely on it).
+   outputs are lowered (dead-code elimination; the pruned variants rely on it).
 4. **Real-coefficient form** (`realify.py`). The DAG is rebuilt with every node v split
    into R(v) and I(v), the combinations of the same atoms (inputs, twiddle products) by the
    real and imaginary parts of v's coefficients, so that every value is a real combination
@@ -288,11 +288,55 @@ make sure the reference table has it.
 A lowering is a second path from the DAG to a list of operations and a second `.inl`. The
 split lowering (task 1.5, below) is the example: its own `Op` kinds, a lowering module next
 to `lower.py`, an `evaluate` branch in `verify.py`, an emitter for its text (another class
-template beside `cdft`), its value in `gen::lowering` and its own metadata table. Pruned and fused-edge
-variants (tasks 1.5 and 2.1) are new variants: a builder that leaves inputs as `ZERO` or
-drops outputs before `lower()`, and their own reference in `verify.py`. A pruned codelet
-no longer has every output depending on every input, so its schedule must keep all loads
-before the first store if it may run in place.
+template beside `cdft`), its value in `gen::lowering` and its own metadata table. Pruned
+variants are new variants of the complex lowering, not lowerings ("Pruned codelets" below).
+
+## Pruned codelets
+
+For the edge passes of lines with stored runs (DESIGN.md 12.1, task 5.1e), the even radices
+(`catalogue.PRUNED_RADICES`: 2 to 16, 20, 32, 64) have two more variants, with h = R/2:
+
+| Variant | Meaning | Pass that calls it |
+|---|---|---|
+| `dif_head` | `dif` with inputs h .. R−1 known zero: they are not read | a chain's first pass, when the input's runs lie in the line's first half |
+| `plain_head` | `plain` computing outputs 0 .. h−1 only | a chain's last pass, when the output's runs lie in the line's first half |
+
+`codelet.build_ops` makes them as the other variants are, with the unread inputs as the zero
+term or the unwanted outputs dropped before realification and lowering: value numbering and
+dead-code elimination then remove what they fed. `verify.reference` defines them (dif with the
+inputs from h on zeroed, plain's first h outputs), the basis inputs include the legs a
+`dif_head` must not read, and `check_shape` holds the legs read and written and that every
+input load precedes the first store (a pruned codelet's outputs no longer depend on every input,
+so in-place use needs the check). They are emitted into `cdft<R>` beside the others and listed
+in `gen::pruned_codelets[]`; `fftn_isa_tests` runs each with NaN in the legs it must not read.
+
+**Why halves of even radices.** In a chain whose first pass has radix R and m butterfly groups,
+leg j reads elements m j to m (j + 1) − 1 of the line, so the first h legs of an even R are
+exactly the line's first n/2 elements, whatever R is; likewise the last pass's first h legs
+write the first n/2. A half is the valid half of a zero-padded convolution's row, and holds
+any band or crop that lies in it. `--table` prints the counts (forward; vector operations,
+unfused real flops, input loads and stores):
+
+| R | `dif_head` ÷ `dif` ops | flops | `plain_head` ÷ `plain` ops | flops |
+|---|---|---|---|---|
+| 4 | 7/11 = 0.64 | 0.76 | 6/8 = 0.75 | 0.75 |
+| 8 | 27/35 = 0.77 | 0.84 | 24/28 = 0.86 | 0.86 |
+| 12 | 50/63 = 0.79 | 0.82 | 46/52 = 0.88 | 0.89 |
+| 16 | 79/95 = 0.83 | 0.88 | 72/80 = 0.90 | 0.90 |
+| 20 | 113/135 = 0.84 | 0.85 | 106/116 = 0.91 | 0.92 |
+| 32 | 211/243 = 0.87 | 0.90 | 196/212 = 0.92 | 0.93 |
+| 64 | 527/591 = 0.89 | 0.92 | 496/528 = 0.94 | 0.94 |
+
+and three quarters of the memory accesses in every case. The arithmetic saved in the pass is
+modest (a tenth to a quarter of one pass of a chain of two or three); what pays is that the
+pass no longer touches the zeros: the separate pass of 5.1d wrote the whole line into the
+workspace block (zeros and runs) and the first pass read it all back, while a pruned first pass
+reads the one stored run of n/2 where it is stored, with no separate pass at all, and the last
+pass writes the half where it goes (core/plan_core.cpp, `run_pruning`). Quarters (h = R/4)
+would save more arithmetic for small bands (`dif` of 16 at 0.65, `plain` at 0.75) at another
+codelet pair per radix; odd radices save little at (R+1)/2 inputs (0.78–0.93) and
+`plain_head` would cost more than `plain` at 9 and 25 (1.08, 1.27: the real-coefficient form's
+output pairs X_k, X_{R−k} are no longer both wanted). Neither is generated.
 
 ## The split lowering
 

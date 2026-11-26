@@ -15,7 +15,8 @@
 
 namespace fftn::inline v0::detail::gen {
 
-enum class variant : std::uint8_t { plain, dit, dif };
+// dif_head and plain_head are the pruned variants (pruned_codelets below).
+enum class variant : std::uint8_t { plain, dit, dif, dif_head, plain_head };
 enum class lowering : std::uint8_t { complex_register, split };
 
 struct codelet_info {
@@ -172,6 +173,61 @@ inline constexpr codelet_info codelets[codelet_count] = {
 
 inline constexpr std::size_t radix_count = 22;
 inline constexpr std::uint8_t radices[radix_count] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 23, 25, 32, 64};
+
+// The pruned codelets (DESIGN.md 12.1, task 5.1e): one entry per even radix,
+// pruned variant and direction, in that order. dif_head reads inputs 0 .. R/2 - 1
+// (the others are known zero), plain_head stores outputs 0 .. R/2 - 1 (the others
+// are not wanted); the counts are the pruned codelet's.
+inline constexpr std::size_t pruned_codelet_count = 44;
+inline constexpr codelet_info pruned_codelets[pruned_codelet_count] = {
+    {2, variant::dif_head, -1, lowering::complex_register, 1, 0, 0, 0, 1, 1, 3},
+    {2, variant::dif_head, 1, lowering::complex_register, 1, 0, 0, 0, 1, 1, 3},
+    {2, variant::plain_head, -1, lowering::complex_register, 0, 2, 0, 0, 0, 1, 3},
+    {2, variant::plain_head, 1, lowering::complex_register, 0, 2, 0, 0, 0, 1, 3},
+    {4, variant::dif_head, -1, lowering::complex_register, 3, 8, 0, 0, 3, 7, 5},
+    {4, variant::dif_head, 1, lowering::complex_register, 3, 8, 0, 0, 3, 7, 5},
+    {4, variant::plain_head, -1, lowering::complex_register, 0, 12, 0, 0, 0, 6, 6},
+    {4, variant::plain_head, 1, lowering::complex_register, 0, 12, 0, 0, 0, 6, 6},
+    {6, variant::dif_head, -1, lowering::complex_register, 5, 22, 6, 2, 5, 20, 6},
+    {6, variant::dif_head, 1, lowering::complex_register, 5, 22, 6, 2, 5, 20, 6},
+    {6, variant::plain_head, -1, lowering::complex_register, 0, 26, 4, 4, 0, 17, 8},
+    {6, variant::plain_head, 1, lowering::complex_register, 0, 26, 4, 4, 0, 17, 8},
+    {8, variant::dif_head, -1, lowering::complex_register, 7, 36, 4, 0, 7, 27, 10},
+    {8, variant::dif_head, 1, lowering::complex_register, 7, 36, 4, 0, 7, 27, 10},
+    {8, variant::plain_head, -1, lowering::complex_register, 0, 44, 4, 0, 0, 24, 10},
+    {8, variant::plain_head, 1, lowering::complex_register, 0, 44, 4, 0, 0, 24, 10},
+    {10, variant::dif_head, -1, lowering::complex_register, 9, 54, 14, 10, 9, 48, 11},
+    {10, variant::dif_head, 1, lowering::complex_register, 9, 54, 14, 10, 9, 48, 11},
+    {10, variant::plain_head, -1, lowering::complex_register, 0, 62, 12, 12, 0, 43, 12},
+    {10, variant::plain_head, 1, lowering::complex_register, 0, 62, 12, 12, 0, 43, 12},
+    {12, variant::dif_head, -1, lowering::complex_register, 11, 66, 10, 2, 11, 50, 14},
+    {12, variant::dif_head, 1, lowering::complex_register, 11, 66, 10, 2, 11, 50, 14},
+    {12, variant::plain_head, -1, lowering::complex_register, 0, 76, 8, 8, 0, 46, 14},
+    {12, variant::plain_head, 1, lowering::complex_register, 0, 76, 8, 8, 0, 46, 14},
+    {14, variant::dif_head, -1, lowering::complex_register, 13, 70, 14, 50, 13, 80, 15},
+    {14, variant::dif_head, 1, lowering::complex_register, 13, 70, 14, 50, 13, 80, 15},
+    {14, variant::plain_head, -1, lowering::complex_register, 0, 82, 12, 52, 0, 73, 17},
+    {14, variant::plain_head, 1, lowering::complex_register, 0, 82, 12, 52, 0, 73, 17},
+    {16, variant::dif_head, -1, lowering::complex_register, 15, 104, 16, 8, 15, 79, 18},
+    {16, variant::dif_head, 1, lowering::complex_register, 15, 104, 16, 8, 15, 79, 18},
+    {16, variant::plain_head, -1, lowering::complex_register, 0, 120, 16, 8, 0, 72, 19},
+    {16, variant::plain_head, 1, lowering::complex_register, 0, 120, 16, 8, 0, 72, 19},
+    {20, variant::dif_head, -1, lowering::complex_register, 19, 148, 28, 12, 19, 113, 22},
+    {20, variant::dif_head, 1, lowering::complex_register, 19, 148, 28, 12, 19, 113, 22},
+    {20, variant::plain_head, -1, lowering::complex_register, 0, 164, 24, 24, 0, 106, 22},
+    {20, variant::plain_head, 1, lowering::complex_register, 0, 164, 24, 24, 0, 106, 22},
+    {32, variant::dif_head, -1, lowering::complex_register, 31, 276, 52, 32, 31, 211, 36},
+    {32, variant::dif_head, 1, lowering::complex_register, 31, 276, 52, 32, 31, 211, 36},
+    {32, variant::plain_head, -1, lowering::complex_register, 0, 308, 52, 32, 0, 196, 37},
+    {32, variant::plain_head, 1, lowering::complex_register, 0, 308, 52, 32, 0, 196, 37},
+    {64, variant::dif_head, -1, lowering::complex_register, 63, 680, 144, 104, 63, 527, 72},
+    {64, variant::dif_head, 1, lowering::complex_register, 63, 680, 144, 104, 63, 527, 69},
+    {64, variant::plain_head, -1, lowering::complex_register, 0, 744, 144, 104, 0, 496, 71},
+    {64, variant::plain_head, 1, lowering::complex_register, 0, 744, 144, 104, 0, 496, 71},
+};
+
+inline constexpr std::size_t pruned_radix_count = 11;
+inline constexpr std::uint8_t pruned_radices[pruned_radix_count] = {2, 4, 6, 8, 10, 12, 14, 16, 20, 32, 64};
 
 // The split codelets (lowering::split, src/gen/split_codelets.inl): one entry per
 // radix and variant, forward only (the backward transform exchanges the real and

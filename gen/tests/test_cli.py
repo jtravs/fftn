@@ -83,7 +83,8 @@ class Literals(unittest.TestCase):
     def test_every_codelet_function_checks_its_sign(self) -> None:
         text = generate(list(codelets()))["complex_codelets.inl"]
         functions = text.count("static FFTN_FORCE_INLINE void")
-        self.assertEqual(functions, 3 * len({c.radix for c in codelets()}))
+        even = len({c.radix for c in codelets() if c.radix % 2 == 0})
+        self.assertEqual(functions, 3 * len({c.radix for c in codelets()}) + 2 * even)
         self.assertEqual(text.count("static_assert(Sign == -1 || Sign == 1"), functions)
 
     def test_float_literal_of_an_integer_is_valid_cpp(self) -> None:

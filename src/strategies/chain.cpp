@@ -521,19 +521,25 @@ void chain_builder<T>::add_pass(std::size_t n, const std::vector<std::size_t>& r
     st.chunks = chunks_of(st.units, radix * radix * c);
     kind = "generic";
   } else if (grouped) {
-    st.run = k.codelet[codelet_slot(radix)]->grouped[d][edge_index(in)];
+    const radix_passes& rp = *k.codelet[codelet_slot(radix)];
+    st.run = edges.in_head ? rp.grouped_head[d] : rp.grouped[d][edge_index(in)];
+    st.args.src_cols = edges.in_head ? edges.in_offset : 0;
     st.args.twiddles = grouped_twiddles(n, radix);
     st.units = blocks(m);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "grouped";
+    note = edges.in_head ? "; pruned: reads legs 0-" + std::to_string(radix / 2 - 1) : "";
   } else if (last) {
-    st.run = out == edge_op::factor && edges.out_factor_copies > 1
-                 ? k.codelet[codelet_slot(radix)]->last_shared_out
-                 : k.codelet[codelet_slot(radix)]->last[d][edge_index(out)];
+    const radix_passes& rp = *k.codelet[codelet_slot(radix)];
+    st.run = edges.out_head ? rp.last_head[d][out == edge_op::scale ? 1 : 0]
+             : out == edge_op::factor && edges.out_factor_copies > 1 ? rp.last_shared_out
+                                                                     : rp.last[d][edge_index(out)];
+    st.args.dst_cols = edges.out_head ? edges.out_offset : 0;
     st.args.factor_copies = edges.out_factor_copies;
     st.units = blocks(s);
     st.chunks = chunks_of(st.units, radix * c);
     kind = "lane";
+    note = edges.out_head ? "; pruned: writes legs 0-" + std::to_string(radix / 2 - 1) : "";
   } else {
     // A first pass with copies is a Bluestein convolution's (batch copies, all of them
     // here); its input factor, the backward chain's kernel spectrum, holds one entry per
@@ -1015,10 +1021,33 @@ slot chain_builder<T>::scratch_chain(std::size_t n, int sign, slot from,
   return at;
 }
 
+// c2c_line's routes before its passes, for lines of stride 1 without a factor: a batch leaf or
+// a leaf (one codelet radix), a copy (n = 1), a pair leaf; else its passes, two or more.
+template <class T> bool chain_builder<T>::head_first(std::size_t n) const {
+  const std::vector<std::size_t> rad = radices(n);
+  return rad.size() >= 2 && (batch_ == nullptr || !has_codelet(n)) &&
+         pair_for(n, {}, {}, line_edges()).entry == nullptr && has_pruned_codelet(rad.front());
+}
+
+template <class T> bool chain_builder<T>::head_last(std::size_t n) const {
+  const std::vector<std::size_t> rad = radices(n);
+  return rad.size() >= 2 && (batch_ == nullptr || !has_codelet(n)) &&
+         pair_for(n, {}, {}, line_edges()).entry == nullptr && has_pruned_codelet(rad.back()) &&
+         !bluestein_last(n) && split_from(rad, false, 1) == rad.size();
+}
+
 template <class T>
 std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, endpoint dst,
                                        bool aliased, const line_edges& edges,
                                        std::vector<stage>& stages) {
+  // The pruned edge passes are the caller's choice from head_first and head_last, on lines of
+  // stride 1, which then take neither leaves nor pair leaves.
+  const bool heads = edges.in_head || edges.out_head;
+  if (heads &&
+      ((edges.in_head && (!head_first(n) || src.stride != 1 || edges.in != edge_op::none)) ||
+       (edges.out_head && (!head_last(n) || dst.stride != 1 || edges.out == edge_op::factor)))) {
+    throw std::logic_error("fftn: internal: a pruned edge pass where c2c_line builds none");
+  }
   line_scratch_ = 0;
   if (const leaf_fn batch = batch_leaf_for(n, sign, src, dst, edges); batch != nullptr) {
     add_batch_leaf(batch, n, sign, src, dst, edges, stages);
@@ -1060,8 +1089,9 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // passes alternate between it and a, ending in it, so a chain touches three lines (source,
   // destination, a) rather than four, which keeps rows of 512 to 1024 complex doubles in
   // a 32 KiB L1 longer (dev/experiments/X18-x86-kernels.md).
+  // Not with a pruned last pass, whose destination takes the line's first half only.
   const bool via_dst = !aliased && !copy_in && !copy_out && !bluestein && dst.stride == 1 &&
-                       dst.where != slot::a && dst.where != slot::b;
+                       dst.where != slot::a && dst.where != slot::b && !edges.out_head;
   // Two passes touch two lines: the first writes the destination and the last runs there in
   // place. A last pass (m = 1) reads and writes the same R elements in each unit, and every
   // output of a codelet depends on every input, so each unit loads all before it stores. On

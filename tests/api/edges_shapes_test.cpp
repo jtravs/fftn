@@ -2346,6 +2346,44 @@ std::vector<runs_case> runs_cases() {
                      .count = 6,
                      .runs = {{.where = fftn::side::in, .logical = 100, .stored = 0, .count = 300},
                               {.where = fftn::side::out, .logical = 0, .stored = 7, .count = 9}}});
+    // The pruned edge passes of a c2c row (task 5.1e): the valid half of a zero-padded row read
+    // and written where it is stored, by the first and last passes alone; the half read so, a
+    // crop of the output accumulated (through the block); half in, a band of the output's first
+    // half; and runs reaching the second half, which no pass prunes. Real rows take them as
+    // in 5.1d.
+    const std::size_t half = row / 2;
+    cases.push_back(
+        {.name = "the valid half of a zero-padded row, read and written in place",
+         .kind = k,
+         .dims = {row},
+         .count = 3,
+         .runs = {{.where = fftn::side::in, .logical = 0, .stored = 3, .count = half},
+                  {.where = fftn::side::out, .logical = 0, .stored = 5, .count = half}}});
+    cases.push_back({.name = "half a row in, a crop of the output accumulated and scaled",
+                     .kind = k,
+                     .dims = {row},
+                     .count = 2,
+                     .runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = half},
+                              {.where = fftn::side::out, .logical = 7, .stored = 0, .count = 100}},
+                     .dir = fftn::direction::backward,
+                     .scale = 0.25,
+                     .accumulate = true,
+                     .gap = 1});
+    cases.push_back({.name = "half of a row out, scaled, from a band in its first half",
+                     .kind = k,
+                     .dims = {row},
+                     .count = 2,
+                     .runs = {{.where = fftn::side::in, .logical = 9, .stored = 2, .count = 40},
+                              {.where = fftn::side::in, .logical = 300, .stored = 50, .count = 1},
+                              {.where = fftn::side::out, .logical = 0, .stored = 0, .count = half}},
+                     .scale = 3.0});
+    cases.push_back(
+        {.name = "runs reaching a row's second half",
+         .kind = k,
+         .dims = {row},
+         .count = 2,
+         .runs = {{.where = fftn::side::in, .logical = 0, .stored = 0, .count = half + 1},
+                  {.where = fftn::side::out, .logical = half - 1, .stored = 0, .count = 2}}});
     cases.push_back(
         {.name = "a plane, runs on both axes",
          .kind = k,
@@ -2612,6 +2650,172 @@ TEST(EdgeShapes, StoredRunsPlanning) {
                             adj_accumulated->strategy_name + " without the stored runs"),
               std::string::npos)
         << adj_text;
+  }
+}
+
+// describe() of c2c rows whose runs lie in the line's first half (task 5.1e): a row of a power of
+// two, every radix even, takes the pruned first pass on every target, and the pruned last pass
+// unless its chain ends in split arithmetic (chain_builder::head_last), with no separate pass
+// where one run of the half is stored with stride 1; a row whose radices are all odd computes
+// the whole line between its separate passes, as in 5.1d.
+TEST(EdgeShapes, StoredRunsPrunedPasses) {
+  using C = std::complex<double>;
+  using fftn::side;
+  const auto text = [](std::size_t n, std::vector<fftn::stored_run> runs, fftn::isa t) {
+    fftn::shape<C, C> s;
+    s.axes = {{.n = n}};
+    s.batches = {{.count = 2}};
+    s.runs = std::move(runs);
+    return fftn::plan<C, C>(s, {.force_isa = t}).describe();
+  };
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    SCOPED_TRACE(fftn::isa_name(t));
+    const std::string both = text(2048,
+                                  {{.where = side::in, .logical = 0, .stored = 1, .count = 1024},
+                                   {.where = side::out, .logical = 0, .stored = 0, .count = 1024}},
+                                  t);
+    EXPECT_NE(both.find("read where they are stored by the first pass"), std::string::npos) << both;
+    EXPECT_NE(both.find("pruned: reads legs 0-"), std::string::npos) << both;
+    const bool split = both.find("split lane") != std::string::npos;
+    EXPECT_EQ(both.find("written where they are stored by the last pass") != std::string::npos,
+              !split)
+        << both;
+    EXPECT_EQ(both.find("pruned: writes legs 0-") != std::string::npos, !split) << both;
+    EXPECT_NE(both.find(split ? "they cost 1 separate pass" : "they cost 0 separate passes"),
+              std::string::npos)
+        << both;
+    const std::string band = text(2048,
+                                  {{.where = side::in, .logical = 4, .stored = 0, .count = 10},
+                                   {.where = side::out, .logical = 1, .stored = 0, .count = 3}},
+                                  t);
+    EXPECT_NE(band.find("in the line's first half into the workspace block in a separate pass, "
+                        "the first pass pruned"),
+              std::string::npos)
+        << band;
+    EXPECT_EQ(band.find("the last pass pruned to the line's first half; they cost 2 separate") !=
+                  std::string::npos,
+              band.find("split lane") == std::string::npos)
+        << band;
+    EXPECT_NE(band.find("they cost 2 separate passes"), std::string::npos) << band;
+    const std::string odd = text(2187,
+                                 {{.where = side::in, .logical = 0, .stored = 0, .count = 1000},
+                                  {.where = side::out, .logical = 0, .stored = 0, .count = 1000}},
+                                 t);
+    EXPECT_NE(odd.find("the whole transform computed between them; they cost 2 separate"),
+              std::string::npos)
+        << odd;
+    EXPECT_EQ(odd.find("pruned"), std::string::npos) << odd;
+  }
+}
+
+// The pruned passes with the radices and the layout forced (task 5.1e): split layouts (a split
+// run keeps its last pass unpruned), an interleaved chain, radix 2 at either end; the half read
+// and written in place, and a band in and a crop out through the block. Against the plan
+// without runs on the zero-padded line, cropped; nothing outside the output's runs written;
+// serial, team and executor alike.
+TYPED_TEST(EdgeShapes, StoredRunsPrunedPassesForced) {
+  using T = TypeParam;
+  using C = std::complex<T>;
+  using fftn::side;
+  namespace d = fftn::detail;
+  const std::size_t n = 1024;
+  const std::size_t count = 3;
+  struct runs_of {
+    std::size_t in_logical, in_stored, in_count, out_logical, out_stored, out_count;
+  };
+  const std::vector<runs_of> runs{{0, 2, n / 2, 0, 1, n / 2}, {3, 0, 100, 300, 0, 9}};
+  const std::vector<std::vector<std::size_t>> radices{{4, 4, 4, 16}, {2, 8, 8, 8}, {16, 32, 2}};
+  fftn::test::input_source src(0x51EULL);
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const auto& rad : radices) {
+      for (const d::layout_choice layout :
+           {d::layout_choice::split, d::layout_choice::interleaved}) {
+        for (const runs_of& ro : runs) {
+          SCOPED_TRACE(std::string(fftn::isa_name(t)) + " radices " + std::to_string(rad[0]) +
+                       " first, split " + std::to_string(layout == d::layout_choice::split) +
+                       ", in count " + std::to_string(ro.in_count));
+          fftn::shape<C, C> s;
+          s.axes = {{.n = n}};
+          s.batches = {{.count = count}};
+          s.runs = {{.where = side::in,
+                     .logical = ro.in_logical,
+                     .stored = ro.in_stored,
+                     .count = ro.in_count},
+                    {.where = side::out,
+                     .logical = ro.out_logical,
+                     .stored = ro.out_stored,
+                     .count = ro.out_count}};
+          const std::size_t in_dist = ro.in_stored + ro.in_count;
+          const std::size_t out_dist = ro.out_stored + ro.out_count;
+          d::build_settings settings;
+          settings.radices = rad;
+          settings.layout = layout;
+          const fftn::options opts{.scale = 0.5, .force_isa = t};
+          const core_plan p{d::make_plan_core_with_edges(
+              d::view_of(s), opts, d::view_of(fftn::plan_edges<C, C>{}), settings)};
+          const std::string text = p.describe();
+          EXPECT_NE(text.find("pruned: reads legs"), std::string::npos) << text;
+          // The last pass is pruned unless the chain ends in split arithmetic.
+          EXPECT_EQ(text.find("pruned: writes legs") != std::string::npos,
+                    text.find("split lane") == std::string::npos)
+              << text;
+          std::vector<C> x = src.complexes<T>(in_dist * count);
+          const std::vector<C> init = src.complexes<T>(out_dist * count + 4);
+          std::vector<C> y = init;
+          const fftn::workspace ws(p.workspace_bytes(3));
+          p.execute(x.data(), y.data(), ws, {});
+          // The plan without runs on the zero-padded lines.
+          std::vector<C> padded(n * count, C(0));
+          for (std::size_t b = 0; b < count; ++b) {
+            for (std::size_t j = 0; j < ro.in_count; ++j) {
+              padded[b * n + ro.in_logical + j] = x[b * in_dist + ro.in_stored + j];
+            }
+          }
+          fftn::shape<C, C> whole;
+          whole.axes = {{.n = n}};
+          whole.batches = {{.count = count}};
+          std::vector<C> full(n * count);
+          const fftn::plan<C, C> plain(whole, opts);
+          fftn::workspace plain_ws(plain);
+          plain.execute(padded.data(), full.data(), plain_ws);
+          T worst = 0;
+          T largest = 0;
+          std::vector<bool> written(y.size(), false);
+          for (std::size_t b = 0; b < count; ++b) {
+            for (std::size_t k = 0; k < ro.out_count; ++k) {
+              const std::size_t i = b * out_dist + ro.out_stored + k;
+              written[i] = true;
+              worst = std::max(worst, std::abs(y[i] - full[b * n + ro.out_logical + k]));
+              largest = std::max(largest, std::abs(full[b * n + ro.out_logical + k]));
+            }
+          }
+          EXPECT_LE(worst, largest * 64 * std::numeric_limits<T>::epsilon() * 10) << text;
+          for (std::size_t i = 0; i < y.size(); ++i) {
+            if (!written[i]) {
+              EXPECT_EQ(y[i], init[i]) << "element " << i << " outside the runs written";
+            }
+          }
+          std::vector<C> teamed = init;
+          std::vector<std::thread> members;
+          for (int rank = 1; rank < 3; ++rank) {
+            members.emplace_back([&, rank] {
+              p.execute(x.data(), teamed.data(), fftn::team{.rank = rank, .size = 3}, ws,
+                        fftn::completion::all, {});
+            });
+          }
+          p.execute(x.data(), teamed.data(), fftn::team{.rank = 0, .size = 3}, ws,
+                    fftn::completion::all, {});
+          for (std::thread& m : members) {
+            m.join();
+          }
+          EXPECT_TRUE(same_bits(teamed, y)) << "a team differs";
+          const fftn::thread_pool pool(3);
+          std::vector<C> pooled = init;
+          p.execute(x.data(), pooled.data(), pool, ws, {});
+          EXPECT_TRUE(same_bits(pooled, y)) << "the executor differs";
+        }
+      }
+    }
   }
 }
 

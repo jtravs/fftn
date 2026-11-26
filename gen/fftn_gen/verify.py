@@ -61,10 +61,23 @@ def evaluate(ops: list[Op] | tuple[Op, ...], x: list, w: list) -> list:
     return [out[k] for k in range(len(out))]
 
 
+def _head(radix: int) -> int:
+    return radix // 2  # codelet.head (importing it from there would be circular)
+
+
 def reference(radix: int, variant: str, sign: int, x: list, w: list) -> list:
+    """The variant's outputs by definition. The pruned variants (codelet.py): dif_head is dif
+    with the inputs from R/2 on zero, whatever x holds there; plain_head is plain's first R/2
+    outputs."""
+
     def t(k: int) -> mpmath.mpc:
         return mpmath.conj(w[k]) if sign > 0 else w[k]
 
+    if variant == "dif_head":
+        x = x[: _head(radix)] + [mpmath.mpc(0)] * (radix - _head(radix))
+        return reference(radix, "dif", sign, x, w)
+    if variant == "plain_head":
+        return reference(radix, "plain", sign, x, w)[: _head(radix)]
     if variant == "dit":
         x = [x[0]] + [x[j] * t(j) for j in range(1, radix)]
     y = [
@@ -81,7 +94,11 @@ def reference(radix: int, variant: str, sign: int, x: list, w: list) -> list:
 
 def check_shape(ops: list[Op] | tuple[Op, ...], radix: int, variant: str) -> None:
     """The accessor contract (gen/README.md, "Calling convention"): every input leg loaded
-    once, every twiddle leg 1 .. R-1 once (none for plain), every output stored once.
+    once, every twiddle leg 1 .. R-1 once (none for plain), every output stored once; the
+    pruned variants load only inputs 0 .. R/2 - 1 (dif_head) or store only outputs
+    0 .. R/2 - 1 (plain_head). Every input load precedes every store, so that in and out may
+    address the same memory: a pruned codelet's outputs no longer depend on every input leg,
+    so that order no longer follows from the dependences alone.
 
     Checked apart from the values because a stray access can be numerically harmless: a
     load of twiddle 0, which the tables do not hold, multiplies by whatever lies before
@@ -89,14 +106,18 @@ def check_shape(ops: list[Op] | tuple[Op, ...], radix: int, variant: str) -> Non
     """
     where = f"radix {radix} {variant}"
     expected = {
-        "load": list(range(radix)),
-        "load_tw": [] if variant == "plain" else list(range(1, radix)),
-        "store": list(range(radix)),
+        "load": list(range(_head(radix) if variant == "dif_head" else radix)),
+        "load_tw": [] if variant in ("plain", "plain_head") else list(range(1, radix)),
+        "store": list(range(_head(radix) if variant == "plain_head" else radix)),
     }
     for kind, want in expected.items():
         got = sorted(op.index for op in ops if op.kind == kind)
         if got != want:
             raise VerificationError(f"{where}: {kind} indices {got}, expected {want} once each")
+    kinds = [op.kind for op in ops]
+    last_load = max(i for i, k in enumerate(kinds) if k == "load")
+    if last_load > kinds.index("store"):
+        raise VerificationError(f"{where}: a store before the last input load")
 
 
 def verify(
@@ -108,6 +129,8 @@ def verify(
         return mpmath.mpc(rng.uniform(-1, 1), rng.uniform(-1, 1))
 
     check_shape(ops, radix, variant)
+    # Every basis input, the legs a pruned codelet does not read included: those must not
+    # change its outputs (dif_head's reference zeroes them).
     cases = [[mpmath.mpc(int(j == i)) for j in range(radix)] for i in range(radix)]
     cases += [[rand() for _ in range(radix)] for _ in range(3)]
     for x in cases:
