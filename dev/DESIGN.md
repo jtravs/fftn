@@ -2268,8 +2268,14 @@ one row at a time between the edge passes; a c2r plane's intermediate packed in 
 every candidate is built with them (a candidate's forced strategy takes them as separate
 passes, a chain candidate the fused factor where it can) and timed on scratch factor arrays
 over the factors' span on the timing shape; a plan's wisdom key is its shape and options plus
-its edges' kinds, strides, scales and accumulation, so an entry serves those edges only. X65
-decides which separate passes become fused variants. An edge that still forces another
+its edges' kinds, strides, scales and accumulation, so an entry serves those edges only.
+X65 measured the edges as built against the plain plan plus the user's own loop (EPYC 7763,
+Xeon 6240): edges cost more than that loop on small batched rows, fused or not (a plan with a
+factor cursor or a separate pass runs each transform through the walked program, without the
+plain plan's batched forms, and batch leaves one row at a time), and on c2c chains' separate
+passes; accumulation costs about what the user's loop does. Making the pass's arithmetic
+vectorise changed nothing measurable, so fused variants (a real factor, accumulation) wait
+until such plans keep the batched forms (X65's proposals). An edge that still forces a slower
 strategy is built, not refused, and `describe()` says so (AGENTS.md section 1; task 5.1c):
 every build names its strategy in a few words (`plan_core::strategy_name`), the plan with
 edges is compared with the same shape, options and knobs built without them, and where the
@@ -3698,6 +3704,7 @@ to change before a release.
 | 2026-11-25 | Edges in the rows' strategies (task 5.1b-2, section 12.1): a row with edges takes the rules' strategy with separate passes around it (the input's into the output for an in-place build, or into the block for a real row; accumulation by saving the output's prior values in the block and adding the result to them); the fused chain only where the rules choose the chain; the lanes over adjacent transforms with edge phases in each block, not with accumulation | "Plans with edges stop being forced to the chain" (PLAN 5.1b): a separate pass costs one pass over the row, the forced chain could cost the strategy's whole gain. Saving the prior values needs no second destination in any strategy, so accumulation reaches every strategy at once. X65 (5.1f) prices fusing |
 | 2026-11-25 | Stored runs (task 5.1d, section 12.1): provisional public `side`, `stored_run`, `shape::runs` and the runs argument of `axes_*`; runs in any order, disjoint in logical and stored positions; built as separate edge passes through the workspace block or the output, on the chain, with pruning by restricted loops in multi-axis transforms; refused on in-place plans and beside a factor; planned by the rules | Correctness first, as the brief orders ("a line with runs may read into scratch with zeros, compute the full line, then store only the runs"); the edge phases' block and loops carry runs with no new kernel beyond a zero fill. The refusals and the rules-only planning are the parts not built yet, listed for the maintainer's review with the API choices |
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
+| 2026-11-25 | X65 (task 5.1f, section 12.1): no fused edge variant is built yet; the separate edge pass stays baseline code; batched forms for plans with edges come first (proposal, the maintainer's decision) | Edges cost 1.5–6 times the plain plan on batched rows of 16–256 points whether fused or separate, more than the user's own loop, because such plans lose the batched program forms; a vectorised separate pass moved its cases by 0.99 on the EPYC (arm V, rejected) |
 
 ---
 
