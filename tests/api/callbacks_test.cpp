@@ -598,19 +598,24 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
   const cvec<T> fin0 = run.fin;
   const std::vector<T> fin_r0 = run.fin_r;
   const auto fresh = [&] { return cc.in_place ? run.x : run.init; };
-  const auto in_of = [&](cvec<T>& y, cvec<T>& xs) -> const std::complex<T>* {
-    if (cc.in_place) {
-      return y.data();
+  // The serial execution passes the arrays (a produced input null out of place), and checks
+  // that a consumed output is not written; the others pass a produced input and a consumed
+  // output as null, which they may be, in place too: out of place with both, both null.
+  const auto in_of = [&](cvec<T>& y, cvec<T>& xs, bool null_ok) -> const std::complex<T>* {
+    if (cc.in == in_kind::produce && (null_ok || !cc.in_place)) {
+      return nullptr;
     }
-    // A produced input is not read, and may be null.
-    return cc.in == in_kind::produce ? nullptr : xs.data();
+    return cc.in_place ? y.data() : xs.data();
+  };
+  const auto out_of = [&](cvec<T>& y) -> std::complex<T>* {
+    return cc.out == out_kind::consume ? nullptr : y.data();
   };
 
   fftn::workspace ws(p, 3);
   cvec<T> xs = run.x;
   cvec<T> serial = fresh();
   run.prepare(1, serial);
-  p.execute(in_of(serial, xs), serial.data(), ws, args);
+  p.execute(in_of(serial, xs, false), serial.data(), ws, args);
   run.expect_clean(what + ", serial");
   if (reference) {
     run.check(serial, describe);
@@ -643,12 +648,8 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
   cvec<T> pieces = fresh();
   run.prepare(1, pieces);
   const std::size_t half = cc.count / 2;
-  // A consumed output is not written, and may be null (not beside a null produced input, which
-  // the debug builds' in != out assertion would take for in place).
-  std::complex<T>* out_pieces =
-      cc.out == out_kind::consume && cc.in != in_kind::produce ? nullptr : pieces.data();
-  p.execute_transforms(0, half, in_of(pieces, xs), out_pieces, ws, args);
-  p.execute_transforms(half, cc.count - half, in_of(pieces, xs), out_pieces, ws, args);
+  p.execute_transforms(0, half, in_of(pieces, xs, true), out_of(pieces), ws, args);
+  p.execute_transforms(half, cc.count - half, in_of(pieces, xs, true), out_of(pieces), ws, args);
   agree(pieces, "pieces of the batch");
   if (!threads) {
     return;
@@ -659,11 +660,12 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
     std::vector<std::thread> members;
     for (int r = 1; r < 3; ++r) {
       members.emplace_back([&, r] {
-        p.execute(in_of(teamed, xs), teamed.data(), fftn::team{.rank = r, .size = 3}, ws, done,
-                  args);
+        p.execute(in_of(teamed, xs, true), out_of(teamed), fftn::team{.rank = r, .size = 3}, ws,
+                  done, args);
       });
     }
-    p.execute(in_of(teamed, xs), teamed.data(), fftn::team{.rank = 0, .size = 3}, ws, done, args);
+    p.execute(in_of(teamed, xs, true), out_of(teamed), fftn::team{.rank = 0, .size = 3}, ws, done,
+              args);
     for (std::thread& m : members) {
       m.join();
     }
@@ -672,7 +674,7 @@ void run_case(const cb_case& cc, fftn::isa t, bool threads, bool reference = tru
   const fftn::thread_pool pool(3);
   cvec<T> pooled = fresh();
   run.prepare(pool.concurrency(), pooled);
-  p.execute(in_of(pooled, xs), pooled.data(), pool, ws, args);
+  p.execute(in_of(pooled, xs, true), out_of(pooled), pool, ws, args);
   agree(pooled, "the executor");
 }
 
@@ -1090,6 +1092,12 @@ TEST(CallbacksDeathTest, WithoutExecArgsAborts) {
   EXPECT_DEATH(p.execute(x.data(), y.data(), ws), "without exec_args");
   EXPECT_DEATH(p.execute_transforms(1, 1, x.data(), y.data(), ws), "without exec_args");
   EXPECT_DEATH(p.execute(x.data(), y.data(), fftn::team{}, ws), "without exec_args");
+  EXPECT_DEATH(
+      {
+        const fftn::thread_pool pool(2);
+        p.execute(x.data(), y.data(), pool, ws);
+      },
+      "without exec_args");
 }
 
 } // namespace

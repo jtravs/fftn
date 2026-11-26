@@ -3162,6 +3162,8 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
         static_cast<std::uint8_t>((edges->in.kind != factor_kind::none ? moving_in_factor : 0) |
                                   (edges->out.kind != factor_kind::none ? moving_out_factor : 0));
     c->needs_args = c->factor_args != 0 || !c->callback_sites.empty();
+    c->in_unread = edges->in.call.any() && edges->in.call.mode == callback_mode::produce;
+    c->out_unwritten = edges->out.call.any() && edges->out.call.mode == callback_mode::consume;
     if (!c->callback_sites.empty() && c->prog.lanes != 0) {
       throw std::logic_error("fftn: internal: a callback stage in a lanes program");
     }
@@ -3467,8 +3469,8 @@ void execute_program(const plan_core& core, std::size_t first, std::size_t count
                      void* out, const workspace& ws, const State&... state) noexcept {
   assert(first <= core.prog.transforms && count <= core.prog.transforms - first &&
          "fftn: execute_transforms beyond the batch");
-  assert((!core.in_place || in == out) && "fftn: in-place plan executed with in != out");
-  assert((core.in_place || in != out) && "fftn: out-of-place plan executed with in == out");
+  assert(in_place_pointers(core, in, out) && "fftn: in-place plan executed with in != out");
+  assert(out_of_place_pointers(core, in, out) && "fftn: out-of-place plan executed with in == out");
   if (count == 0) {
     return;
   }

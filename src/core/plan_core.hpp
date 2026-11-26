@@ -270,7 +270,25 @@ public:
   std::size_t offset_callback = 0;
   std::size_t callback_bytes = 0;
   std::string callbacks_note; // describe()'s line for them (callbacks_text)
+  // An input a callback produces and an output one consumes, which the execution may pass as
+  // null (fftn/callback.hpp): only the debug builds' assertions on the pointers read these
+  // (pointers_valid).
+  bool in_unread = false;
+  bool out_unwritten = false;
 };
+
+// The debug builds' check of an execution's pointers: in place, in == out; out of place,
+// in != out. Except that an input a callback produces may be null (in place too), so that an
+// out-of-place plan whose input is produced and output consumed may take both null (task 5.3a).
+// For a plan without callbacks the conditions are the plain ones, as the flags are false.
+[[nodiscard]] inline bool in_place_pointers(const plan_core& c, const void* in,
+                                            const void* out) noexcept {
+  return !c.in_place || in == out || (c.in_unread && in == nullptr);
+}
+[[nodiscard]] inline bool out_of_place_pointers(const plan_core& c, const void* in,
+                                                const void* out) noexcept {
+  return c.in_place || in != out || (in == nullptr && c.in_unread && c.out_unwritten);
+}
 
 // The core a team of two or more members runs: the team program where there is one.
 [[nodiscard]] inline const plan_core& team_core(const plan_core& c) noexcept {
