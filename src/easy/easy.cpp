@@ -8,6 +8,7 @@
 
 #include "fftn/easy.hpp"
 
+#include "fftn/edges.hpp"
 #include "fftn/executor.hpp"
 #include "fftn/options.hpp"
 #include "fftn/plan.hpp"
@@ -35,8 +36,29 @@ namespace fftn::inline v0::easy {
 
 namespace {
 
-using any_plan = std::variant<c2c_plan<double>, r2c_plan<double>, c2r_plan<double>, c2c_plan<float>,
-                              r2c_plan<float>, c2r_plan<float>>;
+using any_plan =
+    std::variant<c2c_plan<double>, r2c_plan<double>, c2r_plan<double>, r2r_plan<double>,
+                 c2c_plan<float>, r2c_plan<float>, c2r_plan<float>, r2r_plan<float>>;
+
+// The arrays of a real-to-real plan's orthogonalising weights (scipy's orthogonalize), the real
+// factors of its input and output edges, in the plan's precision; empty on a side without
+// weights. Kept with the plan, whose executions read them.
+struct weights {
+  std::vector<double> in_double, out_double;
+  std::vector<float> in_float, out_float;
+
+  [[nodiscard]] bool any() const noexcept {
+    return !in_double.empty() || !out_double.empty() || !in_float.empty() || !out_float.empty();
+  }
+  [[nodiscard]] exec_args args() const noexcept {
+    const auto address = [](const auto& d, const auto& f) -> const void* {
+      return !d.empty() ? static_cast<const void*>(d.data())
+                        : (!f.empty() ? static_cast<const void*>(f.data()) : nullptr);
+    };
+    return {.in_factor = address(in_double, in_float),
+            .out_factor = address(out_double, out_float)};
+  }
+};
 
 // A cached plan and the description of the calls it serves.
 struct entry {
@@ -44,6 +66,7 @@ struct entry {
   std::uint64_t hash = 0;
   std::uint64_t used = 0; // the context's tick at the last call that used it
   any_plan plan;
+  weights factors;
 };
 
 // A call, validated.
@@ -53,7 +76,73 @@ struct prepared {
   bool in_place = false;
   bool empty = false; // a looped dimension has extent 0: nothing to compute
   double scale = 1.0;
+  r2r_kind r2r = r2r_kind::dht; // a real-to-real call: every transformed axis's kind
 };
+
+// The kind of a real-to-real call: scipy's type of the DCT or DST, or the DHT. The inverse
+// functions compute the inverse type, as scipy's do: types 1 and 4 are their own, 2 and 3 each
+// other's.
+r2r_kind kind_of(detail::easy_r2r family, int type, bool inverse) {
+  if (family == detail::easy_r2r::hartley) {
+    return r2r_kind::dht;
+  }
+  int t = type;
+  if (inverse && (t == 2 || t == 3)) {
+    t = 5 - t;
+  }
+  const int first = family == detail::easy_r2r::cosine ? static_cast<int>(r2r_kind::dct1)
+                                                       : static_cast<int>(r2r_kind::dst1);
+  return static_cast<r2r_kind>(first + t - 1);
+}
+
+// scipy's "logical" size of a real-to-real transform of n points: the N of a transform followed
+// by its inverse multiplying by N (DESIGN.md 5.7's table).
+double logical_size(r2r_kind k, std::size_t n) {
+  const auto x = static_cast<double>(n);
+  switch (k) {
+  case r2r_kind::dct1:
+    return 2 * (x - 1);
+  case r2r_kind::dst1:
+    return 2 * (x + 1);
+  case r2r_kind::dht:
+    return x;
+  default:
+    return 2 * x;
+  }
+}
+
+// Which points of a line of n carry scipy's orthogonalising weight under norm="ortho": the
+// input points multiplied by sqrt 2 and the output points divided by it, for kind k.
+bool weighted_input(r2r_kind k, std::size_t n, std::size_t j) {
+  switch (k) {
+  case r2r_kind::dct1:
+    return j == 0 || j == n - 1;
+  case r2r_kind::dct3:
+    return j == 0;
+  case r2r_kind::dst3:
+    return j == n - 1;
+  default:
+    return false;
+  }
+}
+bool weighted_output(r2r_kind k, std::size_t n, std::size_t j) {
+  switch (k) {
+  case r2r_kind::dct1:
+    return j == 0 || j == n - 1;
+  case r2r_kind::dct2:
+    return j == 0;
+  case r2r_kind::dst2:
+    return j == n - 1;
+  default:
+    return false;
+  }
+}
+bool has_input_weights(r2r_kind k) {
+  return k == r2r_kind::dct1 || k == r2r_kind::dct3 || k == r2r_kind::dst3;
+}
+bool has_output_weights(r2r_kind k) {
+  return k == r2r_kind::dct1 || k == r2r_kind::dct2 || k == r2r_kind::dst2;
+}
 
 [[noreturn]] void refuse(const detail::easy_call& c, const std::string& what) {
   throw std::invalid_argument(std::string("fftn::easy::") + c.function + ": " + what);
@@ -99,6 +188,13 @@ std::ptrdiff_t stride_at(std::span<const std::size_t> extents,
 prepared prepare(const detail::easy_call& c) {
   prepared p;
   const std::size_t rank = c.in_extents.size();
+  const bool real_kind = c.kind == detail::easy_kind::r2c || c.kind == detail::easy_kind::c2r;
+  if (c.kind == detail::easy_kind::r2r) {
+    if (c.family != detail::easy_r2r::hartley && (c.type < 1 || c.type > 4)) {
+      refuse(c, "type is " + std::to_string(c.type) + "; scipy's types are 1, 2, 3 and 4");
+    }
+    p.r2r = kind_of(c.family, c.type, c.dir == direction::backward);
+  }
   // The dimensions to transform: numpy's axes, negative ones from the end.
   if (c.axes.size() == 0) {
     const std::size_t k = c.default_axes == 0 ? rank : c.default_axes;
@@ -151,7 +247,11 @@ prepared prepare(const detail::easy_call& c) {
     if (transformed(d) && n == 0) {
       refuse(c, extent_name(c, real_side, d) + " is 0; a transformed dimension needs a point");
     }
-    const bool halve = c.kind != detail::easy_kind::c2c && d == halved;
+    if (transformed(d) && n == 1 && c.kind == detail::easy_kind::r2r && p.r2r == r2r_kind::dct1) {
+      refuse(c,
+             extent_name(c, real_side, d) + " is 1; the DCT of type 1 needs at least two points");
+    }
+    const bool halve = real_kind && d == halved;
     const std::size_t want = halve ? n / 2 + 1 : n;
     const std::size_t have = real_out ? ie : oe;
     if (have != want) {
@@ -164,7 +264,7 @@ prepared prepare(const detail::easy_call& c) {
       p.empty = true;
     }
     if (transformed(d)) {
-      points *= static_cast<double>(n);
+      points *= c.kind == detail::easy_kind::r2r ? logical_size(p.r2r, n) : static_cast<double>(n);
     }
   }
   // An empty array is checked no further: std::layout_right gives the dimensions in front of an
@@ -175,7 +275,7 @@ prepared prepare(const detail::easy_call& c) {
   check_strides(c, "in", c.in_extents, c.in_strides);
   check_strides(c, "out", c.out_extents, c.out_strides);
   if (c.in == c.out) {
-    if (c.kind != detail::easy_kind::c2c) {
+    if (real_kind) {
       refuse(c, "out is in's memory; the real transforms have no in-place form");
     }
     const bool gi = any_given(c.in_strides);
@@ -189,7 +289,7 @@ prepared prepare(const detail::easy_call& c) {
     p.in_place = true;
   }
   const bool forward = c.kind == detail::easy_kind::r2c ||
-                       (c.kind == detail::easy_kind::c2c && c.dir == direction::forward);
+                       (c.kind != detail::easy_kind::c2r && c.dir == direction::forward);
   switch (c.scaling) {
   case norm::backward:
     p.scale = forward ? 1.0 : 1.0 / points;
@@ -212,7 +312,8 @@ template <class F> void visit_key(const detail::easy_call& c, const prepared& p,
   f(static_cast<std::uint64_t>(c.kind) | (static_cast<std::uint64_t>(c.single) << 8U) |
     (static_cast<std::uint64_t>(c.dir == direction::forward) << 9U) |
     (static_cast<std::uint64_t>(p.in_place) << 10U) |
-    (static_cast<std::uint64_t>(c.scaling) << 12U));
+    (static_cast<std::uint64_t>(c.scaling) << 12U) | (static_cast<std::uint64_t>(c.family) << 16U) |
+    (static_cast<std::uint64_t>(c.kind == detail::easy_kind::r2r ? p.r2r : r2r_kind{}) << 20U));
   f(static_cast<std::uint64_t>(c.in_extents.size()));
   f(static_cast<std::uint64_t>(p.count));
   for (std::size_t i = 0; i < p.count; ++i) {
@@ -230,7 +331,55 @@ template <class F> void visit_key(const detail::easy_call& c, const prepared& p,
 constexpr std::uint64_t hash_start = 0xcbf29ce484222325ULL;
 constexpr std::uint64_t mix(std::uint64_t h, std::uint64_t w) { return (h ^ w) * 0x100000001b3ULL; }
 
-template <class In, class Out> any_plan build(const detail::easy_call& c, const prepared& p) {
+// 2^(m/2) for m points at a weighted position: the input's sqrt 2 each for m > 0, the output's
+// 1/sqrt 2 each for m < 0. A power of two times sqrt 2 correctly rounded, at most once, so a
+// point's weight does not depend on the order of its axes.
+double weight(int m) {
+  if (m % 2 == 0) {
+    return std::ldexp(1.0, m / 2);
+  }
+  // m odd: 2^(m/2) = sqrt 2 * 2^((m - 1)/2), an integer exponent for either sign.
+  return std::ldexp(std::sqrt(2.0), (m - 1) / 2);
+}
+
+// The array of one side's weights over the transformed axes, in the order of shape::axes: C
+// order over the transformed axes when the kind has weights on this side, broadcast (strides 0
+// in `strides` and the batch) otherwise, when the array is empty.
+template <class T>
+std::vector<T> side_weights(const detail::easy_call& c, const prepared& p, bool input,
+                            std::vector<std::ptrdiff_t>& strides) {
+  strides.assign(p.count, 0);
+  if (c.scaling != norm::ortho || !(input ? has_input_weights(p.r2r) : has_output_weights(p.r2r))) {
+    return {};
+  }
+  std::size_t total = 1;
+  for (std::size_t i = p.count; i > 0; --i) {
+    strides[i - 1] = static_cast<std::ptrdiff_t>(total);
+    total *= c.in_extents[p.axes[i - 1]];
+  }
+  std::vector<T> w(total);
+  std::array<std::size_t, 3> j{};
+  for (std::size_t e = 0; e < total; ++e) {
+    int m = 0;
+    for (std::size_t i = 0; i < p.count; ++i) {
+      const std::size_t n = c.in_extents[p.axes[i]];
+      if (input ? weighted_input(p.r2r, n, j[i]) : weighted_output(p.r2r, n, j[i])) {
+        ++m;
+      }
+    }
+    w[e] = static_cast<T>(weight(input ? m : -m));
+    for (std::size_t i = p.count; i > 0; --i) {
+      if (++j[i - 1] < c.in_extents[p.axes[i - 1]]) {
+        break;
+      }
+      j[i - 1] = 0;
+    }
+  }
+  return w;
+}
+
+template <class In, class Out>
+any_plan build(const detail::easy_call& c, const prepared& p, weights& factors) {
   const std::size_t rank = c.in_extents.size();
   const bool gi = any_given(c.in_strides);
   const bool go = any_given(c.out_strides);
@@ -247,7 +396,34 @@ template <class In, class Out> any_plan build(const detail::easy_call& c, const 
                                           p.axes.begin() + static_cast<std::ptrdiff_t>(p.count));
   const options opts{.in_place = p.in_place, .scale = p.scale};
   try {
-    if constexpr (std::is_same_v<In, Out>) {
+    if constexpr (std::is_floating_point_v<In> && std::is_same_v<In, Out>) {
+      // A real-to-real call: scipy's weights, where norm::ortho gives some, as real factors on
+      // the edges; without weights, the plain plan.
+      std::vector<std::ptrdiff_t> in_strides;
+      std::vector<std::ptrdiff_t> out_strides;
+      std::vector<In> win = side_weights<In>(c, p, true, in_strides);
+      std::vector<In> wout = side_weights<In>(c, p, false, out_strides);
+      const std::vector<r2r_kind> kinds(p.count, p.r2r);
+      const shape<In, Out> s = axes_r2r<In>(array, selected, kinds);
+      plan_edges<In, Out> edges;
+      if (!win.empty()) {
+        edges.in.mul = factor{.kind = factor_kind::real, .axis_strides = in_strides};
+      }
+      if (!wout.empty()) {
+        edges.out.mul = factor{.kind = factor_kind::real, .axis_strides = out_strides};
+      }
+      any_plan made = win.empty() && wout.empty()
+                          ? any_plan(std::in_place_type<plan<In, Out>>, s, opts)
+                          : any_plan(std::in_place_type<plan<In, Out>>, s, opts, edges);
+      if constexpr (std::is_same_v<In, double>) {
+        factors.in_double = std::move(win);
+        factors.out_double = std::move(wout);
+      } else {
+        factors.in_float = std::move(win);
+        factors.out_float = std::move(wout);
+      }
+      return made;
+    } else if constexpr (std::is_same_v<In, Out>) {
       using T = Out::value_type;
       return any_plan(std::in_place_type<plan<In, Out>>, axes_c2c<T>(array, selected, c.dir), opts);
     } else if constexpr (std::is_same_v<Out, std::complex<In>>) {
@@ -331,8 +507,8 @@ std::size_t context::irfft_length(std::size_t in_size, std::size_t n) {
 }
 
 void context::run_1d(const char* function, detail::easy_kind kind, bool single, direction dir,
-                     norm nm, const void* in, std::size_t in_size, void* out,
-                     std::size_t out_size) {
+                     norm nm, const void* in, std::size_t in_size, void* out, std::size_t out_size,
+                     detail::easy_r2r family, int type) {
   const std::array<std::size_t, 1> in_extents{in_size};
   const std::array<std::size_t, 1> out_extents{out_size};
   const std::array<std::ptrdiff_t, 1> unit{1};
@@ -351,18 +527,29 @@ void context::run_1d(const char* function, detail::easy_kind kind, bool single, 
       .spans = true,
       .in = in,
       .out = out,
+      .family = family,
+      .type = type,
   });
 }
 
 namespace {
 
 template <class In, class Out>
-void execute_with(const any_plan& held, const void* in, void* out, workspace& ws,
+void execute_with(const entry& held, const void* in, void* out, workspace& ws,
                   const std::optional<executor_ref>& ex) {
-  const plan<In, Out>& p = std::get<plan<In, Out>>(held);
+  const plan<In, Out>& p = std::get<plan<In, Out>>(held.plan);
   const auto* i = static_cast<const In*>(in);
   auto* o = static_cast<Out*>(out);
-  if (ex) {
+  // Only a plan with weights takes the overloads with exec_args; every other plan executes as
+  // it did before the real-to-real calls existed.
+  if (held.factors.any()) {
+    const exec_args args = held.factors.args();
+    if (ex) {
+      p.execute(i, o, *ex, ws, args);
+    } else {
+      p.execute(i, o, ws, args);
+    }
+  } else if (ex) {
     p.execute(i, o, *ex, ws);
   } else {
     p.execute(i, o, ws);
@@ -378,6 +565,9 @@ template <class F> decltype(auto) dispatch(const detail::easy_call& c, F&& f) {
     return c.single ? f.template operator()<cf, cf>() : f.template operator()<cd, cd>();
   case detail::easy_kind::r2c:
     return c.single ? f.template operator()<float, cf>() : f.template operator()<double, cd>();
+  case detail::easy_kind::r2r:
+    return c.single ? f.template operator()<float, float>()
+                    : f.template operator()<double, double>();
   case detail::easy_kind::c2r:
     break;
   }
@@ -415,15 +605,20 @@ void context::run(const detail::easy_call& c) {
   if (found == nullptr) {
     // A miss: build the plan and its workspace before changing anything, so that an
     // exception leaves the context as it was.
-    any_plan built =
-        dispatch(c, [&]<class In, class Out>() -> any_plan { return build<In, Out>(c, p); });
+    weights factors;
+    any_plan built = dispatch(
+        c, [&]<class In, class Out>() -> any_plan { return build<In, Out>(c, p, factors); });
     const std::size_t need =
         std::visit([&](const auto& q) { return q.workspace_bytes(lanes); }, built);
     std::optional<workspace> grown;
     if (need > s.ws.size()) {
       grown.emplace(need);
     }
-    entry fresh{.key = {}, .hash = hash, .used = 0, .plan = std::move(built)};
+    entry fresh{.key = {},
+                .hash = hash,
+                .used = 0,
+                .plan = std::move(built),
+                .factors = std::move(factors)};
     fresh.key.reserve(words);
     visit_key(c, p, [&](std::uint64_t w) { fresh.key.push_back(w); });
     if (s.entries.size() < s.max_plans) {
@@ -444,9 +639,8 @@ void context::run(const detail::easy_call& c) {
     }
   }
   found->used = ++s.tick;
-  dispatch(c, [&]<class In, class Out> {
-    execute_with<In, Out>(found->plan, c.in, c.out, s.ws, executor_);
-  });
+  dispatch(
+      c, [&]<class In, class Out> { execute_with<In, Out>(*found, c.in, c.out, s.ws, executor_); });
 }
 
 context& thread_context() noexcept {

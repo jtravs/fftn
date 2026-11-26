@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The convenience layer: the examples quoted in docs/easy.md. A spectrum and its inverse by
-// numpy's functions, a real 2-D transform of a strided array along chosen axes, the
-// frequencies and the shift, and a context of one's own. Exits with 0 when the results are
-// right.
+// numpy's functions, a real 2-D transform of a strided array along chosen axes, scipy's DCT
+// and DST, the frequencies and the shift, and a context of one's own. Exits with 0 when the
+// results are right.
 
 #include <fftn/easy.hpp>
 
@@ -70,6 +70,29 @@ bool multi_dimensional() {
          std::abs(half[0] - points) < 1e-2F && std::abs(half[nx / 2 + 2]) < 1e-3F;
 }
 
+bool real_to_real() {
+  // snippet-begin: r2r
+  // scipy.fft.dct(x, norm="ortho"), the orthonormal DCT-II: 5, -2.23, 0, -0.16. idct undoes it.
+  const std::vector<double> x{1, 2, 3, 4};
+  const std::vector<double> c = fftn::easy::dct(x, 2, fftn::easy::norm::ortho);
+  const std::vector<double> back = fftn::easy::idct(c, 2, fftn::easy::norm::ortho);
+
+  // scipy.fft.dstn(a, type=1, axes=[0]) of a 3 x 5 array: the DST-I down its columns.
+  std::vector<double> a(15, 1.0);
+  std::vector<double> s(15);
+  fftn::easy::dstn(fftn::easy::view<const double, 2>(a.data(), {3, 5}),
+                   fftn::easy::view<double, 2>(s.data(), {3, 5}), 1, {0});
+  // snippet-end: r2r
+  bool ok = std::abs(c[0] - 5.0) < 1e-14 && std::abs(c[2]) < 1e-14;
+  for (std::size_t j = 0; j < x.size(); ++j) {
+    ok = ok && std::abs(back[j] - x[j]) < 1e-14;
+  }
+  // The DST-I of three ones: 2 sqrt 2 + 2, 0 and 2 sqrt 2 - 2 down each column.
+  const double r = 2 * std::numbers::sqrt2;
+  return ok && std::abs(s[0] - (r + 2)) < 1e-14 && std::abs(s[5]) < 1e-14 &&
+         std::abs(s[14] - (r - 2)) < 1e-14;
+}
+
 bool helpers() {
   // snippet-begin: helpers
   // numpy.fft.fftfreq(8, d=0.5) and the spectrum's zero frequency moved to the middle.
@@ -100,7 +123,8 @@ bool own_context() {
 
 int main() {
   try {
-    if (!one_dimensional() || !multi_dimensional() || !helpers() || !own_context()) {
+    if (!one_dimensional() || !multi_dimensional() || !real_to_real() || !helpers() ||
+        !own_context()) {
       std::fputs("easy example: a result is wrong\n", stderr);
       return 1;
     }
