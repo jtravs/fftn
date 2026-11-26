@@ -15,6 +15,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -427,8 +428,7 @@ std::vector<edge_case> cases() {
 }
 
 template <class T> class Edges : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(Edges, precisions);
+TYPED_TEST_SUITE(Edges, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(Edges, EveryOperationOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -611,8 +611,8 @@ TEST(Edges, RefusalsNameTheField) {
 
 // No batch strides broadcast along every batch dimension, as strides of 0 do: the same plan
 // and the same bits.
-TEST(Edges, NoBatchStridesBroadcast) {
-  using C = std::complex<double>;
+TYPED_TEST(Edges, NoBatchStridesBroadcast) {
+  using C = std::complex<TypeParam>;
   fftn::shape<C, C> s;
   s.axes = {{.n = 24}};
   s.batches = {{.count = 3}, {.count = 2}};
@@ -621,10 +621,10 @@ TEST(Edges, NoBatchStridesBroadcast) {
   const fftn::plan<C, C> none(s, {}, {.in = {.mul = {.kind = cplx, .axis_strides = {1}}}});
   EXPECT_EQ(zeros.describe(), none.describe());
   fftn::test::input_source src(0xB40ADULL);
-  const cvec<double> x = src.complexes<double>(24 * 6);
-  const cvec<double> f = src.complexes<double>(24);
-  cvec<double> a(x.size());
-  cvec<double> b(x.size());
+  const cvec<TypeParam> x = src.complexes<TypeParam>(24 * 6);
+  const cvec<TypeParam> f = src.complexes<TypeParam>(24);
+  cvec<TypeParam> a(x.size());
+  cvec<TypeParam> b(x.size());
   fftn::workspace ws(zeros);
   zeros.execute(x.data(), a.data(), ws, {.in_factor = f.data()});
   none.execute(x.data(), b.data(), ws, {.in_factor = f.data()});
@@ -698,8 +698,10 @@ TEST(EdgesDeathTest, MissingFactorArraysAbort) {
 
 // Several batch dimensions with factor strides of both signs, against the reference: a fused
 // input factor and a separate, accumulated output factor, serial and by a team of three.
-TEST(Edges, SeveralBatchDimensions) {
-  using C = std::complex<double>;
+TYPED_TEST(Edges, SeveralBatchDimensions) {
+  using T = TypeParam;
+  using C = std::complex<T>;
+  using exact_c = std::complex<double>;
   const std::size_t n = 20;
   fftn::shape<C, C> s;
   s.axes = {{.n = n}};
@@ -716,17 +718,17 @@ TEST(Edges, SeveralBatchDimensions) {
                .mul = {.kind = real, .axis_strides = {-1}, .batch_strides = out_batch},
                .accumulate = true}});
   fftn::test::input_source src(0x3B47CULL);
-  const cvec<double> x = src.complexes<double>(9 * n);
-  const cvec<double> init = src.complexes<double>(9 * n);
+  const cvec<T> x = src.complexes<T>(9 * n);
+  const cvec<T> init = src.complexes<T>(9 * n);
   // Spans: input offsets from -6n to 2n + n - 1, output from -(n - 1) - 14 to 4.
-  const cvec<double> fin = src.complexes<double>(9 * n);
+  const cvec<T> fin = src.complexes<T>(9 * n);
   const std::ptrdiff_t fin_zero = 6 * ni;
-  const std::vector<double> fout = src.reals<double>(n + 20);
+  const std::vector<T> fout = src.reals<T>(n + 20);
   const std::ptrdiff_t fout_zero = ni - 1 + 14;
   const fftn::exec_args args{.in_factor = fin.data() + fin_zero,
                              .out_factor = fout.data() + fout_zero};
   fftn::workspace ws(p, 3);
-  cvec<double> y = init;
+  cvec<T> y = init;
   p.execute(x.data(), y.data(), ws, args);
   fftn::test::outcome o;
   for (std::size_t b0 = 0; b0 < 3; ++b0) {
@@ -734,31 +736,33 @@ TEST(Edges, SeveralBatchDimensions) {
       const std::size_t t = b0 * 3 + b1;
       const auto i0 = static_cast<std::ptrdiff_t>(b0);
       const auto i1 = static_cast<std::ptrdiff_t>(b1);
-      std::vector<C> xin(n);
+      // The exact products of the rounded inputs (the input factor's rounding is in the bound).
+      std::vector<exact_c> xin(n);
       for (std::size_t j = 0; j < n; ++j) {
         const std::ptrdiff_t at =
             fin_zero + static_cast<std::ptrdiff_t>(j) + in_batch[0] * i0 + in_batch[1] * i1;
-        xin[j] = x[t * n + j] * fin[static_cast<std::size_t>(at)];
+        xin[j] = exact_c(x[t * n + j]) * exact_c(fin[static_cast<std::size_t>(at)]);
       }
       const auto exact = fftn::test::reference::c2c(-1, xin);
       std::vector<fftn::test::exact_complex> want(n);
-      cvec<double> got(n);
+      cvec<T> got(n);
       for (std::size_t k = 0; k < n; ++k) {
         const std::ptrdiff_t at =
             fout_zero - static_cast<std::ptrdiff_t>(k) + out_batch[0] * i0 + out_batch[1] * i1;
-        const C e(exact[k].re.hi, exact[k].im.hi);
-        want[k] =
-            fftn::test::exact_from(init[t * n + k] + e * fout[static_cast<std::size_t>(at)] * 0.5);
+        const exact_c e(exact[k].re.hi, exact[k].im.hi);
+        want[k] = fftn::test::exact_from(
+            exact_c(init[t * n + k]) +
+            e * static_cast<double>(fout[static_cast<std::size_t>(at)]) * 0.5);
         got[k] = y[t * n + k];
       }
-      o.within(fftn::test::compare<double>(std::span<const C>(got), want),
-               fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)) +
-                   fftn::test::input_rounding<double>() * 4,
+      o.within(fftn::test::compare<T>(std::span<const C>(got), want),
+               fftn::test::derived_tolerance<T>(n, fftn::test::fftn_bound(n)) +
+                   fftn::test::input_rounding<T>() * 4,
                "transform " + std::to_string(t));
     }
   }
   EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
-  cvec<double> teamed = init;
+  cvec<T> teamed = init;
   std::vector<std::thread> members;
   for (int r = 1; r < 3; ++r) {
     members.emplace_back(
@@ -772,14 +776,14 @@ TEST(Edges, SeveralBatchDimensions) {
 }
 
 // Factor strides on dimensions of one point are ignored, as the shape's are.
-TEST(Edges, StridesOfSinglePointsAreIgnored) {
-  const auto one = fftn::rows_c2c<double>(1, 1, fftn::direction::forward);
+TYPED_TEST(Edges, StridesOfSinglePointsAreIgnored) {
+  const auto one = fftn::rows_c2c<TypeParam>(1, 1, fftn::direction::forward);
   const std::ptrdiff_t huge = std::numeric_limits<std::ptrdiff_t>::max();
-  const fftn::plan<std::complex<double>, std::complex<double>> p(
+  const fftn::plan<std::complex<TypeParam>, std::complex<TypeParam>> p(
       one, {}, {.in = {.mul = {.kind = cplx, .axis_strides = {huge}, .batch_strides = {huge}}}});
-  const std::complex<double> f{0.0, 2.0};
-  const std::complex<double> x{3.0, 1.0};
-  std::complex<double> y;
+  const std::complex<TypeParam> f{TypeParam(0), TypeParam(2)};
+  const std::complex<TypeParam> x{TypeParam(3), TypeParam(1)};
+  std::complex<TypeParam> y;
   fftn::workspace ws(p);
   p.execute(&x, &y, ws, {.in_factor = &f});
   EXPECT_EQ(y, x * f);

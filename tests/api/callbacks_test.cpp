@@ -21,6 +21,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -824,8 +825,7 @@ std::vector<cb_case> cases() {
 }
 
 template <class T> class Callbacks : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(Callbacks, precisions);
+TYPED_TEST_SUITE(Callbacks, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(Callbacks, EveryModeOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {

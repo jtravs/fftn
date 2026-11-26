@@ -17,6 +17,7 @@
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 #include "support/transform_under_test.hpp"
 
@@ -217,8 +218,7 @@ std::vector<cd> scaled(const std::vector<cd>& v, std::size_t factor) {
 }
 
 template <class T> class MultiDim : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(MultiDim, precisions);
+TYPED_TEST_SUITE(MultiDim, fftn::test::precisions, fftn::test::precision_names);
 
 // ---- Default layouts.
 

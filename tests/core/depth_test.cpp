@@ -20,6 +20,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -173,10 +174,12 @@ template <class T> void every_case(fftn::isa target) {
   check_depth<T>(target, cases()[13], fftn::direction::forward, 0.5, 2, cases()[13].n + 1, true);
 }
 
-TEST(Depth, EveryTargetPrecisionDirectionAndSplit) {
+template <class T> class Depth : public ::testing::Test {};
+TYPED_TEST_SUITE(Depth, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Depth, EveryTargetDirectionAndSplit) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    every_case<double>(t);
-    every_case<float>(t);
+    every_case<TypeParam>(t);
   }
 }
 

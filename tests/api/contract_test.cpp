@@ -14,6 +14,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/harness.hpp"
 #include "support/inputs.hpp"
+#include "support/precisions.hpp"
 #include "support/transform_under_test.hpp"
 
 #include <fftn/fftn.hpp>
@@ -56,8 +57,7 @@ template <class E> std::vector<E> random_elements(input_source& src, std::size_t
 }
 
 template <class T> class Contracts : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(Contracts, precisions);
+TYPED_TEST_SUITE(Contracts, fftn::test::precisions, fftn::test::precision_names);
 
 // ---- No allocation, no throw, in execute.
 

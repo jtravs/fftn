@@ -531,7 +531,7 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {
   std::vector<team_case> cases;
-  add_cases<double>(cases, settings, "");
+  add_cases<double>(cases, settings, "_f64");
   add_cases<float>(cases, settings, "_f32");
   // Float on every other instruction set the machine runs: the targets' complex counts
   // differ (C = 1 on scalar, 2 on neon_fcma, 4 on avx2), and with them the passes' units,

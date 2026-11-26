@@ -22,6 +22,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <fftn/fftn.hpp>
@@ -958,8 +959,7 @@ std::vector<shape_case> c2r_cases() {
 }
 
 template <class T> class EdgeShapes : public ::testing::Test {};
-using precisions = ::testing::Types<double, float>;
-TYPED_TEST_SUITE(EdgeShapes, precisions);
+TYPED_TEST_SUITE(EdgeShapes, fftn::test::precisions, fftn::test::precision_names);
 
 TYPED_TEST(EdgeShapes, EveryOperationOnEveryInstructionSet) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -1410,8 +1410,8 @@ TEST(EdgeShapesDeathTest, BatchedFormsMissingFactorArraysAbort) {
 // The team program of a plan with edges (plan_core::team; X43): narrower column blocks, or a
 // volume's plane order, with its own edge phases and edge records. A team's results equal the
 // program's bit for bit.
-TEST(EdgeShapes, TeamProgramsCarryTheEdges) {
-  using C = std::complex<double>;
+TYPED_TEST(EdgeShapes, TeamProgramsCarryTheEdges) {
+  using C = std::complex<TypeParam>;
   fftn::detail::build_settings settings;
   settings.profile.column_team_bytes = 64;
   settings.profile.line_bytes = 64;
@@ -1440,10 +1440,10 @@ TEST(EdgeShapes, TeamProgramsCarryTheEdges) {
     EXPECT_TRUE(core->team->needs_args);
     EXPECT_EQ(core->team->edge_records.size(), core->team->prog.records.size());
     fftn::test::input_source src(points);
-    const auto x = src.complexes<double>(2 * points);
-    const auto fin = src.complexes<double>(2 * points);
-    const auto fout = src.reals<double>(points);
-    const auto init = src.complexes<double>(2 * points);
+    const auto x = src.complexes<TypeParam>(2 * points);
+    const auto fin = src.complexes<TypeParam>(2 * points);
+    const auto fout = src.reals<TypeParam>(points);
+    const auto init = src.complexes<TypeParam>(2 * points);
     const fftn::exec_args args{.in_factor = fin.data(), .out_factor = fout.data()};
     const fftn::workspace ws(fftn::detail::workspace_bytes(*core, 4));
     std::vector<C> serial = init;
@@ -1475,8 +1475,8 @@ TEST(EdgeShapes, TeamProgramsCarryTheEdges) {
     for (const C& v : other) {
       want.push_back(fftn::test::exact_from(v));
     }
-    o.within(fftn::test::compare<double>(std::span<const C>(serial), want),
-             fftn::test::derived_tolerance<double>(points, fftn::test::fftn_bound(points)) * 2,
+    o.within(fftn::test::compare<TypeParam>(std::span<const C>(serial), want),
+             fftn::test::derived_tolerance<TypeParam>(points, fftn::test::fftn_bound(points)) * 2,
              "team program against the plain plan");
     EXPECT_TRUE(o.passed()) << o.detail();
   }
@@ -2536,8 +2536,8 @@ TEST(EdgeShapes, StoredRunsRefused) {
 // on each side, and the runs come back with their axes as indices into shape::axes. A compact
 // (y, x, w) array of nw stored bins of an nt-point line along w (DESIGN.md 12.1) then plans as
 // it is, with x's stride nw: by logical extents its lines would overlap.
-TEST(EdgeShapes, StoredRunsInAxes) {
-  using C = std::complex<double>;
+TYPED_TEST(EdgeShapes, StoredRunsInAxes) {
+  using C = std::complex<TypeParam>;
   using fftn::side;
   const std::size_t ny = 3;
   const std::size_t nx = 4;
@@ -2551,7 +2551,7 @@ TEST(EdgeShapes, StoredRunsInAxes) {
       {.axis = 2, .where = side::in, .logical = nt - 4, .stored = 6, .count = 4},
       {.axis = 2, .where = side::out, .logical = 0, .stored = 0, .count = 6},
       {.axis = 2, .where = side::out, .logical = nt - 4, .stored = 6, .count = 4}};
-  const auto s = fftn::axes_c2c<double>(array, along, fftn::direction::backward, band);
+  const auto s = fftn::axes_c2c<TypeParam>(array, along, fftn::direction::backward, band);
   ASSERT_EQ(s.axes.size(), 1U);
   EXPECT_EQ(s.axes[0].in_stride, 1);
   ASSERT_EQ(s.batches.size(), 1U); // y and x nest exactly: one batch dimension
@@ -2565,18 +2565,18 @@ TEST(EdgeShapes, StoredRunsInAxes) {
   const fftn::plan<C, C> p(s);
   // The transform: each pencil's band, against the logical line by the reference.
   fftn::test::input_source src(0xBA4DULL);
-  const auto x = src.complexes<double>(ny * nx * nw);
+  const auto x = src.complexes<TypeParam>(ny * nx * nw);
   std::vector<C> y(ny * nx * nw);
   fftn::workspace ws(p);
   p.execute(x.data(), y.data(), ws);
   fftn::test::outcome o;
   for (std::size_t q = 0; q < ny * nx; ++q) {
-    std::vector<C> line(nt);
+    std::vector<std::complex<double>> line(nt);
     for (std::size_t k = 0; k < 6; ++k) {
-      line[k] = x[q * nw + k];
+      line[k] = std::complex<double>(x[q * nw + k]);
     }
     for (std::size_t k = 0; k < 4; ++k) {
-      line[nt - 4 + k] = x[q * nw + 6 + k];
+      line[nt - 4 + k] = std::complex<double>(x[q * nw + 6 + k]);
     }
     const auto exact = fftn::test::reference::c2c(+1, line);
     std::vector<fftn::test::exact_complex> want;
@@ -2589,8 +2589,8 @@ TEST(EdgeShapes, StoredRunsInAxes) {
       want.push_back(exact[nt - 4 + k]);
       got.push_back(y[q * nw + 6 + k]);
     }
-    o.within(fftn::test::compare<double>(std::span<const C>(got), want),
-             fftn::test::derived_tolerance<double>(nt, fftn::test::fftn_bound(nt)), "band");
+    o.within(fftn::test::compare<TypeParam>(std::span<const C>(got), want),
+             fftn::test::derived_tolerance<TypeParam>(nt, fftn::test::fftn_bound(nt)), "band");
   }
   EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
 
@@ -2599,21 +2599,21 @@ TEST(EdgeShapes, StoredRunsInAxes) {
   const std::vector<std::size_t> rows{1};
   const std::vector<fftn::stored_run> bins{
       {.axis = 1, .where = side::out, .logical = 2, .stored = 0, .count = nw}};
-  const auto r = fftn::axes_r2c<double>(plane, rows, false, bins);
+  const auto r = fftn::axes_r2c<TypeParam>(plane, rows, false, bins);
   ASSERT_EQ(r.batches.size(), 1U);
   EXPECT_EQ(r.batches[0].in_dist, static_cast<std::ptrdiff_t>(nt));
   EXPECT_EQ(r.batches[0].out_dist, static_cast<std::ptrdiff_t>(nw));
-  EXPECT_NO_THROW((fftn::plan<double, C>(r, {})));
+  EXPECT_NO_THROW((fftn::plan<TypeParam, C>(r, {})));
   // A run on a dimension that is not transformed is refused.
   const std::vector<fftn::stored_run> batch_run{{.axis = 0, .count = 1}};
-  EXPECT_THROW(static_cast<void>(fftn::axes_r2c<double>(plane, rows, false, batch_run)),
+  EXPECT_THROW(static_cast<void>(fftn::axes_r2c<TypeParam>(plane, rows, false, batch_run)),
                std::invalid_argument);
 }
 
 // Stored runs along a reversed axis (a negative stride): the passes' offsets from element 0 are
 // negative.
-TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
-  using C = std::complex<double>;
+TYPED_TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
+  using C = std::complex<TypeParam>;
   using fftn::side;
   const std::size_t n = 16;
   fftn::shape<C, C> s;
@@ -2624,8 +2624,8 @@ TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
             {.where = side::out, .logical = 3, .stored = 1, .count = 5}};
   const fftn::plan<C, C> p(s);
   fftn::test::input_source src(0x4EFULL);
-  std::vector<C> x = src.complexes<double>(16);
-  std::vector<C> y = src.complexes<double>(40);
+  std::vector<C> x = src.complexes<TypeParam>(16);
+  std::vector<C> y = src.complexes<TypeParam>(40);
   const std::vector<C> init = y;
   fftn::workspace ws(p);
   // Element 0 of transform 0 is the last of its stored elements on each side.
@@ -2633,12 +2633,13 @@ TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
   fftn::test::outcome o;
   std::vector<bool> written(y.size(), false);
   for (std::size_t b = 0; b < 2; ++b) {
-    std::vector<C> line(n);
+    std::vector<std::complex<double>> line(n);
     for (std::size_t j = 0; j < n; ++j) {
       const std::ptrdiff_t stored = j < 4 ? static_cast<std::ptrdiff_t>(j)
                                           : (j >= 12 ? static_cast<std::ptrdiff_t>(j - 8) : -1);
       if (stored >= 0) {
-        line[j] = x[static_cast<std::size_t>(7 + 8 * static_cast<std::ptrdiff_t>(b) - stored)];
+        line[j] = std::complex<double>(
+            x[static_cast<std::size_t>(7 + 8 * static_cast<std::ptrdiff_t>(b) - stored)]);
       }
     }
     const auto exact = fftn::test::reference::c2c(-1, line);
@@ -2651,8 +2652,8 @@ TEST(EdgeShapes, StoredRunsAlongAReversedAxis) {
       got.push_back(y[i]);
       written[i] = true;
     }
-    o.within(fftn::test::compare<double>(std::span<const C>(got), want),
-             fftn::test::derived_tolerance<double>(n, fftn::test::fftn_bound(n)), "reversed");
+    o.within(fftn::test::compare<TypeParam>(std::span<const C>(got), want),
+             fftn::test::derived_tolerance<TypeParam>(n, fftn::test::fftn_bound(n)), "reversed");
   }
   EXPECT_TRUE(o.passed()) << o.detail() << p.describe();
   for (std::size_t i = 0; i < y.size(); ++i) {
@@ -2739,8 +2740,8 @@ TEST(EdgeShapes, StoredRunsPlanning) {
 // unless its chain ends in split arithmetic (chain_builder::head_last), with no separate pass
 // where one run of the half is stored with stride 1; a row whose radices are all odd computes
 // the whole line between its separate passes, as in 5.1d.
-TEST(EdgeShapes, StoredRunsPrunedPasses) {
-  using C = std::complex<double>;
+TYPED_TEST(EdgeShapes, StoredRunsPrunedPasses) {
+  using C = std::complex<TypeParam>;
   using fftn::side;
   const auto text = [](std::size_t n, std::vector<fftn::stored_run> runs, fftn::isa t) {
     fftn::shape<C, C> s;

@@ -24,6 +24,7 @@
 #include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 #include "support/outcome.hpp"
+#include "support/precisions.hpp"
 #include "support/tolerance.hpp"
 
 #include <gtest/gtest.h>
@@ -216,10 +217,12 @@ template <class T> void every_codelet_in_every_position(fftn::isa target) {
   }
 }
 
-TEST(Passes, EveryCodeletInEveryPosition) {
+template <class T> class Passes : public ::testing::Test {};
+TYPED_TEST_SUITE(Passes, fftn::test::precisions, fftn::test::precision_names);
+
+TYPED_TEST(Passes, EveryCodeletInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    every_codelet_in_every_position<double>(t);
-    every_codelet_in_every_position<float>(t);
+    every_codelet_in_every_position<TypeParam>(t);
   }
 }
 
@@ -241,10 +244,9 @@ template <class T> void generic_in_every_position(fftn::isa target) {
   }
 }
 
-TEST(Passes, GenericInEveryPosition) {
+TYPED_TEST(Passes, GenericInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    generic_in_every_position<double>(t);
-    generic_in_every_position<float>(t);
+    generic_in_every_position<TypeParam>(t);
   }
 }
 
@@ -289,10 +291,9 @@ template <class T> void leaves_above_sixteen(fftn::isa target) {
   }
 }
 
-TEST(Passes, LeavesAboveSixteen) {
+TYPED_TEST(Passes, LeavesAboveSixteen) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    leaves_above_sixteen<double>(t);
-    leaves_above_sixteen<float>(t);
+    leaves_above_sixteen<TypeParam>(t);
   }
 }
 
@@ -423,17 +424,15 @@ template <class T> void rader_in_every_position(fftn::isa target) {
   }
 }
 
-TEST(Passes, RaderInEveryPosition) {
+TYPED_TEST(Passes, RaderInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    rader_in_every_position<double>(t);
-    rader_in_every_position<float>(t);
+    rader_in_every_position<TypeParam>(t);
   }
 }
 
-TEST(Passes, BluesteinInEveryPosition) {
+TYPED_TEST(Passes, BluesteinInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    bluestein_in_every_position<double>(t);
-    bluestein_in_every_position<float>(t);
+    bluestein_in_every_position<TypeParam>(t);
   }
 }
 
@@ -533,10 +532,9 @@ template <class T> void every_edge_variant(fftn::isa target) {
   }
 }
 
-TEST(Passes, EveryEdgeVariant) {
+TYPED_TEST(Passes, EveryEdgeVariant) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    every_edge_variant<double>(t);
-    every_edge_variant<float>(t);
+    every_edge_variant<TypeParam>(t);
   }
 }
 
@@ -594,10 +592,9 @@ template <class T> void split_in_every_position(fftn::isa target) {
   }
 }
 
-TEST(Passes, SplitInEveryPosition) {
+TYPED_TEST(Passes, SplitInEveryPosition) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    split_in_every_position<double>(t);
-    split_in_every_position<float>(t);
+    split_in_every_position<TypeParam>(t);
   }
 }
 
@@ -731,10 +728,9 @@ template <class T> void split_only_where_it_fits(fftn::isa target) {
   }
 }
 
-TEST(Passes, SplitOnlyWhereItFits) {
+TYPED_TEST(Passes, SplitOnlyWhereItFits) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    split_only_where_it_fits<double>(t);
-    split_only_where_it_fits<float>(t);
+    split_only_where_it_fits<TypeParam>(t);
   }
 }
 
@@ -780,10 +776,9 @@ template <class T> void r2c_routes_agree_under_split(fftn::isa target) {
   }
 }
 
-TEST(Passes, R2cRoutesAgreeUnderSplit) {
+TYPED_TEST(Passes, R2cRoutesAgreeUnderSplit) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    r2c_routes_agree_under_split<double>(t);
-    r2c_routes_agree_under_split<float>(t);
+    r2c_routes_agree_under_split<TypeParam>(t);
   }
 }
 
@@ -846,10 +841,9 @@ template <class T> void strided_rows_with_edges(fftn::isa target) {
   }
 }
 
-TEST(Passes, StridedRowsCopyAroundTheEdges) {
+TYPED_TEST(Passes, StridedRowsCopyAroundTheEdges) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    strided_rows_with_edges<double>(t);
-    strided_rows_with_edges<float>(t);
+    strided_rows_with_edges<TypeParam>(t);
   }
 }
 
@@ -907,10 +901,9 @@ template <class T> void few_copies_take_the_whole_line(fftn::isa t) {
   }
 }
 
-TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
+TYPED_TEST(Passes, FewBluesteinCopiesTakeTheWholeLine) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    few_copies_take_the_whole_line<double>(t);
-    few_copies_take_the_whole_line<float>(t);
+    few_copies_take_the_whole_line<TypeParam>(t);
   }
 }
 
@@ -934,10 +927,9 @@ template <class T> void whole_lanes_take_the_whole_line(fftn::isa t) {
   }
 }
 
-TEST(Passes, WholeLanesTakeTheWholeLine) {
+TYPED_TEST(Passes, WholeLanesTakeTheWholeLine) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    whole_lanes_take_the_whole_line<double>(t);
-    whole_lanes_take_the_whole_line<float>(t);
+    whole_lanes_take_the_whole_line<TypeParam>(t);
   }
 }
 
@@ -1040,10 +1032,9 @@ template <class T> void fused_scale(fftn::isa target) {
   check_scaled<c, T, T>(target, volume, 48, 72, "c2r volume 3 x 4 x 6");
 }
 
-TEST(Passes, FusedScaleCostsNoExtraPass) {
+TYPED_TEST(Passes, FusedScaleCostsNoExtraPass) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    fused_scale<double>(t);
-    fused_scale<float>(t);
+    fused_scale<TypeParam>(t);
   }
 }
 
@@ -1201,7 +1192,7 @@ template <class T> void same_bits(fftn::isa a, fftn::isa b, fftn::detail::layout
   }
 }
 
-TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
+TYPED_TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
   const std::vector<fftn::isa> runnable = fftn::test::runnable_isas();
   const auto runs = [&](fftn::isa t) { return std::ranges::find(runnable, t) != runnable.end(); };
   int pairs = 0;
@@ -1214,8 +1205,7 @@ TEST(Passes, TargetsThatRoundAlikeGiveTheSameBits) {
     if (runs(a) && runs(b)) {
       for (const auto layout :
            {fftn::detail::layout_choice::interleaved, fftn::detail::layout_choice::split}) {
-        same_bits<double>(a, b, layout);
-        same_bits<float>(a, b, layout);
+        same_bits<TypeParam>(a, b, layout);
       }
       ++pairs;
     }
@@ -1343,10 +1333,9 @@ template <class T> void unit_leaves_match(fftn::isa t) {
                           : own.codelet[fftn::detail::codelet_slot(8)]->leaf_unit[0][0][0]);
 }
 
-TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
+TYPED_TEST(Passes, UnitLeavesMatchTheStridedLeaves) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    unit_leaves_match<double>(t);
-    unit_leaves_match<float>(t);
+    unit_leaves_match<TypeParam>(t);
   }
 }
 
@@ -1445,15 +1434,14 @@ template <class T> void pair_leaves_match(fftn::isa t) {
   }
 }
 
-TEST(Passes, PairLeavesMatchTheForcedChain) {
+TYPED_TEST(Passes, PairLeavesMatchTheForcedChain) {
   int targets = 0;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
     if (fftn::detail::find_pair_leaves(target) == nullptr) {
       continue;
     }
-    pair_leaves_match<double>(t);
-    pair_leaves_match<float>(t);
+    pair_leaves_match<TypeParam>(t);
     ++targets;
   }
   if (targets == 0) {
@@ -1461,15 +1449,14 @@ TEST(Passes, PairLeavesMatchTheForcedChain) {
   }
 }
 
-TEST(Passes, NarrowLeavesMatchTheTargetsLeaves) {
+TYPED_TEST(Passes, NarrowLeavesMatchTheTargetsLeaves) {
   int targets = 0;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     const auto target = static_cast<fftn::detail::target>(static_cast<unsigned char>(t));
     if (fftn::detail::find_narrow_leaves(target) == nullptr) {
       continue;
     }
-    narrow_leaves_match<double>(t);
-    narrow_leaves_match<float>(t);
+    narrow_leaves_match<TypeParam>(t);
     ++targets;
   }
   if (targets == 0) {
