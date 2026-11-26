@@ -19,11 +19,5 @@
     "FFTN must not be compiled with fast-math or finite-math-only: its results assume IEEE arithmetic."
 #endif
 
-// NOLINTBEGIN(modernize-macro-to-enum): the version must be usable in #if.
-/// Major version: changes when the public API changes incompatibly.
-#define FFTN_VERSION_MAJOR 0
-/// Minor version: changes when features are added compatibly.
-#define FFTN_VERSION_MINOR 0
-/// Patch version: changes for fixes only.
-#define FFTN_VERSION_PATCH 0
-// NOLINTEND(modernize-macro-to-enum)
+// The version macros, FFTN_VERSION_MAJOR, _MINOR and _PATCH, are shared with the C API.
+#include "fftn/version.h" // IWYU pragma: export

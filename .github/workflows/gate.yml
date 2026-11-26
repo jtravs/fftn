@@ -215,6 +215,9 @@ jobs:
       # The threaded Kokkos back end for fftn/kokkos.hpp's tests (cmake/FftnTestDeps.cmake);
       # empty keeps the default.
       FFTN_KOKKOS_BACKEND: ${{ matrix.kokkos }}
+      # "ON" also builds the C API's shared library and its tests (CMakeLists.txt,
+      # FFTN_BUILD_C_SHARED); empty keeps the default (off).
+      FFTN_BUILD_C_SHARED: ${{ matrix.c_shared }}
     steps:
       - name: Packages (CMake, Ninja, ccache)
         run: |

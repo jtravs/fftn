@@ -62,6 +62,12 @@ include(CMakePackageConfigHelpers)
 set(_fftn_cmake_dir ${CMAKE_INSTALL_LIBDIR}/cmake/fftn)
 
 install(TARGETS fftn EXPORT fftn_targets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+# The C API's optional shared library (FFTN_BUILD_C_SHARED), exported as fftn::fftn_c.
+if(TARGET fftn_c)
+  install(TARGETS fftn_c EXPORT fftn_targets
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/fftn DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h")
 install(EXPORT fftn_targets NAMESPACE fftn:: FILE fftnTargets.cmake
