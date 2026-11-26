@@ -51,6 +51,8 @@ For one transform of logical lengths n₀ × … × n_{r−1} (r = 1, 2 or 3 axe
   bin 0 and, for even n, of bin n/2 are ignored. For more axes, the backward c2c
   transforms of the other axes are applied first and the rows of the last axis are then
   read as above.
+- **r2r**, `shape<T, T>` (provisional, "Real-to-real transforms" below): each axis's own
+  real transform (`shape::kinds`), applied axis by axis: the separable product.
 - Nothing is normalised unless asked: backward after forward multiplies by
   n₀ · … · n_{r−1}. `options::scale` multiplies every output by a real factor (1/N for
   a normalised transform, N the number of points in one transform), inside the pass that
@@ -449,12 +451,72 @@ multiplication and addition, not bit for bit; the guarantees of "Determinism" be
 pipelines too. `pipeline::transforms_of` deals lines among a team's members as
 `plan::transforms_of` deals transforms.
 
+## Real-to-real transforms
+
+Provisional (task 6.3, `fftn::r2r_kind` in `fftn/shape.hpp`). A real-to-real shape,
+`shape<T, T>`, holds n reals per line on both sides, laid out as a c2c shape's complex values
+are (both sides real, so strides count reals), and gives each axis its transform in
+`shape::kinds`, one kind per axis in the order of `shape::axes`; `shape::dir` is ignored.
+`rows_r2r`, `planes_r2r` and `volumes_r2r` give one kind to every axis, `axes_r2r` a kind per
+listed dimension of a strided array. The definitions are FFTW's, unnormalised, for a line of n
+reals x_j (sums over j = 0 … n − 1 unless shown):
+
+| Kind | Y_k, k = 0 … n − 1 | FFTW | Inverse, up to N |
+|---|---|---|---|
+| `dct1` | x_0 + (−1)^k x_(n−1) + 2 Σ_(j=1…n−2) x_j cos(π j k / (n − 1)); n ≥ 2 | REDFT00 | `dct1`, N = 2(n − 1) |
+| `dct2` | 2 Σ x_j cos(π (j + ½) k / n) | REDFT10 | `dct3`, N = 2n |
+| `dct3` | x_0 + 2 Σ_(j=1…n−1) x_j cos(π j (k + ½) / n) | REDFT01 | `dct2`, N = 2n |
+| `dct4` | 2 Σ x_j cos(π (j + ½)(k + ½) / n) | REDFT11 | `dct4`, N = 2n |
+| `dst1` | 2 Σ x_j sin(π (j + 1)(k + 1) / (n + 1)) | RODFT00 | `dst1`, N = 2(n + 1) |
+| `dst2` | 2 Σ x_j sin(π (j + ½)(k + 1) / n) | RODFT10 | `dst3`, N = 2n |
+| `dst3` | (−1)^k x_(n−1) + 2 Σ_(j=0…n−2) x_j sin(π (j + 1)(k + ½) / n) | RODFT01 | `dst2`, N = 2n |
+| `dst4` | 2 Σ x_j sin(π (j + ½)(k + ½) / n) | RODFT11 | `dst4`, N = 2n |
+| `dht` | Σ x_j (cos + sin)(2π j k / n) | DHT | `dht`, N = n |
+
+A transform followed by its inverse multiplies by N (the product of the axes' N for several
+axes). The transform of several axes is the separable product, axis by axis, so the DHT of a
+plane is the product of the rows' and the columns' DHTs, as FFTW's, not the transform whose
+kernel is cas of the summed phases.
+
+```cpp file=examples/r2r.cpp region=dht
+// H_k = sum_j x_j (cos + sin)(2 pi jk / n) of every row.
+const fftn::r2r_plan<double> dht(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dht));
+// The same transform scaled by 1/n: the DHT is its own inverse up to n.
+const fftn::r2r_plan<double> inverse(fftn::rows_r2r<double>(n, count, fftn::r2r_kind::dht),
+                                     {.scale = 1.0 / static_cast<double>(n)});
+fftn::workspace ws(dht);
+
+std::vector<double> h(n * count);
+std::vector<double> back(n * count);
+dht.execute(x.data(), h.data(), ws);
+inverse.execute(h.data(), back.data(), ws); // back == x, to rounding
+```
+
+```cpp file=examples/r2r.cpp region=dht-planes
+const fftn::r2r_plan<double> planes(fftn::planes_r2r<double>(ny, nx, 1, fftn::r2r_kind::dht));
+fftn::workspace ws(planes);
+std::vector<double> h(ny * nx);
+planes.execute(x.data(), h.data(), ws);
+```
+
+Built so far: `dht`; the other kinds are refused at construction, naming `shape.kinds[i]`,
+until tasks 6.4 and 6.5. Refused too: `kinds` without one kind per axis, `kinds` on a shape of
+another kind, `dct1` on an axis of one point, and stored runs. A real-to-real plan takes edges
+with scales, real factors and accumulation (a complex factor is refused on either side), in
+place as c2c does, teams, executors and `execute_transforms`; it is planned by the rules whatever
+`options::effort` says (`plan::describe()` says so). Each axis is a phase over its lines; a
+line is read into the workspace, transformed there by the complex transform of half its length
+(an r2c's) or of its length (n odd), and written out by a store stage that combines the bins
+into the DHT, with the output edge's factor, the scales and accumulation. The results are
+within the underlying transform's error bound plus a rounding per stage operation; the
+guarantees of "Determinism" below hold.
+
 ## In place
 
 A plan built with `options::in_place` is executed with the same address as input and
 output, and overwrites its input. The layouts must agree, which construction checks:
 
-- c2c: every input stride and distance equals the output's.
+- c2c and r2r: every input stride and distance equals the output's.
 - r2c and c2r (FFTW's padded layout): the last axis is contiguous on both sides, and every
   other stride and every distance on the real side is twice the complex side's. A real
   row then occupies the first n of the 2(n/2 + 1) reals of its complex row; the last

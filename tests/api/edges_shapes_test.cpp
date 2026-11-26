@@ -1732,6 +1732,8 @@ template <class T> void forced_strategies(fftn::isa t, bool threads) {
     case c2r:
       run_case<T, c2r>(f.c, t, threads, true, f.settings, f.strategy);
       break;
+    case r2r: // real-to-real plans have tests of their own (r2r_test.cpp)
+      break;
     }
   }
 }
@@ -1917,6 +1919,8 @@ TYPED_TEST(EdgeShapes, DescribeNamesTheStrategyAnEdgeForces) {
       return forced_line_holds<T, c2c>(f, t);
     case r2c:
       return forced_line_holds<T, r2c>(f, t);
+    case r2r: // real-to-real plans have tests of their own (r2r_test.cpp)
+      return false;
     case c2r:
       break;
     }
@@ -2910,6 +2914,8 @@ TYPED_TEST(EdgeShapes, StoredRunsOnEveryAxisAndSide) {
         break;
       case c2r:
         run_runs_case<T, c2r>(c, t);
+        break;
+      case r2r: // real-to-real plans take no stored runs (r2r_test.cpp)
         break;
       }
     }

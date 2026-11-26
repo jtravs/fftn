@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// @file
-/// Shapes: what a plan transforms. A shape is a kind (given by the element types), the
-/// transformed axes and the batch dimensions, in the manner of FFTW's guru interface.
+/// Shapes: what a plan transforms. A shape is a kind (given by the element types, and for
+/// real-to-real shapes by one `r2r_kind` per axis), the transformed axes and the batch
+/// dimensions, in the manner of FFTW's guru interface.
 /// The exact meaning of every field is in docs/conventions.md.
 #pragma once
 
@@ -95,15 +96,35 @@ struct stored_run {
   std::size_t count = 0;
 };
 
+/// The kind of one axis of a real-to-real transform (`shape<T, T>`, `shape::kinds`): FFTW's
+/// definitions, unnormalised (docs/conventions.md, "Real-to-real transforms", gives each sum).
+///
+/// Provisional (task 6.3, dev/DESIGN.md 5.7): the names may change before the first release.
+/// Built so far: `dht`; a plan refuses the other kinds until tasks 6.4 and 6.5 build them.
+enum class r2r_kind : unsigned char {
+  dct1, ///< DCT-I, FFTW's REDFT00 (n at least 2); its own inverse up to a factor 2(n - 1)
+  dct2, ///< DCT-II, REDFT10; inverse `dct3`, up to a factor 2n
+  dct3, ///< DCT-III, REDFT01; inverse `dct2`, up to a factor 2n
+  dct4, ///< DCT-IV, REDFT11; its own inverse up to a factor 2n
+  dst1, ///< DST-I, RODFT00; its own inverse up to a factor 2(n + 1)
+  dst2, ///< DST-II, RODFT10; inverse `dst3`, up to a factor 2n
+  dst3, ///< DST-III, RODFT01; inverse `dst2`, up to a factor 2n
+  dst4, ///< DST-IV, RODFT11; its own inverse up to a factor 2n
+  dht,  ///< the discrete Hartley transform, H_k = sum_j x_j cas(2 pi jk / n) with
+        ///< cas = cos + sin; its own inverse up to a factor n
+};
+
 /// A transform shape, typed by its input and output elements.
 ///
 /// The element types select the kind: `shape<std::complex<T>, std::complex<T>>` is a
-/// complex transform (c2c), `shape<T, std::complex<T>>` a real-to-complex one (r2c) and
-/// `shape<std::complex<T>, T>` a complex-to-real one (c2r), for `T` = `double` or `float`.
-/// Other combinations do not compile.
+/// complex transform (c2c), `shape<T, std::complex<T>>` a real-to-complex one (r2c),
+/// `shape<std::complex<T>, T>` a complex-to-real one (c2r) and `shape<T, T>` a real-to-real one
+/// (r2r, whose `kinds` give each axis's transform), for `T` = `double` or `float`. Other
+/// combinations do not compile.
 ///
-/// Axes are listed slowest-varying first, as the dimensions of a C array; for real kinds
-/// the last axis is the halved one (n/2 + 1 complex values on the complex side). Batch
+/// Axes are listed slowest-varying first, as the dimensions of a C array; for r2c and c2r
+/// the last axis is the halved one (n/2 + 1 complex values on the complex side); r2r has no
+/// halved axis. Batch
 /// dimensions are listed slowest first too, and transforms are numbered in that order (the
 /// last batch dimension varies fastest).
 ///
@@ -115,12 +136,14 @@ template <class In, class Out> struct shape {
           (std::is_same_v<In, std::complex<double>> && std::is_same_v<Out, double>) ||
           (std::is_same_v<In, std::complex<float>> && std::is_same_v<Out, std::complex<float>>) ||
           (std::is_same_v<In, float> && std::is_same_v<Out, std::complex<float>>) ||
-          (std::is_same_v<In, std::complex<float>> && std::is_same_v<Out, float>),
-      "fftn::shape<In, Out>: the kinds are complex to complex, real to complex and complex to "
-      "real, in double or float");
+          (std::is_same_v<In, std::complex<float>> && std::is_same_v<Out, float>) ||
+          (std::is_same_v<In, double> && std::is_same_v<Out, double>) ||
+          (std::is_same_v<In, float> && std::is_same_v<Out, float>),
+      "fftn::shape<In, Out>: the kinds are complex to complex, real to complex, complex to "
+      "real and real to real, in double or float");
 
-  /// The direction of a complex-to-complex transform. Ignored by the real kinds: r2c is
-  /// always forward and c2r always backward.
+  /// The direction of a complex-to-complex transform. Ignored by the other kinds: r2c is
+  /// always forward, c2r always backward, and each real-to-real kind is one transform.
   direction dir = direction::forward;
   /// The transformed axes, slowest first: one for rows, two for planes, three for volumes.
   /// A plan refuses a shape with none or with more than three.
@@ -130,8 +153,15 @@ template <class In, class Out> struct shape {
   /// The stored runs (`stored_run`): axes stored in part on a side, in any order. An axis
   /// and side without runs is stored whole. Runs of one axis and side may not overlap, neither
   /// in their logical nor in their stored positions. Provisional (task 5.1d): not taken by
-  /// in-place plans, nor together with an edge's factor (`plan_edges`).
+  /// in-place plans, nor together with an edge's factor (`plan_edges`), nor by real-to-real
+  /// shapes.
   std::vector<stored_run> runs{};
+  /// The kind of each axis of a real-to-real shape (`shape<T, T>`), in the order of `axes`. The
+  /// kinds may differ between axes; the transform of several axes is the separable product of
+  /// each axis's own (docs/conventions.md, "Real-to-real transforms"). A plan refuses a
+  /// real-to-real shape whose `kinds` does not hold one kind per axis, any other shape whose
+  /// `kinds` is not empty, and `r2r_kind::dct1` on an axis of one point. Provisional (task 6.3).
+  std::vector<r2r_kind> kinds{};
 };
 
 /// A batch of `count` complex rows of length `n`, stored one after another.
@@ -286,6 +316,57 @@ template <class T>
   s.axes.push_back(axis{.n = ny});
   s.axes.push_back(axis{.n = nx});
   s.batches.push_back(batch{.count = count});
+  return s;
+}
+
+/// A batch of `count` real rows of length `n`, stored one after another, each transformed by
+/// the real-to-real kind `kind` into a real row of length `n` (docs/conventions.md,
+/// "Real-to-real transforms"). Provisional (task 6.3).
+///
+/// Throws `std::bad_alloc` when memory runs out (the axes, batch dimensions and kinds are
+/// vectors).
+///
+/// Guarantees: the shape has one axis of kind `kind` and one batch dimension with default
+/// (tight) strides and distances; nothing is validated until a plan is built from it.
+template <class T>
+[[nodiscard]] shape<T, T> rows_r2r(std::size_t n, std::size_t count, r2r_kind kind) {
+  shape<T, T> s;
+  s.axes.push_back(axis{.n = n});
+  s.batches.push_back(batch{.count = count});
+  s.kinds.push_back(kind);
+  return s;
+}
+
+/// A batch of `count` real planes of `ny` rows of `nx` values, C-ordered as for planes_c2c, each
+/// transformed by `kind` along both axes (their separable product). axes_r2r gives each axis a
+/// kind of its own. Provisional (task 6.3).
+///
+/// Exceptions and guarantees: as for rows_r2r, with two axes of kind `kind`.
+template <class T>
+[[nodiscard]] shape<T, T> planes_r2r(std::size_t ny, std::size_t nx, std::size_t count,
+                                     r2r_kind kind) {
+  shape<T, T> s;
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  s.kinds.assign(2, kind);
+  return s;
+}
+
+/// A batch of `count` real volumes of `nz` planes of `ny` rows of `nx` values, C-ordered as for
+/// volumes_c2c, each transformed by `kind` along all three axes (their separable product).
+/// Provisional (task 6.3).
+///
+/// Exceptions and guarantees: as for rows_r2r, with three axes of kind `kind`.
+template <class T>
+[[nodiscard]] shape<T, T> volumes_r2r(std::size_t nz, std::size_t ny, std::size_t nx,
+                                      std::size_t count, r2r_kind kind) {
+  shape<T, T> s;
+  s.axes.push_back(axis{.n = nz});
+  s.axes.push_back(axis{.n = ny});
+  s.axes.push_back(axis{.n = nx});
+  s.batches.push_back(batch{.count = count});
+  s.kinds.assign(3, kind);
   return s;
 }
 
@@ -497,6 +578,29 @@ axes_c2r(std::span<const axis> array, std::span<const std::size_t> axes, bool pa
   const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
   return detail::shape_along_axes<std::complex<T>, T>(array, axes, direction::backward, n / 2 + 1,
                                                       padded ? 2 * (n / 2 + 1) : n, runs);
+}
+
+/// The real-to-real transform along some dimensions of a strided array of real values: as
+/// axes_c2c, with no halved dimension (both sides hold n reals along every dimension), and
+/// `kinds[i]` the kind of dimension `axes[i]` (`shape::kinds`, in the order of `shape::axes`).
+/// Provisional (task 6.3).
+///
+/// Throws `std::invalid_argument` as axes_c2c does, and when `kinds` does not hold one kind per
+/// listed dimension; `std::bad_alloc` when memory runs out.
+///
+/// Guarantees: as for axes_c2c.
+template <class T>
+[[nodiscard]] shape<T, T> axes_r2r(std::span<const axis> array, std::span<const std::size_t> axes,
+                                   std::span<const r2r_kind> kinds) {
+  if (kinds.size() != axes.size()) {
+    throw std::invalid_argument("fftn::axes: kinds holds " + std::to_string(kinds.size()) +
+                                " kinds for " + std::to_string(axes.size()) +
+                                " listed dimensions; give one kind per dimension in axes");
+  }
+  const std::size_t n = axes.empty() || axes.back() >= array.size() ? 0 : array[axes.back()].n;
+  shape<T, T> s = detail::shape_along_axes<T, T>(array, axes, direction::forward, n, n);
+  s.kinds.assign(kinds.begin(), kinds.end());
+  return s;
 }
 
 } // namespace fftn::inline v0
