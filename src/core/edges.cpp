@@ -55,9 +55,10 @@ void check_scale(double scale, precision prec, const std::string& name) {
   }
 }
 
-// Whether the side is real: the input of r2c, the output of c2r.
+// Whether the side is real: the input of r2c, the output of c2r, both sides of r2r.
 bool real_side(const shape_view& s, bool output) {
-  return output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
+  return s.kind == transform_kind::r2r ||
+         (output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c);
 }
 
 // The lengths of the side's logical coordinates along each axis: for c2c the axes' lengths;
@@ -111,6 +112,10 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output, const st
     // Bounded so that a workspace's size, with this much per lane, is computed without overflow.
     if (e.call_scratch > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / 4) {
       reject(call + ".scratch_bytes", "is too large to address");
+    }
+    if (s.kind == transform_kind::r2r) {
+      reject(call + ".fn", "is a callback on a real-to-real plan, which takes none yet (tasks "
+                           "5.3a and 5.3b built them for c2c, r2c and c2r rows)");
     }
     if (s.axes.size() != 1) {
       reject(call + ".fn", "is a callback on a multi-axis plan, which takes none yet (tasks 5.3a "

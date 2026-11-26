@@ -43,7 +43,8 @@ enum class factor_kind : unsigned char {
 /// Preconditions, checked at plan construction (`std::invalid_argument` naming the field):
 /// with a factor, `axis_strides` has one stride per axis of the shape and `batch_strides`
 /// one per batch dimension or none, and the array's span in bytes fits `std::ptrdiff_t`; a complex
-/// factor is not allowed on a real side (the input of r2c, the output of c2r).
+/// factor is not allowed on a real side (the input of r2c, the output of c2r, both sides of
+/// r2r).
 struct factor {
   /// The kind of the array; `factor_kind::none` (the default) means no factor, and the
   /// strides are then ignored.
@@ -106,7 +107,9 @@ template <class T> struct edge {
 /// elsewhere each factor and accumulation is a pass of its own over the data (describe()
 /// counts them), and the
 /// workspace may hold one transform (or row) more. A wisdom entry of a plan with edges serves
-/// plans with the same edges only.
+/// plans with the same edges only. A real-to-real plan (`shape<T, T>`, task 6.3) applies the
+/// input's real factor as it reads its first axis's lines and the output's real factor, the
+/// scales and accumulation as it writes its last axis's, with no separate pass.
 template <class In, class Out> struct plan_edges {
   /// The input edge.
   edge<In> in{};

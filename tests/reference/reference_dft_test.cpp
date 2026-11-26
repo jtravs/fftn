@@ -297,5 +297,50 @@ TEST(ReferenceDft, RejectsBadArguments) {
   EXPECT_TRUE(reference::c2c(-1, std::vector<std::complex<double>>{}).empty());
 }
 
+// The DHT (DESIGN.md 5.7): the real DFT's bins combined, H_k = Re X_k - Im X_k, and on two
+// axes the product of the 1-D transforms, its own inverse up to the number of points.
+TEST(ReferenceDht, AgreesWithTheRealTransformAndIsSeparable) {
+  input_source src(0xD47);
+  for (const std::size_t n : {1U, 2U, 7U, 16U, 45U}) {
+    const std::vector<double> x = src.reals<double>(n);
+    const std::vector<std::size_t> extents{n};
+    const std::vector<exact_real> h = reference::dht(extents, x);
+    const std::vector<std::complex<double>> z(x.begin(), x.end());
+    const std::vector<exact_complex> X = reference::c2c(-1, z);
+    for (std::size_t k = 0; k < n; ++k) {
+      EXPECT_NEAR(h[k].hi, X[k].re.hi - X[k].im.hi, 1e-15 * static_cast<double>(n))
+          << n << " " << k;
+    }
+  }
+  const std::size_t ny = 5;
+  const std::size_t nx = 6;
+  const std::vector<double> x = src.reals<double>(ny * nx);
+  const std::vector<std::size_t> extents{ny, nx};
+  const std::vector<exact_real> h = reference::dht(extents, x);
+  std::vector<double> mid(ny * nx);
+  for (std::size_t i = 0; i < mid.size(); ++i) {
+    mid[i] = h[i].hi;
+  }
+  const std::vector<exact_real> back = reference::dht(extents, mid);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    EXPECT_NEAR(back[i].hi, x[i] * static_cast<double>(ny * nx), 1e-13) << i;
+  }
+  // One point of the plane: cas along y times cas along x.
+  std::vector<double> impulse(ny * nx, 0.0);
+  impulse[(1 * nx) + 2] = 1.0;
+  const std::vector<exact_real> g = reference::dht(extents, impulse);
+  const auto cas = [](std::size_t m, std::size_t n) {
+    const double phase = 2 * std::numbers::pi * static_cast<double>(m % n) / static_cast<double>(n);
+    return std::cos(phase) + std::sin(phase);
+  };
+  for (std::size_t ky = 0; ky < ny; ++ky) {
+    for (std::size_t kx = 0; kx < nx; ++kx) {
+      EXPECT_NEAR(g[(ky * nx) + kx].hi, cas(ky, ny) * cas(2 * kx, nx), 1e-15) << ky << " " << kx;
+    }
+  }
+  EXPECT_THROW(static_cast<void>(reference::dht(extents, std::vector<double>(7))),
+               std::invalid_argument);
+}
+
 } // namespace
 } // namespace fftn::test

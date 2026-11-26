@@ -630,6 +630,9 @@ template <class T> void run_any(const cb_case& c, fftn::isa t, bool threads) {
   case transform_kind::c2r:
     run_case<T, transform_kind::c2r>(c, t, threads);
     break;
+  case transform_kind::r2r: // real-to-real plans refuse callbacks (callbacks_test.cpp)
+    ADD_FAILURE() << "an r2r case";
+    break;
   }
 }
 
