@@ -511,10 +511,12 @@ Points that matter:
 
 ### 5.4 Convenience layer
 
-*Proposed* (phase 6, steps 6.6 and 6.7; not built; the open points are in 18.2, "Phase 6"). A
-header, `fftn/easy.hpp`, for callers who want numpy's interface and accept that FFTN keeps plans
-and scratch for them. It adds no kernels and no planning of its own: every call finds or builds
-a core plan (5.3) and executes it.
+*Provisional* (phase 6: step 6.6 built the complex and real functions on the proposals of 18.2,
+"Phase 6", Q4–Q8; step 6.7 adds the real-to-real ones). A header, `fftn/easy.hpp`, for callers
+who want numpy's interface and accept that FFTN keeps plans and scratch for them, and its one
+compiled unit, `src/easy/easy.cpp`, which includes public headers only. It adds no kernels and
+no planning of its own: every call finds or builds a core plan (5.3) and executes it.
+`docs/easy.md` is the user's page.
 
 ```cpp
 namespace fftn::easy {
@@ -524,37 +526,42 @@ template <class T, std::size_t Rank> struct view {   // a borrowed strided array
   T* data = nullptr;
   std::array<std::size_t, Rank> extents{};
   std::array<std::ptrdiff_t, Rank> strides{};        // in elements; all 0: tight C order
-};                                                   // converts from std::mdspan where it exists
+  view(T*, extents, strides = {});                   // and from view<U> (adding const) and,
+};                                                   // where it exists, a strided std::mdspan
+class axis_list;                 // numpy's axes: a braced list or a range of int, copied (<= 8)
 
 class context {                  // cached plans and one workspace; one thread at a time; movable
 public:
-  context();                                    // executes serially
-  explicit context(executor_ref);               // executes on the executor (13.6)
+  context() noexcept;                           // executes serially
+  explicit context(executor_ref) noexcept;      // executes on the executor (13.6)
   void set_max_plans(std::size_t);              // default 64, least recently used dropped
+  std::size_t max_plans() const noexcept; std::size_t cached_plans() const noexcept;
   void clear() noexcept;
   // every function below, as a member
 };
-context& thread_context();       // the calling thread's own, used by the free functions
+context& thread_context() noexcept;   // the calling thread's own, used by the free functions
 
-// One dimension, over spans. The output's size is checked: n/2 + 1 for rfft; irfft's n is
-// out.size().
-template <class T>
-void fft(std::span<const std::complex<T>> in, std::span<std::complex<T>> out, norm = norm::backward);
-// ifft, rfft and irfft alike; and value forms that allocate their result:
-template <class T>
-std::vector<std::complex<T>> fft(std::span<const std::complex<T>> in, norm = norm::backward);
+// One dimension, over spans, an overload per precision (so vectors and arrays pass). The
+// output's size is checked: in.size() for fft and ifft, n/2 + 1 for rfft; irfft's n is
+// out.size() and in.size() must be n/2 + 1.
+void fft(std::span<const std::complex<double>> in, std::span<std::complex<double>> out,
+         norm = norm::backward);
+// ifft, rfft and irfft alike, in float too; and value forms that allocate their result:
+std::vector<std::complex<double>> fft(std::span<const std::complex<double>> in, norm = norm::backward);
+std::vector<double> irfft(std::span<const std::complex<double>> in, std::size_t n = 0,  // 0: 2(m - 1)
+                          norm = norm::backward);
 
 // Several dimensions, over views. Axes as numpy's (negative counts from the end; by default
-// the last one, two or all); the other dimensions are batch dimensions.
-template <class T, std::size_t R>
-void fftn(view<const std::complex<T>, R> in, view<std::complex<T>, R> out,
-          std::span<const int> axes = {}, norm = norm::backward);
+// the last two for the 2 forms, all for the n forms; one to three); the other dimensions are
+// batch dimensions. The input's element type may be const.
+template <class In, class Out, std::size_t R>
+void fftn(view<In, R> in, view<Out, R> out, axis_list axes = {}, norm = norm::backward);
 // fft2, ifft2, ifftn, rfft2, irfft2, rfftn and irfftn alike.
 
+// Helpers: fftfreq(n, span out, d = 1) and rfftfreq(n, span out, d = 1); fftshift and
+// ifftshift from view to view along axis_list axes (all by default), in place allowed.
 // Real-to-real (step 6.7, over 5.7): scipy.fft's dct, idct, dst, idst, dctn, idctn, dstn and
 // idstn (type 1 to 4, norm), and dht.
-// Helpers: fftfreq and rfftfreq into a span; fftshift and ifftshift from view to view (in
-// place allowed).
 }
 ```
 
@@ -562,22 +569,37 @@ Points that matter:
 
 - **Meanings are numpy's and scipy.fft's** where they differ from the core's. `norm::backward`
   is the core's convention (forward unscaled, inverse by 1/n); `forward` and `ortho` move the
-  factor. A uniform factor is `options::scale`, fused into the last pass. scipy's orthonormal
-  DCT and DST also weight the first or last term, which is a real factor on an edge (12.1)
-  whose array the cache keeps with the plan.
-- **The cache.** A `context` keys its plans by kind, precision, shape (strides and placement
-  included), scale and executor width. A hit allocates nothing. A miss builds a plan with
-  `planning::rules` and grows the context's one workspace to the largest plan's need. The free
-  functions use `thread_context()`, a `thread_local` destroyed at thread exit: no locks and no
-  sharing between threads. It is the one piece of state FFTN keeps behind the caller's back,
-  which AGENTS section 4 allows the convenience layer, and `docs/easy.md` says so.
-- **Errors** are `std::invalid_argument` naming the argument (a wrong output size, a bad axis),
-  thrown by the call itself, since the layer has no separate construction step. The core's
-  execute contract is unchanged.
-- **In place** when `in` and `out` are the same memory, for complex and real-to-real kinds; the
-  real kinds have no in-place form here (numpy has none).
+  factor. A uniform factor is `options::scale`, fused into the last pass, so a call is bitwise
+  the core plan of its shape with that scale. `irfftn` runs the inverse along the other axes
+  first and the halved one last, as numpy's does, so it agrees with numpy on spectra that are
+  not Hermitian too. scipy's orthonormal DCT and DST also weight the first or last term, which
+  is a real factor on an edge (12.1) whose array the cache keeps with the plan.
+- **Sizes agree.** numpy's `n` and `s` also crop or zero-pad the input to another length; here
+  the output gives the length where numpy's default cannot (irfft, irfftn) and the input's size
+  must match it. Padding could come from stored runs (12.1) and cropping from the strides, if
+  callers want it (18.2, "Phase 6").
+- **The cache.** A `context` keys its plans by kind, precision, direction, norm, the arrays'
+  extents and strides as given (both sides), the axes and placement. The executor's width is
+  not in the key while no option depends on it (the workspace is sized for
+  `concurrency()` lanes on each call). A key is compared word by word, visited rather than
+  stored, so a hit allocates nothing. A miss builds a plan with `planning::rules` and grows the
+  context's one workspace to the largest plan's need, before changing the cache, so an
+  exception leaves it as it was. The free functions use `thread_context()`, a `thread_local`
+  destroyed at thread exit: no locks and no sharing between threads. It is the one piece of
+  state FFTN keeps behind the caller's back, which AGENTS section 4 allows the convenience
+  layer, and `docs/easy.md` says so.
+- **Views.** All strides 0 is tight C order; otherwise every stride is as given, and a 0 on a
+  dimension that steps is refused (mixing given strides with defaults computed from the
+  extents would silently overlap).
+- **Errors** are `std::invalid_argument` naming the argument (`out.size()`, `in.extents[1]`,
+  `axes`, `out.strides[0]`), thrown by the call itself before anything is written, since the
+  layer has no separate construction step; layouts the core refuses come back with its message
+  quoted. The core's execute contract is unchanged.
+- **In place** when `in` and `out` are the same memory with the same strides, for complex and
+  real-to-real kinds; the real kinds have no in-place form here (numpy has none).
 - **Not offered:** team execution (it needs every member's call on one workspace, which the core
-  API serves), plan edges and pipelines (`docs/fusion.md` uses the core API).
+  API serves), plan edges and pipelines (`docs/fusion.md` uses the core API), measured planning
+  and wisdom, more than three transformed axes (5.6).
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
   `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
 
@@ -4177,7 +4199,10 @@ table are built on the proposal, provisional and with a second reader, until it 
    say whose semantics they copy.
 5. **Semantics.** Proposal: numpy's and scipy.fft's throughout, where they differ from the
    core's: `norm` with `backward` by default, `int` axes with negatives from the end, the last
-   one, two or all axes by default, `irfft`'s length from the output's size.
+   one, two or all axes by default, `irfft`'s length from the output's size. Built so (step 6.6),
+   with one narrowing: numpy's `n` and `s` also crop or zero-pad the input, which the layer does
+   not offer (sizes must agree). Proposal: add them if callers ask, padding by stored runs (12.1)
+   and cropping by strides.
 6. **The cache.** Proposal: a `context` class with a `thread_local` default, 64 plans each,
    least recently used dropped, `clear()`; plans by `planning::rules` only. Alternative: one
    process-wide cache behind a lock, which shares plans between threads but brings a lock and
@@ -4639,6 +4664,7 @@ to change before a release.
 | 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 | 2026-11-26 | Block callbacks on c2c rows (task 5.3a, section 12.3): provisional `fftn/callback.hpp` (`block_info`, `block_fn`, `callback_mode`, `callback`, `callback_of`, `along_transforms`) and `edge::call`, with 18.2's proposals ("Callbacks"); the callback stage on the chain only until 5.3b, planned by the rules; blocks are stage chunks; per-member scratch at the end of each slot; the drive policies' per-task entries take the lane and slots, the plain instantiations unchanged; a plan with callbacks needs the `exec_args` overloads. Awaits the maintainer's review of the API. |
 | 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
+| 2026-11-26 | Convenience layer for complex and real transforms (step 6.6, section 5.4): provisional `fftn/easy.hpp` with 18.2's proposals Q4–Q8 (`fftn::easy`, numpy's semantics, a `thread_local` `context` of 64 plans dropped least recently used, rules planning, `view` with an `mdspan` conversion, both value forms); one compiled unit over the public API only; per-precision overloads for the span forms; `axis_list` for braced axes; sizes must agree (numpy's cropping and padding by `n` and `s` not offered); the executor's width left out of the key; `cached_plans()` and `max_plans()` added for inspection. Awaits the maintainer's review of the API | The maintainer's priority (2026-11-25): features fully built; numpy users' call sites translate one to one, and the core API stays the way to every other feature |
 
 ---
 
