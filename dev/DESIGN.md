@@ -189,7 +189,7 @@ Repository layout (target; created as phases need it):
 
 ```
 include/fftn/            public headers only: fftn.hpp, plan.hpp, execution.hpp,
-                         edge.hpp, pipeline.hpp, convenience.hpp, omp.hpp, kokkos.hpp, c_api.h
+                         edge.hpp, pipeline.hpp, split.hpp, easy.hpp, omp.hpp, kokkos.hpp, c_api.h
 src/                     the library: platform/, planner/, engine/, strategies/, c_api.cpp
 src/isa/                 regions, vocabularies, the kernel units of each instruction set
 src/passes/              pass kernels (.inl, included per instruction set)
@@ -237,7 +237,7 @@ the library and nothing on the execute path sees one.
   In-place plans use the ordinary `execute(const In*, Out*, workspace&)`: the caller passes
   one address twice (for real kinds, the same memory viewed as both types).
 - Complex data are `std::complex<T>` (interleaved). Split real/imaginary arrays are a
-  later layout option (section 5.3). Both `double` and `float` are supported. `double` is
+  later layout option (section 5.8, proposed). Both `double` and `float` are supported. `double` is
   tuned first. `float` is instantiated and tested for correctness in CI from phase 1 (on
   the scalar target and at least one SIMD target per architecture) so the precision-generic
   code cannot drift; its remaining targets and its tuning follow in phase 6.
@@ -451,8 +451,9 @@ Points that matter:
 
 - **Kind safety is static.** The element types select the kind, so calling a real plan
   with complex data does not compile. Nothing is checked at execute time. Kinds that the
-  element types cannot tell apart (the real-to-real family of phase 6, split-complex
-  arrays) will be selected by a kind tag in the shape, defaulted from the types.
+  element types cannot tell apart are proposed for phase 6 as follows: the real-to-real
+  family is `shape<T, T>` with one `r2r_kind` per axis (5.7), and split-complex arrays take
+  an element tag type, `split_complex<T>` (5.8).
 - **Plans are values.** Copies share one immutable core (`std::shared_ptr<const>`), so
   copying is cheap and thread-safe. There is no default constructor and every plan is
   valid: the class declares its copy operations and no move operations, so moving a plan
@@ -510,14 +511,75 @@ Points that matter:
 
 ### 5.4 Convenience layer
 
-*Later* (phase 6, 5.6). A thin header for users who want the numpy-shaped interface: `fft`, `ifft`, `rfft`,
-`irfft`, `fft2`, `fftn`, `rfftn`, `irfftn` over `std::span` and a small strided array view
-(C++20 has no `mdspan`; the view converts from one where available), with `axes`,
-`norm = backward | ortho | forward`, a cache of plans and per-thread workspaces keyed by
-shape (the one place FFTN allocates behind the caller's back, and documented), and the helpers
-`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift` (`next_fast_length` is already in the core API,
-`fftn/lengths.hpp`, task 2.5). All of it is expressed through the core API; none of it adds
-kernels.
+*Proposed* (phase 6, steps 6.6 and 6.7; not built; the open points are in 18.2, "Phase 6"). A
+header, `fftn/easy.hpp`, for callers who want numpy's interface and accept that FFTN keeps plans
+and scratch for them. It adds no kernels and no planning of its own: every call finds or builds
+a core plan (5.3) and executes it.
+
+```cpp
+namespace fftn::easy {
+enum class norm : unsigned char { backward, ortho, forward };   // numpy's meanings
+
+template <class T, std::size_t Rank> struct view {   // a borrowed strided array
+  T* data = nullptr;
+  std::array<std::size_t, Rank> extents{};
+  std::array<std::ptrdiff_t, Rank> strides{};        // in elements; all 0: tight C order
+};                                                   // converts from std::mdspan where it exists
+
+class context {                  // cached plans and one workspace; one thread at a time; movable
+public:
+  context();                                    // executes serially
+  explicit context(executor_ref);               // executes on the executor (13.6)
+  void set_max_plans(std::size_t);              // default 64, least recently used dropped
+  void clear() noexcept;
+  // every function below, as a member
+};
+context& thread_context();       // the calling thread's own, used by the free functions
+
+// One dimension, over spans. The output's size is checked: n/2 + 1 for rfft; irfft's n is
+// out.size().
+template <class T>
+void fft(std::span<const std::complex<T>> in, std::span<std::complex<T>> out, norm = norm::backward);
+// ifft, rfft and irfft alike; and value forms that allocate their result:
+template <class T>
+std::vector<std::complex<T>> fft(std::span<const std::complex<T>> in, norm = norm::backward);
+
+// Several dimensions, over views. Axes as numpy's (negative counts from the end; by default
+// the last one, two or all); the other dimensions are batch dimensions.
+template <class T, std::size_t R>
+void fftn(view<const std::complex<T>, R> in, view<std::complex<T>, R> out,
+          std::span<const int> axes = {}, norm = norm::backward);
+// fft2, ifft2, ifftn, rfft2, irfft2, rfftn and irfftn alike.
+
+// Real-to-real (step 6.7, over 5.7): scipy.fft's dct, idct, dst, idst, dctn, idctn, dstn and
+// idstn (type 1 to 4, norm), and dht.
+// Helpers: fftfreq and rfftfreq into a span; fftshift and ifftshift from view to view (in
+// place allowed).
+}
+```
+
+Points that matter:
+
+- **Meanings are numpy's and scipy.fft's** where they differ from the core's. `norm::backward`
+  is the core's convention (forward unscaled, inverse by 1/n); `forward` and `ortho` move the
+  factor. A uniform factor is `options::scale`, fused into the last pass. scipy's orthonormal
+  DCT and DST also weight the first or last term, which is a real factor on an edge (12.1)
+  whose array the cache keeps with the plan.
+- **The cache.** A `context` keys its plans by kind, precision, shape (strides and placement
+  included), scale and executor width. A hit allocates nothing. A miss builds a plan with
+  `planning::rules` and grows the context's one workspace to the largest plan's need. The free
+  functions use `thread_context()`, a `thread_local` destroyed at thread exit: no locks and no
+  sharing between threads. It is the one piece of state FFTN keeps behind the caller's back,
+  which AGENTS section 4 allows the convenience layer, and `docs/easy.md` says so.
+- **Errors** are `std::invalid_argument` naming the argument (a wrong output size, a bad axis),
+  thrown by the call itself, since the layer has no separate construction step. The core's
+  execute contract is unchanged.
+- **In place** when `in` and `out` are the same memory, for complex and real-to-real kinds; the
+  real kinds have no in-place form here (numpy has none).
+- **Not offered:** team execution (it needs every member's call on one workspace, which the core
+  API serves), plan edges and pipelines (`docs/fusion.md` uses the core API).
+- **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
+  `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
 
 ### 5.5 Other interfaces
 
@@ -588,7 +650,7 @@ the header and the docs until it happens.
   application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
 - *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
-  a plan per call and belong with the convenience layer of 5.4); `DynPlan`.
+  a plan per call and belong with the convenience layer of 5.4, step 6.7); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -606,7 +668,8 @@ phase 6 will include the header and take the struct unchanged.
 The other interfaces are later work:
 
 - **C API** (`fftn/c_api.h`): opaque plans, the same shapes, and the three-function
-  executor contract for foreign thread pools, which exists already (above).
+  executor contract for foreign thread pools, which exists already (above). Proposed in
+  5.9.
 - **FFTW3-compatible shim** (separate opt-in library and header, never installed as
   `fftw3.h`): the `fftw_plan_many_dft`, guru and execute subset, so C and Fortran users
   and existing benchmark tools can link FFTN. It is opt-in because a header that
@@ -619,6 +682,207 @@ The other interfaces are later work:
 | Core | c2c, r2c, c2r; 1-D rows, 2-D planes, 3-D volumes; strides and distances; in place and out of place; any length; double; serial, team and executor execution; plan edges, row pipelines (convolution and spectral pair) and block callbacks | 1–5 |
 | General | float on every target, tuned where asked for; convenience layer; DCT/DST types I–IV and the discrete Hartley transform as composed plans; split-complex layout; C API; wisdom import and export | 6 |
 | Later, on demand | FFTW shim; more than three transformed axes; SVE; Python binding | 7 |
+
+### 5.7 Real-to-real transforms: DCT, DST and DHT
+
+*Proposed* (phase 6, steps 6.3 to 6.5 and 6.12; not built; the open points are in 18.2, "Phase
+6"). They are composed plans: no new codelets, only read and store stages around transforms the
+plan already has.
+
+```cpp
+namespace fftn {
+enum class r2r_kind : unsigned char {
+  dct1, dct2, dct3, dct4,    // FFTW's REDFT00, REDFT10, REDFT01, REDFT11
+  dst1, dst2, dst3, dst4,    // RODFT00, RODFT10, RODFT01, RODFT11
+  dht                        // DHT
+};
+// shape<T, T> is the real-to-real kind, and shape gains one member:
+//   std::vector<r2r_kind> kinds{};   // <T, T>: one per axis, slowest first; other kinds: empty
+template <class T> shape<T, T> rows_r2r(std::size_t n, std::size_t count, r2r_kind);
+template <class T> shape<T, T> planes_r2r(std::size_t ny, std::size_t nx, std::size_t count, r2r_kind);
+template <class T>
+shape<T, T> volumes_r2r(std::size_t nz, std::size_t ny, std::size_t nx, std::size_t count, r2r_kind);
+template <class T>
+shape<T, T> axes_r2r(std::span<const axis> array, std::span<const std::size_t> axes,
+                     std::span<const r2r_kind> kinds);       // one kind per listed axis
+template <class T> using r2r_plan = plan<T, T>;
+}
+```
+
+The definitions are FFTW's, unnormalised, for a line of n reals x_j (sums over j = 0 … n − 1
+unless shown):
+
+| Kind | Y_k, k = 0 … n − 1 | N | Inverse |
+|---|---|---|---|
+| `dct1` | x_0 + (−1)^k x_(n−1) + 2 Σ_(j=1…n−2) x_j cos(π j k / (n − 1)); n ≥ 2 | 2(n − 1) | `dct1` |
+| `dct2` | 2 Σ x_j cos(π (j + ½) k / n) | 2n | `dct3` |
+| `dct3` | x_0 + 2 Σ_(j=1…n−1) x_j cos(π j (k + ½) / n) | 2n | `dct2` |
+| `dct4` | 2 Σ x_j cos(π (j + ½)(k + ½) / n) | 2n | `dct4` |
+| `dst1` | 2 Σ x_j sin(π (j + 1)(k + 1) / (n + 1)) | 2(n + 1) | `dst1` |
+| `dst2` | 2 Σ x_j sin(π (j + ½)(k + 1) / n) | 2n | `dst3` |
+| `dst3` | (−1)^k x_(n−1) + 2 Σ_(j=0…n−2) x_j sin(π (j + 1)(k + ½) / n) | 2n | `dst2` |
+| `dst4` | 2 Σ x_j sin(π (j + ½)(k + ½) / n) | 2n | `dst4` |
+| `dht` | Σ x_j (cos + sin)(2π j k / n) | n | `dht` |
+
+A transform followed by its inverse multiplies by N. Several axes give the separable product,
+axis by axis, and the kinds may differ between axes. The DHT of several axes is therefore the
+product of one-dimensional DHTs, as FFTW's, not the transform whose kernel is cas of the summed
+phases.
+
+Points that matter:
+
+- **The kind tag.** The element types cannot tell the kinds apart, so `shape<T, T>` carries one
+  kind per axis, the tag 5.3 foresaw. A plan refuses a `<T, T>` shape whose `kinds` has a size
+  other than the number of axes, any other shape with `kinds` not empty, and `dct1` with n = 1.
+  `dir` is ignored. Both sides hold n reals per line, so in place takes identical layouts, as
+  c2c does.
+- **Routes.** Each axis's line is computed in a scratch-resident line, the program form of 5.2b:
+  a read stage, a forward or inverse transform, a store stage. The stages are internal edge
+  stages (12.1), not public vocabulary.
+
+  | Kind | Read stage | Transform | Store stage |
+  |---|---|---|---|
+  | `dht` | — | r2c of n | H_k = Re X_k − Im X_k and H_(n−k) = Re X_k + Im X_k |
+  | `dct2` | v_j = x_(2j), v_(n−1−j) = x_(2j+1) (Makhoul) | r2c of n, any n | Y_k and Y_(n−k) from V_k: one complex multiply by e^(−iπk/(2n)) per pair |
+  | `dct3` | the `dct2` store, inverted | c2r of n | the `dct2` read, inverted |
+  | `dct4`, even n | x_(2j) + i x_(n−1−2j), times a twiddle | c2c of n/2 | a twiddle, then Y_(2k) and Y_(n−1−2k) |
+  | `dct4`, odd n | x_j e^(−iπj/(2n)) | c2c of 2n with stored runs: n inputs, n outputs | Y_k = 2 Re(e^(−iπ(2k+1)/(4n)) Z_k) |
+  | `dct1` | the even extension, 2(n − 1) reals | r2c of 2(n − 1) | Y_k = Re E_k |
+  | `dst1` | the odd extension, 2(n + 1) reals | r2c of 2(n + 1) | Y_k = −Im E_(k+1) |
+
+  The sine kinds fold into the cosine ones with signs and reversals in the same stages:
+  `dst2`(x)_k = `dct2`((−1)^j x_j)_(n−1−k), `dst3`(x)_k = (−1)^k `dct3`(x reversed)_k and
+  `dst4`(x)_k = (−1)^k `dct4`(x reversed)_k. `describe()` names the route, the odd `dct4` and
+  the extensions in particular (they cost about twice the even routes).
+- **Accuracy.** These are the well-conditioned routes: the error grows as the underlying
+  transform's, and the derived tolerance (15.2) is that transform's plus one rounding per stage
+  operation. `dct1` and `dst1` start with the extensions. FFTW computes REDFT00 with an r2c of
+  n − 1, which is cheaper and known to be less accurate; whether to adopt such a route is step
+  6.12's experiment, judged on accuracy as well as time.
+- **Several axes and strides.** Each axis is a phase over its lines (9.3), as in multi-axis
+  plans, reading strided lines into the scratch line. The lanes over adjacent lines (9.3) come
+  later, with step 6.12.
+- **What else applies.** Edges (12.1) with scales, real factors and accumulation on both sides;
+  complex factors and stored runs are refused. Teams, executors, `execute_transforms`,
+  `planning::measure` and wisdom work as for every plan.
+- **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
+  5.1b (multi-axis lines, real factors), the stored runs of 5.1d and the pruned codelets of
+  5.1e (the odd `dct4`). Fusing the read stage into the first pass and the store stage into the
+  last, as the r2c pairing is fused (9.1), is step 6.12.
+
+### 5.8 Split-complex layout
+
+*Proposed* (phase 6, steps 6.10 and 6.13; whether to build it is the maintainer's question in
+18.2, "Phase 6").
+
+```cpp
+namespace fftn {
+template <class T> struct split_complex {};      // a kind tag for shape and plan, not storage
+template <class T> struct split_ptr {             // the two arrays of one execution
+  T* re = nullptr; T* im = nullptr;
+};
+// Kinds: shape<split_complex<T>, split_complex<T>> (c2c), shape<T, split_complex<T>> (r2c)
+// and shape<split_complex<T>, T> (c2r). Strides and distances count T elements and are the
+// same for both arrays. Execution takes split_ptr<const T> and split_ptr<T> where the
+// interleaved kinds take const In* and Out*, in every overload:
+//   plan<split_complex<T>, split_complex<T>>::execute(split_ptr<const T> in, split_ptr<T> out,
+//                                                     workspace&) const noexcept;
+// Edges are edge<split_complex<T>>; their factors are complex arrays as on interleaved data.
+}
+```
+
+Points that matter:
+
+- **Geometry.** The real and imaginary arrays share one geometry and may lie anywhere relative to
+  each other, as in FFTW's split interface. Outputs that overlap are a precondition, not a
+  check, because the pointers arrive at execution. Mixed forms (interleaved in, split out) are
+  not offered. In place means each array is the same in and out.
+- **One class template.** `plan`'s execute arguments come from a trait of the element type (a
+  pointer, or `split_ptr`), so `plan<In, Out>` serves both layouts and kind safety stays
+  static.
+- **Two steps inside.** First, conversion edge phases (5.1b): the input is read from the two
+  arrays into the interleaved form in the workspace block or the output, and the result is
+  written back to two arrays, so every strategy works, at the cost of two passes that
+  `describe()` names (step 6.10). Then, on demand, the `SP` form of section 6.3 in the first
+  pass's load and the last pass's store; on `avx2` and `avx512` a split run's last pass would
+  store `SP` without its interleave, the one place where split data could be faster than
+  interleaved (step 6.13).
+
+### 5.9 C API
+
+*Proposed* (phase 6, steps 6.8 and 6.9; the open points are in 18.2, "Phase 6"). `fftn/c_api.h`
+is valid C99 and C++, wraps the same type-erased core, and is compiled into `fftn::fftn`
+(`src/c_api/`). It includes `fftn/executor.h` (5.5) unchanged.
+
+```c
+typedef enum fftn_kind { FFTN_C2C, FFTN_R2C, FFTN_C2R, FFTN_R2R } fftn_kind;
+typedef enum fftn_precision { FFTN_DOUBLE, FFTN_FLOAT } fftn_precision;
+enum { FFTN_FORWARD = -1, FFTN_BACKWARD = +1 };
+typedef struct fftn_axis { size_t n; ptrdiff_t in_stride, out_stride; } fftn_axis;
+typedef struct fftn_batch { size_t count; ptrdiff_t in_dist, out_dist; } fftn_batch;
+typedef struct fftn_shape {                  /* borrowed arrays, as shape_view in C++ */
+  fftn_kind kind; fftn_precision precision; int direction;
+  size_t rank; const fftn_axis* axes;
+  size_t batch_rank; const fftn_batch* batches;
+  const fftn_r2r_kind* r2r_kinds;            /* FFTN_R2R: rank entries; else NULL */
+  size_t run_count; const fftn_stored_run* runs;
+} fftn_shape;
+typedef struct fftn_options {                /* fftn_options_default() gives 5.3's defaults */
+  int in_place; double scale; int force_isa; int effort;
+  double measure_seconds; size_t measure_scratch_bytes; const struct fftn_wisdom* use;
+} fftn_options;
+typedef struct fftn_error { int code; char message[256]; } fftn_error;
+/* fftn_r2r_kind, fftn_stored_run, fftn_team, fftn_completion and fftn_transform_range mirror
+   their C++ types; fftn_wisdom is opaque. */
+
+typedef struct fftn_plan fftn_plan;           /* opaque; reference counted */
+typedef struct fftn_workspace fftn_workspace; /* opaque: memory and the team-state word */
+fftn_options fftn_options_default(void);
+fftn_plan* fftn_plan_create(const fftn_shape*, const fftn_options* /* NULL: defaults */,
+                            fftn_error* /* may be NULL */);
+fftn_plan* fftn_plan_ref(fftn_plan*);
+void fftn_plan_release(fftn_plan*);
+size_t fftn_plan_workspace_bytes(const fftn_plan*, int lanes);
+size_t fftn_plan_describe(const fftn_plan*, char* buffer, size_t size);   /* snprintf-like */
+int fftn_plan_instruction_set(const fftn_plan*);
+fftn_workspace* fftn_workspace_create(size_t bytes, fftn_error*);
+fftn_workspace* fftn_workspace_borrow(void* memory, size_t bytes, fftn_error*);
+void fftn_workspace_destroy(fftn_workspace*);
+void fftn_execute(const fftn_plan*, const void* in, void* out, fftn_workspace*);
+void fftn_execute_transforms(const fftn_plan*, size_t first, size_t count,
+                             const void* in, void* out, fftn_workspace*);
+void fftn_execute_team(const fftn_plan*, const void* in, void* out, fftn_team,
+                       fftn_workspace*, fftn_completion);
+fftn_transform_range fftn_transforms_of(const fftn_plan*, fftn_team);
+int fftn_execute_on(const fftn_plan*, const void* in, void* out, const fftn_executor*,
+                    fftn_workspace*);
+/* wisdom: create, from text, text into a buffer, add a plan, load, save, destroy;
+   lengths: fftn_next_fast_length, fftn_relative_cost */
+```
+
+Points that matter:
+
+- **One opaque plan type** for every kind and precision, and `void*` data: complex data are
+  interleaved pairs, so arrays of C99 `double _Complex`, C++ `std::complex<double>` and Fortran
+  `complex(c_double_complex)` pass unchanged. Kind safety is the caller's, which `docs/c_api.md`
+  says. The shape is the C form of `detail::shape_view` (section 5), so the layer is thin.
+- **Errors.** No exception crosses the boundary. A constructing function returns NULL and fills
+  the caller's `fftn_error`, if given, with a code (invalid argument, out of memory, internal)
+  and the message of the C++ exception it caught. There is no thread-local "last error", which
+  would be global state. The serial and team executions return nothing and check nothing in
+  release builds, as in C++; `fftn_execute_on` returns a status, since a C++ executor behind the
+  struct may fail.
+- **Workspaces are opaque** because a C++ `workspace` keeps one word of team state beside its
+  memory (5.3). `fftn_workspace_borrow` wraps the caller's memory; making the handle allocates
+  once, before any execution.
+- **Plans are reference counted** (`fftn_plan_ref`, `fftn_plan_release`), as C++ copies share
+  one core.
+- **Strings** (`describe`, wisdom text) are copied into the caller's buffer and the full length
+  is returned, as `snprintf` does.
+- **Later in phase 6.** Edges (`fftn_edge`, `fftn_factor` with strides as a pointer and a count,
+  `fftn_exec_args`, `fftn_plan_create_edges` and execute forms with arguments) once 12.1's API
+  is confirmed; block callbacks (12.3) and pipelines (12.2) once theirs is (step 6.9);
+  split-complex kinds with 5.8.
 
 ---
 
@@ -3191,7 +3455,10 @@ What the experiments still require of the build:
   the default so dispatch stays complete; CI builds both (`.github/workflows/ci.yml`, the
   post-merge job "clang-23 no old x86"). The option is part of the wisdom build identifier.
 - A generated single-file amalgamation is a possible release artefact (phase 6); it is
-  the same implementation concatenated, not a separate code path.
+  the same implementation concatenated, not a separate code path. It is proposed against for
+  the first release (18.2, "Phase 6"): compiled in the user's build it would take the user's
+  floating-point flags, which the headers cannot all detect (`-ffp-contract=fast` defines no
+  macro), and lose "always optimised".
 
 ---
 
@@ -3462,7 +3729,7 @@ infrastructure to maintain.
 | Document | Content | Form |
 |---|---|---|
 | `README.md` | what FFTN is, a first example, links | Markdown |
-| `docs/conventions.md` | every convention, stated exactly: the formula each transform computes, signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
+| `docs/conventions.md` | every convention, stated exactly: the formula each transform computes (the real-to-real kinds of 5.7 included), signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving, split-complex arrays), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
 | `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
 | `docs/planning.md` | planning effort (rules, quick and full measurement) and wisdom | Markdown with an example |
 | `docs/lengths.md` | fast lengths (`next_fast_length`) and the per-length estimate (`relative_cost`) | Markdown with an example |
@@ -3470,6 +3737,8 @@ infrastructure to maintain.
 | `docs/threading.md` | each integration model with a complete example: serial, inside an OpenMP region, the OpenMP executor, Kokkos, a custom pool, the built-in pool; what FFTN never does to the caller's runtime | Markdown with examples |
 | `docs/fusion.md` | edge operations, convolution, transform pairs, block callbacks | Markdown with examples |
 | `docs/building.md` | CMake use, supported compilers and platforms, instruction sets and how one is chosen, options | Markdown |
+| `docs/easy.md` | the convenience layer (5.4, phase 6): numpy's and scipy.fft's functions, norms, the cache and what it keeps | Markdown with examples |
+| `docs/c_api.md` | the C API (5.9, phase 6): shapes, plans, workspaces, execution, errors, wisdom, use from C and Fortran | Markdown with a C example |
 | API reference | every public type, function, parameter, precondition and guarantee | comments in the public headers |
 | `gen/README.md` | the generator: pipeline, the intermediate representation, how to add a radix, algorithm or lowering, the command line, and its subtleties | Markdown |
 | `bench/README.md` | fbench: commands, catalogues, how to add a backend, how to read a verdict | Markdown |
@@ -3559,6 +3828,107 @@ Task 5.2b (2026-11-26) built the API with proposals 1–9 as written, with one g
 names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline takes `scale`,
 `force_isa` and `in_place`, validates `measure_seconds` as a plan does, and ignores `effort` and
 `use`.
+
+**Phase 6 (2026-11-26; for the maintainer).** The steps are in PLAN's phase 6 table and the
+proposed APIs in 5.4, 5.7, 5.8 and 5.9. Each question has a proposal; steps marked P in the
+table are built on the proposal, provisional and with a second reader, until it is settled.
+
+*Scope and order*
+
+1. **Order.** Features first (packaging, the real-to-real kinds, the convenience layer, the C
+   API), then float, the tuning campaigns, the documents, the report and the release.
+   Proposal: as PLAN's table orders them; packaging (6.1), the size report (6.2), the
+   real-to-real kinds (6.3) and the convenience layer (6.6) can start at once.
+2. **Split-complex layout** has no user asking for it (1.4: no feature without a motivating
+   use). Proposal: build the conversion form (6.10, about two sessions), since FFTW users
+   expect it and it costs no kernel work; the fused form (6.13) moves to phase 7, on demand.
+3. **Kokkos one-shot functions** (Kokkos-FFT's `fft`, `ifft`, …). The client application uses
+   plans only. Proposal: build them in 6.7 over the convenience cache, last among the API
+   steps, so a Kokkos-FFT user's every call site compiles.
+
+*Convenience layer (5.4)*
+
+4. **Names.** Proposal: header `fftn/easy.hpp`, namespace `fftn::easy` (so `easy::fftn` does
+   not read as the library's namespace). Alternatives: `fftn::np` and `fftn/numpy.hpp`, which
+   say whose semantics they copy.
+5. **Semantics.** Proposal: numpy's and scipy.fft's throughout, where they differ from the
+   core's: `norm` with `backward` by default, `int` axes with negatives from the end, the last
+   one, two or all axes by default, `irfft`'s length from the output's size.
+6. **The cache.** Proposal: a `context` class with a `thread_local` default, 64 plans each,
+   least recently used dropped, `clear()`; plans by `planning::rules` only. Alternative: one
+   process-wide cache behind a lock, which shares plans between threads but brings a lock and
+   global state.
+7. **Arrays.** Proposal: a minimal `view<T, Rank>` of its own (pointer, extents, strides in
+   elements), converting from `std::mdspan` where the standard library has it; C++20 has no
+   `mdspan`, and the core stays C++20.
+8. **Value forms.** Proposal: both forms, writing into the caller's output and returning a
+   `std::vector`; the second allocates its result on every call, which the docs say.
+
+*Real-to-real kinds (5.7)*
+
+9. **Definitions.** Proposal: FFTW's, unnormalised (5.7's table, with its factors of 2), as the
+   rest of FFTN follows FFTW's conventions. The convenience layer gives scipy's norms.
+10. **The kind in the shape.** Proposal: `shape<T, T>` with `std::vector<r2r_kind> kinds`, one
+    per axis, empty for the other kinds. Alternative: a separate `r2r_shape<T>`, which keeps
+    `shape` free of a member three kinds never use but needs its own path through
+    `plan`, wisdom and `shape_view`.
+11. **Names.** Proposal: `dct1` … `dct4`, `dst1` … `dst4`, `dht`, with FFTW's REDFT and RODFT
+    names in the docs. Alternative: FFTW's names.
+12. **Several axes of DHT.** Proposal: the separable product, as FFTW's (5.7).
+13. **What r2r plans take.** Proposal: edges with scales, real factors and accumulation; complex
+    factors and stored runs refused; in place allowed. Real-to-real pipelines (a DCT, a
+    multiplier and the inverse DCT, as Poisson solvers use) go to phase 7, on demand.
+14. **DCT-I and DST-I.** Proposal: the extensions (twice the work, the underlying transform's
+    accuracy) first; a cheaper route only if step 6.12 shows it within the accuracy contract
+    (section 15).
+15. **Speed target.** Proposal: at or below FFTW's r2r (MEASURE, best SIMD build) as a geometric
+    mean over an `r2r` catalogue of the standard lengths, one thread, on the three local
+    machines, with the tail rule of 1.3; pocketfft as a second reference.
+
+*Split-complex layout (5.8)*
+
+16. **Types.** Proposal: the tag `split_complex<T>` and `split_ptr<T>` (two pointers, one
+    geometry), the kinds c2c, r2c and c2r, no mixed forms. Alternative: a `layout` field in
+    `options` with `T*` pairs passed as extra arguments, which loses static kind safety.
+
+*C API (5.9)*
+
+17. **Header and library.** Proposal: `fftn/c_api.h` in `fftn::fftn`, as section 4 planned.
+    Alternative: `fftn/fftn.h`, beside `fftn.hpp`.
+18. **One plan type and `void*` data** for every kind and precision. Proposal: yes (5.9).
+19. **Errors.** Proposal: NULL or a status, plus an optional caller-owned `fftn_error` with the
+    code and message; no thread-local last error.
+20. **A shared library.** Python's ctypes, Julia's `ccall` and some Fortran builds want one.
+    Proposal: an opt-in shared library, `fftn_c`, that exports the `fftn_` symbols only; the C++
+    API stays static (section 14.2).
+21. **ABI.** Proposal: plain structs, no size or version fields, until 1.0; the version macros
+    of `config.hpp` are the check.
+22. **Scope of the first C step.** Proposal: plans of every built kind, workspaces, the four
+    execution forms, wisdom and lengths (6.8); edges, callbacks and pipelines after their C++ API
+    is confirmed (6.9). A Fortran module (`iso_c_binding`) is phase 7, on demand.
+
+*Float, machines, packaging and the release*
+
+23. **Float tuning "where wanted".** Proposal: step 6.11 measures float's standing on the three
+    local machines and lists cases above 1.10 of FFTW's float; tuning follows only for the cases
+    the maintainer names. The client application uses double only.
+24. **Cloud spending** for 6.14 (Neoverse N1, V1, V2), 6.15 (Zen 4 and 5, recent Intel) and
+    6.16 (Windows). The November campaign stands at USD 16.54 of 20. Proposal: a phase 6 budget
+    of USD 40 on Spot VMs, the ledger as before; Windows on one x64 VM of an instance type
+    already screened under Linux, so the two systems are compared on the same hardware.
+25. **Packaging.** Proposal: a CMake package, pkg-config and FetchContent (6.1); no
+    amalgamation for the first release (14.3: it would take the user's floating-point flags,
+    and `-ffp-contract=fast` cannot be detected); recipes for package managers (vcpkg, Conan,
+    Spack, Homebrew) after the release, on demand.
+26. **The release report** (16.4). Proposal: a fixed `release` catalogue (c2c, r2c and c2r rows
+    in both precisions, planes, volumes, a threads sample, a pipeline sample), on the M5 Max, the
+    Xeon 6240 and the EPYC 7763, against FFTW (MEASURE), MKL on the Xeon and FFTL.jl on the Mac;
+    cloud machines as an appendix only, since their runs cannot be repeated at will.
+27. **Release criteria for the first tag.** Proposal: version 0.1.0, a preview: phase 5's and 6's
+    features built, documented and tested; CI green on every platform, extended and emulation
+    workflows included; every provisional API either confirmed or listed as provisional in the
+    release notes; the release report published with whatever it shows, the 1.3 targets not
+    required. Versions stay 0.x until the API is frozen at 1.0.
 
 **Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
@@ -3940,6 +4310,7 @@ to change before a release.
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
 | 2026-11-26 | Row pipelines' API and the `<C, C, C>` chain pair (task 5.2b, section 12.2): provisional `fftn/pipeline.hpp` with 18.2's proposals; the chain pair as two `c2c_line` chains through the workspace block, factors of stride 1 fused, others edge passes on the line in cache; the middle cursor; the edge driver's batched forms always on for pipelines | The design's API block and plan, read literally; `c2c_line` already places fused factors, strides and Bluestein for both chains, so the convolution builder's generalisation waits for fan-out and the depth-first pair, which need it. X65 measured what losing the batched forms costs, so pipelines take them from the start |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
+| 2026-11-26 | Phase 6 broken into steps 6.1–6.20 (PLAN), with proposed APIs for the convenience layer (5.4), the real-to-real kinds (5.7), the split-complex layout (5.8) and the C API (5.9), and their open points in 18.2, "Phase 6". Proposals, not decisions: steps marked P are built provisional with a second reader, as phase 5's were | The maintainer's priority (2026-11-25): features fully built, then the remaining performance |
 
 ---
 
