@@ -6,6 +6,11 @@ project(fftn VERSION 0.0.0 LANGUAGES CXX)
 
 option(FFTN_BUILD_TESTS "Build the tests and the documented examples" ${PROJECT_IS_TOP_LEVEL})
 option(FFTN_BUILD_BENCH "Build fbench and its backends" ${PROJECT_IS_TOP_LEVEL})
+# Install rules for the library, its headers, the CMake package and fftn.pc
+# (cmake/FftnPackage.cmake, docs/building.md). Off when FFTN is a subproject, as with
+# FetchContent: the including project decides what it installs.
+option(FFTN_INSTALL "Install the library, its headers and its CMake and pkg-config files"
+       ${PROJECT_IS_TOP_LEVEL})
 option(FFTN_WARNINGS_AS_ERRORS "Treat compiler and clang-tidy warnings as errors" OFF)
 option(FFTN_COVERAGE "Instrument FFTN's own targets for line coverage" OFF)
 set(FFTN_SANITIZE "" CACHE STRING "Sanitizers for every target, e.g. address,undefined or thread")
@@ -128,3 +133,6 @@ endif()
 if(FFTN_BUILD_BENCH)
   add_subdirectory(bench)
 endif()
+
+# Last: it reads the directories that the test and benchmark dependencies added.
+include(FftnPackage)

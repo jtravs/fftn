@@ -3177,15 +3177,26 @@ What the experiments still require of the build:
 - CMake 3.25 or newer with presets; `FetchContent`-friendly with an offline override;
   installed package config (`find_package(fftn)`) and pkg-config; all symbols in
   `namespace fftn`, all macros prefixed `FFTN_`, all targets namespaced.
+- The package (`cmake/FftnPackage.cmake`, usage in `docs/building.md`): with `FFTN_INSTALL`
+  (on for a top-level build, off for a subproject) the headers, `libfftn`, the exported
+  `fftn::fftn` with `fftnConfig.cmake` and a version file (same major and minor version, since
+  a minor version may change the API before 1.0), and a relocatable `fftn.pc`. The thread
+  library is part of `fftn::fftn`'s link interface (`std::thread`; glibc before 2.34 needs
+  it). The adapters are components, `fftn::omp` and `fftn::kokkos`, interface targets that add
+  the runtime to `fftn::fftn`; a subproject build defines them when the runtime is found.
+  CI's packaging check (`.github/workflows/package.yml`, not a required check) installs from a
+  build with the tests, checks that the tree holds only FFTN's files, and builds
+  `examples/package` with `find_package`, pkg-config (not Windows) and `FetchContent`.
 - Test-only dependencies (GoogleTest, FFTW, Boost.Multiprecision, and Kokkos for the
   optional adapter's tests and example) and benchmark-only dependencies are fetched pinned
   by URL and content hash (SHA-256), with an offline override, and treated as system code.
   The library itself links none of them; `fftn/kokkos.hpp` is compiled in its user's
   translation units against the user's Kokkos. Kokkos' back ends are chosen by forcing its
   `Kokkos_ENABLE_*` cache entries (Serial only); task 3.5's OpenMP and Threads test
-  configurations need that reworked. FetchContent also brings Kokkos' install rules into the
-  build, to be excluded when packaging lands (`EXCLUDE_FROM_ALL` on the declaration needs
-  CMake 3.28). GCC ThreadSanitizer builds leave the Kokkos tests out by default: GCC's
+  configurations need that reworked. FetchContent also brings Kokkos' and GoogleTest's install
+  rules into the build: every directory outside FFTN's own is marked `EXCLUDE_FROM_ALL`
+  (`cmake/FftnPackage.cmake`), which leaves its install rules out (`EXCLUDE_FROM_ALL` on the
+  declaration would need CMake 3.28). GCC ThreadSanitizer builds leave the Kokkos tests out by default: GCC's
   `-Wtsan` fires on Kokkos' fences once inlined into our units, beyond the reach of SYSTEM,
   and the adapter is serial; Clang's TSan builds run them. Windows on Arm leaves them out
   too: Kokkos 5.2.1 passes the x86 option `-mcx16` to every Clang build on Windows.
@@ -3950,6 +3961,7 @@ to change before a release.
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
 | 2026-11-26 | Row pipelines' API and the `<C, C, C>` chain pair (task 5.2b, section 12.2): provisional `fftn/pipeline.hpp` with 18.2's proposals; the chain pair as two `c2c_line` chains through the workspace block, factors of stride 1 fused, others edge passes on the line in cache; the middle cursor; the edge driver's batched forms always on for pipelines | The design's API block and plan, read literally; `c2c_line` already places fused factors, strides and Bluestein for both chains, so the convolution builder's generalisation waits for fan-out and the depth-first pair, which need it. X65 measured what losing the batched forms costs, so pipelines take them from the start |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
+| 2026-11-26 | Packaging (task 6.1, section 14.3): an installed CMake package (`fftn::fftn`; the adapters as components `omp` and `kokkos`), a relocatable `fftn.pc`, install rules on by default only for a top-level build, version compatibility `SameMinorVersion`, the thread library in the link interface; third-party subdirectories `EXCLUDE_FROM_ALL`; a path-filtered CI workflow builds a downstream project three ways (Windows not on pull requests) | DESIGN 18.2 Q25's proposal; a minor version may still change the API before 1.0; FetchContent users decide what they install; the check builds the library twice, so it runs where packaging can change rather than on every pull request |
 
 ---
 

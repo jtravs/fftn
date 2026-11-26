@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The packaging check (DESIGN.md 14.3, docs/building.md; .github/scripts/package-test.sh):
+# FFTN installed from a build that has the tests, the install tree checked to hold only FFTN's
+# own files, and a separate project (examples/package) built and run against it with
+# find_package and pkg-config, and through FetchContent. Each run builds the library twice (the
+# install and FetchContent), so it runs only where packaging can change: pull requests and
+# pushes to main that touch the build files, the public headers or this check, weekly, and on
+# demand. It is not one of the checks a merge requires. Windows (no pkg-config) runs on main,
+# weekly and on demand, not on pull requests: it has no ccache and is the slowest.
+name: package
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - CMakeLists.txt
+      - "cmake/**"
+      - "src/**/CMakeLists.txt"
+      - "include/**"
+      - "examples/package/**"
+      - examples/rows_c2c.cpp
+      - examples/omp_rows.cpp
+      - .github/scripts/package-test.sh
+      - .github/workflows/package.yml
+  pull_request:
+    paths: *paths
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unix:
+    name: package ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # GCC 14 (the floor, preinstalled) with its OpenMP for the fftn::omp component.
+          - name: linux x86-64 gcc-14
+            runner: ubuntu-24.04
+            cxx: g++-14
+            cc: gcc-14
+            args: --omp
+          # Apple Clang, what most Mac users build with (no OpenMP).
+          - name: macos arm64 apple-clang
+            runner: macos-26
+            cxx: clang++
+            cc: clang
+            args: ""
+    env:
+      CXX: ${{ matrix.cxx }}
+      CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Ninja, ccache and pkg-config
+        run: |
+          if [[ $RUNNER_OS == macOS ]]; then
+            export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+            command -v ninja || brew install ninja
+            command -v ccache || brew install ccache
+            command -v pkg-config || brew install pkgconf
+          elif ! command -v ninja || ! command -v ccache || ! command -v pkg-config; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ninja-build ccache pkg-config
+          fi
+      - name: ccache (restore)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.fftn-ccache
+          key: ccache-package-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-package-${{ matrix.name }}-
+      - name: ccache (set up)
+        run: |
+          {
+            echo "CCACHE_DIR=$HOME/.fftn-ccache"
+            echo "CCACHE_MAXSIZE=500M"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
+            echo "CMAKE_C_COMPILER_LAUNCHER=ccache"
+          } >> "$GITHUB_ENV"
+      - name: Install, check the tree, build the consumers
+        run: bash .github/scripts/package-test.sh ${{ matrix.args }}
+      - name: ccache (statistics)
+        if: always()
+        run: ccache --show-stats || true
+      - name: ccache (save)
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.fftn-ccache
+          key: ccache-package-${{ matrix.name }}-${{ github.sha }}
+
+  windows:
+    if: github.event_name != 'pull_request'
+    name: package windows x64 clang-cl
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    # The pinned LLVM that gate.yml uses; the C compiler is named for GoogleTest's project()
+    # (ci.yml says why).
+    env:
+      CC: C:/fftn-llvm/bin/clang-cl.exe
+      CXX: C:/fftn-llvm/bin/clang-cl.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Visual Studio environment (x64)
+        shell: pwsh
+        run: .github/scripts/msvc-env.ps1 x64
+      - name: LLVM (pinned)
+        run: bash .github/scripts/install-llvm-windows.sh x64
+      - name: Install, check the tree, build the consumers
+        run: |
+          export FFTN_CHECK_JOBS=$NUMBER_OF_PROCESSORS
+          bash .github/scripts/package-test.sh --no-pkg-config
