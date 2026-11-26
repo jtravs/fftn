@@ -26,6 +26,10 @@ fftn_always_optimise(callbacks_test.cpp)
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_test.cpp)
 
+# Real-to-real plans (task 6.3) against the quadruple-precision reference, optimised likewise.
+fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(r2r_test.cpp)
+
 # One translation unit per public header, including only that header, all linked into one
 # executable (which also proves the headers define nothing twice across units).
 file(GLOB public_headers CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/include/fftn/*.hpp)

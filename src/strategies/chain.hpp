@@ -63,6 +63,7 @@
 #include "planner/rules.hpp"
 #include "platform/aligned_allocator.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -243,6 +244,16 @@ public:
   // when n = 2, where no transform follows).
   void add_pairing(bool r2c, std::size_t n, endpoint src, endpoint dst, double scale,
                    std::vector<stage>& stages);
+  // The complex transform of m points with exponent sign in scratch, for the routes of the
+  // real-to-real kinds (core/r2r.hpp): the chain's passes from scratch line a, where the caller's
+  // read stage has put the line, into the scratch line returned (a again for m = 1); `need`
+  // gets the complex elements of scratch each of a and b needs.
+  slot scratch_transform(std::size_t m, int sign, std::size_t& need, std::vector<stage>& stages) {
+    line_scratch_ = 0;
+    const slot z = scratch_chain(m, sign, slot::a, stages);
+    need = std::max(m, line_scratch_);
+    return z;
+  }
 
   // The lanes strategy (DESIGN.md 8.5, strategies/lanes.cpp, experiment X7): the stages of
   // one block of `block` rows (a multiple of C), rows src_dist and dst_dist elements apart
