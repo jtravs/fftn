@@ -289,10 +289,10 @@ const char* place_text(slot src, slot dst) {
   if (src == slot::in) {
     return dst == slot::out ? "from the input into the output" : "from the input into the block";
   }
-  if (src == slot::block) {
-    return dst == slot::out ? "from the block into the output" : "in place in the block";
+  if (dst != slot::out) {
+    return "in place in the block";
   }
-  return "in place on the output";
+  return src == slot::block ? "from the block into the output" : "in place on the output";
 }
 
 template <class T>
@@ -341,15 +341,14 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
   // With accumulation over several phases, the intermediate is a whole transform of reals in the
   // block, C-ordered by the shape's axes; otherwise the output.
   const bool through_block = e.out.accumulate && phases.size() > 1;
-  view mid_view = out_view;
+  std::vector<std::ptrdiff_t> block_stride(r);
   std::size_t transform_reals = 1;
-  if (through_block) {
-    mid_view = {.where = slot::block, .stride = std::vector<std::ptrdiff_t>(r)};
-    for (std::size_t i = r; i > 0; --i) {
-      mid_view.stride[i - 1] = static_cast<std::ptrdiff_t>(transform_reals);
-      transform_reals *= s.axes[i - 1].n;
-    }
+  for (std::size_t i = r; i > 0; --i) {
+    block_stride[i - 1] = static_cast<std::ptrdiff_t>(transform_reals);
+    transform_reals *= s.axes[i - 1].n;
   }
+  const view mid_view =
+      through_block ? view{.where = slot::block, .stride = std::move(block_stride)} : out_view;
   const bool in_factor = e.in.kind != factor_kind::none;
   const bool out_factor = e.out.kind != factor_kind::none;
 
@@ -467,14 +466,18 @@ void build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edg
     }
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
-    c.edge_records[b].factor_step = {in_factor ? e.in.batch_steps.at(b) : 0,
-                                     out_factor ? e.out.batch_steps.at(b) : 0, 0};
+    c.edge_records[b].factor_step = {
+        in_factor ? e.in.batch_steps.at(b) : 0,
+        out_factor ? e.out.batch_steps.at(b) : 0,
+        0,
+    };
   }
   for (const auto& [at, f] : line_loops) {
     c.edge_records[at].factor_step = f;
   }
-  c.factor_args = static_cast<std::uint8_t>((in_factor ? moving_in_factor : 0) |
-                                            (out_factor ? moving_out_factor : 0));
+  const std::uint8_t none = 0;
+  c.factor_args = static_cast<std::uint8_t>((in_factor ? moving_in_factor : none) |
+                                            (out_factor ? moving_out_factor : none));
   c.needs_args = c.factor_args != 0;
   if (!c.needs_args) {
     c.edge_records.clear();
@@ -529,20 +532,20 @@ std::shared_ptr<const plan_core> make_r2r_core(const shape_view& shape, const op
   const r2r_layout layout = resolve_r2r_layout(shape, opts.in_place);
   for (std::size_t d = 0; d < shape.kinds.size(); ++d) {
     const r2r_kind k = shape.kinds[d];
-    const std::string field = "shape.kinds[" + std::to_string(d) + "]";
+    const auto field = [d] { return "shape.kinds[" + std::to_string(d) + "]"; };
     if (static_cast<unsigned char>(k) > static_cast<unsigned char>(r2r_kind::dht)) {
-      reject(field, "is not an r2r_kind");
+      reject(field(), "is not an r2r_kind");
     }
     if (k == r2r_kind::dct1 && shape.axes[d].n == 1) {
-      reject(field, "is r2r_kind::dct1 on an axis of one point (" + axis_name(d) +
-                        ".n = 1); DCT-I needs n >= 2");
+      reject(field(), "is r2r_kind::dct1 on an axis of one point (" + axis_name(d) +
+                          ".n = 1); DCT-I needs n >= 2");
     }
     if (k != r2r_kind::dht) {
       const bool later =
           k == r2r_kind::dct1 || k == r2r_kind::dct4 || k == r2r_kind::dst1 || k == r2r_kind::dst4;
-      reject(field, std::string("is r2r_kind::") + kind_text(k) +
-                        ", which is not built yet (task " + (later ? "6.5" : "6.4") +
-                        "); only r2r_kind::dht is");
+      reject(field(), std::string("is r2r_kind::") + kind_text(k) +
+                          ", which is not built yet (task " + (later ? "6.5" : "6.4") +
+                          "); only r2r_kind::dht is");
     }
   }
   const r2r_edges e = resolve(shape, opts, edges);
