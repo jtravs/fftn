@@ -259,8 +259,11 @@ public:
   // them (machine_profile::edge_batched_forms); edge_row_block: the rows per block of a c2c plan
   // of rows with separate edge passes (0: none), each with a line of its own in the workspace
   // block.
+  // edge_batched_on: whether the plan takes them (the profile's reach, and for leaf_rows a plan
+  // of c2c rows on one leaf; build() decides).
   edge_forms edge_batched;
   std::size_t edge_row_block = 0;
+  bool edge_batched_on = false;
 };
 
 // The core a team of two or more members runs: the team program where there is one.

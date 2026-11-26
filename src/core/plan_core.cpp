@@ -1778,27 +1778,22 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       row_edges && (lanes != 0 || grid_plan.phases != 0 || !depth_tops.empty() ||
                     !bluestein_tops.empty() || real_grid.phases != 0 || !real_depth_tops.empty());
   const bool use_edge_phases = edge_phases && !row_strategy && adjacent == 0;
-  // The edge driver's row-block form (machine_profile::edge_batched_forms, task 5.2a): a c2c
-  // plan of rows of one batch dimension whose separate edge passes include a factor (so that it
-  // runs on the edge driver) takes its rows in blocks of about edge_row_block_points points,
-  // each row with a line of its own in the workspace block (c2c_axis), the edge passes and the
-  // leaves once per block.
+  // The edge driver's batched forms (machine_profile::edge_batched_forms, task 5.2a): every plan
+  // with edges where the profile's reach is all; where it is leaf_rows, a plan of c2c rows whose
+  // line's transform is one leaf, which c2c_axis decides (X65's P1, narrowed).
+  const edge_forms_reach forms_reach = settings.profile.edge_batched_forms;
+  c.edge_batched_on = edge_ops != nullptr && forms_reach == edge_forms_reach::all;
+  // The row-block form: a c2c plan of rows of one batch dimension whose separate edge passes
+  // include a factor (so that it runs on the edge driver) takes its rows in blocks of about
+  // edge_row_block_points points, each row with a line of its own in the workspace block
+  // (c2c_axis), the edge passes and the leaves once per block.
   if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
-      s.batches.size() == 1 && settings.profile.edge_batched_forms &&
+      s.batches.size() == 1 && forms_reach != edge_forms_reach::none &&
       (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
       !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
     const std::size_t rows =
         std::min(s.batches[0].count, std::max<std::size_t>(edge_row_block_points / n_in, 1));
     c.edge_row_block = rows >= 2 ? rows : 0;
-  }
-  // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
-  // which separate edge passes between the rows break up: each row's leaf runs alone, except
-  // in the row-block form. Not over a reason already given: where the input edge's pass has
-  // moved the rows (above), the plan without the edges may have no batch leaves at all, and
-  // the move is the cause; name_forced_strategy gives this reason where that plan has them.
-  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
-      c.edge_row_block == 0 && edge_fallback.empty()) {
-    edge_fallback = batch_one_row_reason;
   }
   const bool accumulate = edge_ops != nullptr && edge_ops->out.accumulate;
   // The output's prior values for accumulation into a row's strategy, which writes the output:
@@ -2250,7 +2245,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           from = block;
         }
         const endpoint line_to = edge_ops->out.separate ? block : to;
+        const std::size_t line_first = st.size();
         need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+        const bool one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
         if (edge_ops->out.runs.any()) {
           run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
                           {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
@@ -2266,6 +2263,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             std::ranges::any_of(st, [](const stage& x) { return x.moving_twiddles; })) {
           c.edge_row_block = 0;
         }
+        // Where the reach is leaf_rows, a line whose transform is more than one leaf keeps the
+        // walked form (X65's P1, narrowed: chains of 256-1024 points moved 0.90-1.01).
+        if (forms_reach == edge_forms_reach::leaf_rows) {
+          c.edge_batched_on = one_leaf;
+          if (!one_leaf) {
+            c.edge_row_block = 0;
+          }
+        }
         c.block_elements =
             std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
       } else {
@@ -2273,6 +2278,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           return;
         }
         need = chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, line, st);
+        // A row's chain with fused factors, where the reach is leaf_rows: the batched forms for
+        // a line of one leaf (as above).
+        if (edge_ops != nullptr && r == 1 && forms_reach == edge_forms_reach::leaf_rows) {
+          c.edge_batched_on = st.size() == 1 && st[0].leaf != nullptr;
+        }
       }
       lines(e, extent, src, dst, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
@@ -2576,6 +2586,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                         std::to_string(c.edge_row_block) +
                         ", each separate pass, and a leaf, once per block";
       }
+    }
+    // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
+    // which separate edge passes between the rows break up: each row's leaf runs alone, except
+    // in the row-block form, which c2c_axis may have dropped (so decided here, after it). Not
+    // over a reason already given: where the input edge's pass has moved the rows (above), the
+    // plan without the edges may have no batch leaves at all, and the move is the cause;
+    // name_forced_strategy gives this reason where that plan has them.
+    if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
+        c.edge_row_block == 0 && edge_fallback.empty()) {
+      edge_fallback = batch_one_row_reason;
     }
     c.edge_fallback = edge_fallback;
   }
@@ -2897,7 +2917,7 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   mark_flat(c->prog, settings.unroll_calls && r > 1);
   // The edge driver's batched forms (task 5.2a): rows too are unrolled there, the walked form
   // being what X65 measured them against.
-  if (c->needs_args && settings.profile.edge_batched_forms) {
+  if (c->needs_args && c->edge_batched_on) {
     const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * real_bytes);
     c->edge_batched =
         make_edge_forms(c->prog, c->edge_records, settings.unroll_calls, c->edge_row_block,
@@ -2905,6 +2925,14 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
     // describe() and the workspace layout name the row blocks that build() planned.
     if (c->edge_batched.row_block != c->edge_row_block) {
       throw std::logic_error("fftn: internal: the row blocks planned are not the form built");
+    }
+    // The other forms, which describe() names too, so that a run's notes show which plans take
+    // them (the row blocks' line comes from build()).
+    const edge_forms& f = c->edge_batched;
+    if (f.row_block == 0 && (!f.flat.empty() || !f.calls.empty())) {
+      c->edges_note += std::string("\nedge forms: ") +
+                       (f.flat.empty() ? "the unrolled calls" : "the flat form") +
+                       " with the factor cursors";
     }
   }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);

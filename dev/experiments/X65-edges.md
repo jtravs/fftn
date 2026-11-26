@@ -384,9 +384,9 @@ acts:
   batched forms a plan takes (a line "edge forms: …" or the row blocks' line), so that a run's
   notes show which cases took them.
 - **Where it is on.** `leaf_rows` on the two classes measured, by their keys in set_grid_sizes:
-  Zen 3's class (the EPYC 7763; `avx2`) and the Xeon 6240's class (Intel, `avx512`; the reach rule
-  extends it to Ice Lake-SP). `none` everywhere else (Apple and other AArch64, Zen 4 and 5, Granite
-  and Sapphire Rapids, unknown topologies) until measured.
+  Zen 3's class (the EPYC 7763; `avx2`) and the Xeon 6240's class (Intel's cores, `avx512`; the
+  keys of `anchored_runs`). `none` everywhere else (Apple and other AArch64, Zen 4 and 5, the Ice
+  Lake VM's large-L3 key, Granite and Sapphire Rapids, unknown topologies) until measured.
 - **The deciding run,** on the final code (after origin/main is merged): arms `O` = the `main`
   this branch merges (the walked form for every plan with edges) and `N` = this branch's head
   (the narrowed change, on by the machine's profile), plus fbench's control `O~`; runs E1, E2, E4

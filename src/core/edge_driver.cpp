@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -639,6 +640,25 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
     x.s.args.dst_dist = dst_dist / element_bytes;
     x.s.args.dst_qstride =
         (st.moving_factors & moving_out_factor) != 0 ? e[0].factor_step[1] : e[0].factor_step[0];
+  }
+  // run_edge_row_blocks runs the stages between two block calls row by row through the scratch
+  // lines a and b, which hold one row's line: a stage may read a scratch line only where a stage
+  // since the last block call wrote it (block calls themselves touch neither, dist() above), or
+  // a row would read the block's last row's line.
+  bool written_a = false;
+  bool written_b = false;
+  for (const edge_flat_stage& x : forms.flat) {
+    if (x.block_call) {
+      written_a = false;
+      written_b = false;
+      continue;
+    }
+    if ((x.s.src == slot::a && !written_a) || (x.s.src == slot::b && !written_b)) {
+      throw std::logic_error(
+          "fftn: internal: a row-block stage reads a scratch line written before a block call");
+    }
+    written_a = written_a || x.s.dst == slot::a;
+    written_b = written_b || x.s.dst == slot::b;
   }
   return forms;
 }

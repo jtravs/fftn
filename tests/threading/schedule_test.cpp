@@ -759,6 +759,25 @@ TEST(Schedule, GridSizesFromCaches) {
         fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64).anchored_runs);
   }
   EXPECT_FALSE(x86("linux-gcp-c4d-zen5.sysfs").anchored_runs);
+  // The edge driver's batched forms for c2c rows on one leaf (X65's P1, narrowed) where measured:
+  // Zen 3's class and the Xeon 6240's (Intel's cores only); none elsewhere.
+  using fftn::detail::edge_forms_reach;
+  EXPECT_EQ(machine_profile{}.edge_batched_forms, edge_forms_reach::none);
+  EXPECT_EQ(epyc86.edge_batched_forms, edge_forms_reach::leaf_rows);
+  EXPECT_EQ(xeon86.edge_batched_forms, edge_forms_reach::leaf_rows);
+  EXPECT_EQ(x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).edge_batched_forms,
+            edge_forms_reach::none);
+  EXPECT_EQ(apple.edge_batched_forms, edge_forms_reach::none);
+  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").edge_batched_forms, edge_forms_reach::none);
+  for (const auto& [file, x86_64] : {std::pair{"linux-gcp-c4a-axion.sysfs", false},
+                                     std::pair{"linux-gcp-n2-ice-lake.sysfs", true},
+                                     std::pair{"linux-gcp-c4-granite-rapids.sysfs", true}}) {
+    SCOPED_TRACE(file);
+    EXPECT_EQ(fftn::detail::profile_for(fftn::detail::load_topology(data / file), x86_64,
+                                        fftn::detail::cpu_vendor::intel)
+                  .edge_batched_forms,
+              edge_forms_reach::none);
+  }
   // The team state on pages of its own on the Xeon 6240's class only (X79, narrowed to it by the
   // maintainer): the EPYC 7763, the M5 Max, Granite Rapids, the Ice Lake VM, Zen 5 and Axion keep
   // it on its 128-byte lines.

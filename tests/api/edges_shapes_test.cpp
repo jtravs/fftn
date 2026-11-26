@@ -42,6 +42,7 @@
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -1170,9 +1171,9 @@ void forms_agree(const shape_case& sc, fftn::isa target, forms_seen& seen) {
   fftn::test::input_source src(0xB47C5ULL + product(sc.dims) * 7 + sc.count);
   const shape_run<T> run(sc, target, src);
   d::build_settings walked;
-  walked.profile.edge_batched_forms = false;
+  walked.profile.edge_batched_forms = d::edge_forms_reach::none;
   d::build_settings batched;
-  batched.profile.edge_batched_forms = true;
+  batched.profile.edge_batched_forms = d::edge_forms_reach::all;
   const auto make = [&](const d::build_settings& s) {
     return d::make_plan_core_with_edges(d::view_of(run.template shape<In, Out>()), run.opts,
                                         d::view_of(run.template edges<In, Out>()), s);
@@ -1255,7 +1256,7 @@ TYPED_TEST(EdgeShapes, BatchedFormsAgreeWithTheWalkedForm) {
 // the best for the planes and volumes.
 TYPED_TEST(EdgeShapes, BatchedFormsAgainstTheReference) {
   fftn::detail::build_settings batched;
-  batched.profile.edge_batched_forms = true;
+  batched.profile.edge_batched_forms = fftn::detail::edge_forms_reach::all;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const shape_case& c : batched_row_cases()) {
       run_case<TypeParam, transform_kind::c2c>(c, t, true, true, &batched);
@@ -1272,6 +1273,82 @@ TYPED_TEST(EdgeShapes, BatchedFormsAgainstTheReference) {
   }
 }
 
+// The reach leaf_rows (X65's P1, narrowed; the EPYC 7763's and the Xeon 6240's profiles): a plan
+// of c2c rows whose line's transform, between any separate edge passes, is one leaf is the plan
+// the reach all builds (the same description and workspace); every other plan is the plan
+// without the batched forms, its forms empty and no row blocks.
+template <class T, transform_kind K>
+void leaf_rows_reach(const shape_case& sc, fftn::isa target, std::size_t& taken,
+                     std::size_t& walked) {
+  using C = std::complex<T>;
+  using In = std::conditional_t<K == transform_kind::r2c, T, C>;
+  using Out = std::conditional_t<K == transform_kind::c2r, T, C>;
+  namespace d = fftn::detail;
+  fftn::test::input_source src(0x1EAFULL + product(sc.dims) * 5 + sc.count);
+  const shape_run<T> run(sc, target, src);
+  const auto make = [&](d::edge_forms_reach reach) {
+    d::build_settings s;
+    s.profile.edge_batched_forms = reach;
+    return d::make_plan_core_with_edges(d::view_of(run.template shape<In, Out>()), run.opts,
+                                        d::view_of(run.template edges<In, Out>()), s);
+  };
+  const auto none = make(d::edge_forms_reach::none);
+  const auto leaf = make(d::edge_forms_reach::leaf_rows);
+  const auto all = make(d::edge_forms_reach::all);
+  // The oracle: the walked plan's stages other than the separate edge passes are one leaf.
+  std::size_t others = 0;
+  bool leaf_stage = false;
+  for (std::size_t i = none->prog.batch_loops; i < none->prog.records.size(); ++i) {
+    if (const auto* st = std::get_if<d::stage>(&none->prog.records[i])) {
+      if (!st->name.starts_with("edge in") && !st->name.starts_with("edge out")) {
+        ++others;
+        leaf_stage = st->leaf != nullptr;
+      }
+    }
+  }
+  const bool one_leaf = K == transform_kind::c2c && sc.dims.size() == 1 && none->needs_args &&
+                        none->prog.lanes == 0 && others == 1 && leaf_stage;
+  const auto& expected = one_leaf ? all : none;
+  const std::string what = std::string(sc.name) + ", " + fftn::isa_name(target) +
+                           (sizeof(T) == 8 ? " double" : " float");
+  EXPECT_EQ(d::describe(*leaf), d::describe(*expected)) << what;
+  EXPECT_EQ(leaf->bytes, expected->bytes) << what;
+  EXPECT_EQ(leaf->edge_row_block, expected->edge_row_block) << what;
+  EXPECT_EQ(leaf->edge_batched.flat.size(), expected->edge_batched.flat.size()) << what;
+  EXPECT_EQ(leaf->edge_batched.calls.size(), expected->edge_batched.calls.size()) << what;
+  if (!one_leaf) {
+    EXPECT_TRUE(leaf->edge_batched.flat.empty() && leaf->edge_batched.calls.empty() &&
+                leaf->edge_row_block == 0)
+        << what;
+    EXPECT_EQ(d::describe(*leaf).find("edge forms:"), std::string::npos) << what;
+  }
+  if (none->needs_args) {
+    (one_leaf ? taken : walked) += 1;
+  }
+}
+
+TYPED_TEST(EdgeShapes, BatchedFormsReachLeafRowsOnly) {
+  std::size_t taken = 0;
+  std::size_t walked = 0;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const shape_case& c : batched_row_cases()) {
+      leaf_rows_reach<TypeParam, transform_kind::c2c>(c, t, taken, walked);
+    }
+    for (const shape_case& c : c2c_cases()) {
+      leaf_rows_reach<TypeParam, transform_kind::c2c>(c, t, taken, walked);
+    }
+    for (const shape_case& c : r2c_cases()) {
+      leaf_rows_reach<TypeParam, transform_kind::r2c>(c, t, taken, walked);
+    }
+    for (const shape_case& c : c2r_cases()) {
+      leaf_rows_reach<TypeParam, transform_kind::c2r>(c, t, taken, walked);
+    }
+  }
+  // Both kinds of plan occurred.
+  EXPECT_GT(taken, 0U);
+  EXPECT_GT(walked, 0U);
+}
+
 // Batch leaves with separate edge passes, which the walked form runs a row at a time
 // (DescribeNamesTheStrategyAnEdgeForces): in the batched forms the plan keeps the strategy of the
 // plan without the edges, and describe() names the row blocks and no forced strategy.
@@ -1281,7 +1358,7 @@ TYPED_TEST(EdgeShapes, BatchedFormsTakeBatchLeaves) {
   d::build_settings leaves;
   leaves.batch_leaves = d::batch_leaf_choice::own;
   leaves.strategy = d::strategy_choice::chain;
-  leaves.profile.edge_batched_forms = true;
+  leaves.profile.edge_batched_forms = d::edge_forms_reach::all;
   const std::vector<shape_case> cases{
       {.name = "batch leaves, real factors",
        .kind = transform_kind::c2c,
@@ -1316,7 +1393,7 @@ TEST(EdgeShapesDeathTest, BatchedFormsMissingFactorArraysAbort) {
   using C = std::complex<double>;
   namespace d = fftn::detail;
   d::build_settings batched;
-  batched.profile.edge_batched_forms = true;
+  batched.profile.edge_batched_forms = d::edge_forms_reach::all;
   const fftn::shape<C, C> rows = fftn::rows_c2c<double>(16, 8, fftn::direction::forward);
   const fftn::plan_edges<C, C> real_out{.out = {.mul = {.kind = real, .axis_strides = {1}}}};
   const fftn::plan_edges<C, C> fused_in{.in = {.mul = {.kind = cplx, .axis_strides = {1}}}};
@@ -1691,7 +1768,7 @@ template <class T, transform_kind K> bool forced_line_holds(const forced_line& f
   // The walked form's reasons: in the batched forms, batch leaves take separate passes a block
   // of rows at a time (BatchedFormsTakeBatchLeaves).
   d::build_settings settings = f.settings;
-  settings.profile.edge_batched_forms = false;
+  settings.profile.edge_batched_forms = d::edge_forms_reach::none;
   const auto plain = d::build_plan_core(d::view_of(s), run.opts, settings);
   if (!plain->strategy_name.starts_with(f.plain)) {
     return false;
@@ -1873,14 +1950,14 @@ TYPED_TEST(EdgeShapes, DescribeCountsTheSeparatePasses) {
   using T = TypeParam;
   using enum transform_kind;
   namespace d = fftn::detail;
-  // The walked form's placements: in the batched forms, batch leaves (avx2's rules for 64-point
-  // rows) take a fusable factor as a separate pass (BatchedFormsTakeBatchLeaves).
+  // The walked form's notes: the batched forms (the machine's profile may take them for rows on
+  // one leaf) add a line after the count, which names the row blocks or the form.
   d::build_settings chain;
   chain.strategy = d::strategy_choice::chain;
-  chain.profile.edge_batched_forms = false;
+  chain.profile.edge_batched_forms = d::edge_forms_reach::none;
   d::build_settings lanes;
   lanes.strategy = d::strategy_choice::lanes;
-  lanes.profile.edge_batched_forms = false;
+  lanes.profile.edge_batched_forms = d::edge_forms_reach::none;
   struct counted {
     shape_case c;
     const d::build_settings* settings;
