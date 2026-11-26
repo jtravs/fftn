@@ -142,6 +142,63 @@ The callbacks, each pure per element:
 
   Near misses are re-run (AGENTS.md section 6).
 
+### Amendments before the first judging run (2026-11-26 evening)
+
+Committed before any judging run, each with its reason. The drafted rules above stand except
+where an item below makes them precise or narrows them.
+
+1. **Machines.** The Mac leg is a daytime follow-up: the maintainer asked for a quiet Mac at
+   night, so tonight's runs are on the Xeon 6240 (`--serial`, shared Slurm, its load recorded) and
+   the EPYC 7763 (DMOG, shared Slurm, never `--exclusive`). The Mac's run (the same three sessions
+   below, on AC, one fbench at a time, `pmset -g batt` before and after) judges the Apple key
+   when it is made. A rule measured on one vendor is keyed to that vendor (the maintainer,
+   2026-11-25; DESIGN 13.5): a block size adopted on the Xeon reaches Intel cores of its cache
+   key only, one adopted on the EPYC AMD cores of its key only.
+2. **Toolchains.** The EPYC builds with GCC 16 (the release toolchain); the Xeon with GCC 14.4,
+   the newest its remote profile has (as X65). The benchmark target compiles with the
+   repository's flags (`-O3 -ffp-contract=off`): the callbacks and the user's loops are built
+   alike, both in the backend's unit (bench/backends/fftn.cpp).
+3. **The work is the identity in exact arithmetic,** so that fbench's check of every case holds:
+   cubic with a = 1, b = 0; exp multiplies by w (cos² φ + sin² φ) + i z sin φ with w = 1, z = 0,
+   after computing cos φ and sin φ (φ up to about 50 radians). The constants are read at run
+   time, so every element pays the arithmetic. On a real side, exp multiplies by the real part.
+   V is the plan with `EDGE_OUT=complex.full`: a complex factor array as large as the side.
+4. **K2 is K.** Both machines' default `callback_block_bytes` is L1/2 = 16 KiB (32 KiB L1d), so
+   the arm K (the default) is K2. K1, K3 and K4 force `CALLBACK_BLOCK_BYTES` = 8192, 32768 and
+   L2/4 (262144 on the Xeon, 131072 on the EPYC).
+5. **Thresholds made precise** (as X65 and the client tail rule read them):
+   - a case is *slower beyond the band* when its whole 95 % interval lies above 1 + band (fbench's
+     "slower"), and a *defect* (rule 1) when its whole interval lies above 1.05 × (1 + band);
+   - rule 2 fails when the geometric mean's point lies above 1.03 × (1 + band);
+   - rules 3 and 4 adopt when the geometric mean's point is at most 0.97 × (1 − band) and no case
+     is slower beyond the band;
+   - the band is the run's A/A control (P against its copy), and the ratios between arms other
+     than P come from `bench/x66/score.py`, which pairs any two arms round by round.
+6. **Target sets by the plans' notes** (the mechanism, AGENTS section 6): each case's note carries
+   the plan's `callbacks:` lines, which name the blocks and copies.
+   - Rule 3: candidate Ki is judged on the cubic cases whose note differs between Ki and K (the
+     cases whose blocks it changes); its geometric mean of Ki/K is over those cases.
+   - Rule 4: the c2c out-of-place cases whose note differs between O and S (only the chain takes
+     the copy into the output; the other strategies take the output or a gather already).
+   - Rule 2: the c2c and real rows of 1024 points and more, and the planes, with the identity
+     callback (Ki) against P.
+7. **Sessions** (one thread, hot mode, median statistic, `--tier full`, 10 to 20 rounds), per
+   machine:
+   - **out:** P (baseline), U, K, Ki (identity), K1, K3, K4, Kb, Ka, all on the output edge, the
+     callback cubic except Ki; the whole catalogue;
+   - **exp:** P, Ue, Ke, V, Kbe, Kae (the exp callback; V the factor), output edge; the whole
+     catalogue;
+   - **in:** P, U_in, S (the input callback, cubic, the default copy), O (`CALLBACK_COPY=out`), on
+     the catalogue's c2c cases; on its in-place planes S is the arm I (no copy).
+8. **Threads.** Every rule is judged at one thread. Rule 5 is informative per thread count:
+   tonight one thread on both machines, and, if time allows, the exp session's quick tier at
+   `THREADS=8` on the EPYC (the Xeon's Slurm binds no CPUs, X59, so no threaded run there).
+9. **Rule 7 by construction.** X66 adds no library code unless rule 3 adopts a block size (a
+   profile value that only callback stages read: `callback_block_bytes` appears nowhere else in
+   `src/`) or rule 4 adopts or deletes the copy into the output (`callback_copy_out`, read only for
+   plans with an input callback). Plans without callbacks therefore keep their programs; an
+   adopted change is checked with `describe()` and `workspace_bytes()` probes against `main`.
+
 ## Results
 
 Not run.
