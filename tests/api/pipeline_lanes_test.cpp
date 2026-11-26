@@ -184,7 +184,7 @@ template <class T> struct lanes_run {
     desc.middle.scale = c.mid_scale != 0.0 ? c.mid_scale : 1.0 / static_cast<double>(c.n);
     if (c.mid != none) {
       // A kernel per line: the innermost dimension's lines n |axis| apart, the outer ones past it.
-      std::ptrdiff_t step = std::abs(c.mid_axis) * n;
+      std::ptrdiff_t step = std::max<std::ptrdiff_t>(std::abs(c.mid_axis) * n, 1);
       kbatch.assign(dims, 0);
       std::ptrdiff_t span = (n - 1) * std::abs(c.mid_axis);
       for (std::size_t k = dims; k-- > 0;) {
@@ -232,6 +232,26 @@ template <class T> struct lanes_run {
       rest /= c.counts[k];
     }
     return static_cast<std::size_t>(at);
+  }
+
+  // The kernel's largest magnitude over its root mean square (1 without one): how much more an
+  // error at a bin can weigh in the output than the bins' typical size.
+  [[nodiscard]] double spread() const {
+    double peak = 0;
+    double sum = 0;
+    std::size_t count = 0;
+    const auto add = [&](double m) {
+      peak = std::max(peak, m);
+      sum += m * m;
+      ++count;
+    };
+    for (const T v : kreal) {
+      add(std::abs(static_cast<double>(v)));
+    }
+    for (const C& v : kcomplex) {
+      add(std::abs(std::complex<double>(v)));
+    }
+    return count == 0 || sum == 0 ? 1.0 : peak / std::sqrt(sum / static_cast<double>(count));
   }
 
   [[nodiscard]] d::pipeline_view view() const {
@@ -340,14 +360,23 @@ template <class T> void run_case(const lanes_case& lc, fftn::isa t) {
   if (lc.bitwise) {
     EXPECT_TRUE(same_bits(serial, want)) << "not the chain pair's bits\n" << describe;
   } else {
+    // Each of the two results is within the reference's tolerance of the exact one (as
+    // pipeline_test.cpp's check derives it: a transform's derived tolerance, the first's error
+    // weighed by the kernel's spread, plus a rounding per multiplication), so their difference is
+    // within twice it.
     double diff = 0;
     double norm = 0;
     for (std::size_t i = 0; i < serial.size(); ++i) {
-      diff += std::norm(std::complex<double>(serial[i]) - std::complex<double>(want[i]));
-      norm += std::norm(std::complex<double>(want[i]));
+      if (run.written[i]) {
+        diff += std::norm(std::complex<double>(serial[i]) - std::complex<double>(want[i]));
+        norm += std::norm(std::complex<double>(want[i]));
+      }
     }
-    const auto tol = fftn::test::derived_tolerance<T>(lc.n, fftn::test::fftn_bound(lc.n)) * 4.0;
-    EXPECT_LE(std::sqrt(diff / norm), tol.rms) << describe;
+    const fftn::test::tolerance one =
+        fftn::test::derived_tolerance<T>(lc.n, fftn::test::fftn_bound(lc.n)) *
+            (1.0 + run.spread()) +
+        fftn::test::input_rounding<T>() * 7;
+    EXPECT_LE(std::sqrt(diff / norm), (one + one).rms) << describe;
   }
 
   const auto in_of = [&](std::vector<C>& y, std::vector<C>& xs) {
@@ -451,6 +480,20 @@ std::vector<lanes_case> row_cases(std::size_t n) {
        .backward = true,
        .callback = true},
       {.name = "rows: fewer lines than a block", .n = n, .counts = {2}, .per_line = true},
+      {.name = "rows: a middle callback beside the fused kernel's placement",
+       .n = n,
+       .counts = {9},
+       .mid = cplx,
+       .per_line = true,
+       .pro_scale = 2.0,
+       .callback = true,
+       .bitwise = false},
+      {.name = "rows: a kernel of axis stride 0 (one value per line)",
+       .n = n,
+       .counts = {7},
+       .mid = cplx,
+       .mid_axis = 0,
+       .per_line = true},
   };
 }
 
@@ -494,7 +537,8 @@ TYPED_TEST_SUITE(PipelineLanes, precisions);
 
 TYPED_TEST(PipelineLanes, RowsAgreeWithTheChainPair) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    for (const std::size_t n : {2U, 4U, 8U, 16U, 32U, 64U}) {
+    // Powers of two, and lengths of radices 3 and 5 (1/n inexact).
+    for (const std::size_t n : {2U, 3U, 4U, 5U, 8U, 12U, 15U, 16U, 32U, 60U, 64U}) {
       for (const lanes_case& lc : row_cases(n)) {
         run_case<TypeParam>(lc, t);
       }
@@ -504,7 +548,7 @@ TYPED_TEST(PipelineLanes, RowsAgreeWithTheChainPair) {
 
 TYPED_TEST(PipelineLanes, ColumnsAgreeWithTheChainPair) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
-    for (const std::size_t n : {4U, 16U, 64U}) {
+    for (const std::size_t n : {4U, 6U, 16U, 20U, 64U}) {
       for (const lanes_case& lc : column_cases(n)) {
         run_case<TypeParam>(lc, t);
       }
@@ -528,7 +572,9 @@ TEST(PipelineLanes, FallsBackToTheChainPair) {
   };
   const fftn::pipeline_desc<C, C, C> good = fftn::complex_convolution_rows<double>(8, 16);
   EXPECT_NE(describe(good, lanes).find("the lanes pair (forced only"), std::string::npos);
-  EXPECT_NE(describe(good, {}).find("the chain pair"), std::string::npos);
+  const std::string by_rules = describe(good, {});
+  EXPECT_NE(by_rules.find("the chain pair"), std::string::npos) << by_rules;
+  EXPECT_EQ(by_rules.find("lanes pair"), std::string::npos) << by_rules;
   const auto refused = [&](fftn::pipeline_desc<C, C, C> desc, const std::string& why,
                            const fftn::options& opts = {}) {
     const std::string text = describe(desc, lanes, opts);

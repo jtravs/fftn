@@ -872,6 +872,14 @@ void build_lanes_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
   const bool mc = pl.mid.call.any();
   const std::ptrdiff_t factor_step =
       pl.mid.kind != factor_kind::none ? pl.mid.batch_steps.at(b) : 0;
+  // `place` with nothing fused and no side factor puts the scales on the middle's pass or the
+  // backward chain's last pass, and with a middle callback the prologue's on the forward chain's
+  // last pass: the only places the stages below take.
+  if ((pl.at != scale_at::none && pl.at != scale_at::pass && pl.at != scale_at::inverse_out) ||
+      (pl.pre_at != scale_at::none && pl.pre_at != scale_at::forward_out) ||
+      (pl.at == scale_at::pass && !pl.mid.separate) || pl.pro.separate || pl.epi.separate) {
+    throw std::logic_error("fftn: internal: a scale or a factor where the lanes pair takes none");
+  }
   add_batch_loops(p, d, l, static_cast<std::ptrdiff_t>(2 * sizeof(T)), pl);
   const auto block_stages = [&](std::size_t block, std::vector<stage>& st) {
     line_edges forward;
