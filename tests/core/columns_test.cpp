@@ -980,11 +980,12 @@ TYPED_TEST(Columns, AdjacentTransformsOnlyWhereTheyFit) {
         *fftn::detail::make_plan_core(fftn::detail::view_of(sh), fftn::options(), settings));
   };
   const auto strategy = [&](const fftn::shape<c, c>& sh) { return described(sh, 0); };
-  fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes
+  fftn::shape<c, c> columns; // 32 columns of 16 points (a leaf length): 8192 bytes in double
   columns.axes = {{.n = 16, .in_stride = 32, .out_stride = 32}};
   columns.batches = {{.count = 32, .in_dist = 1, .out_dist = 1}};
-  EXPECT_NE(described(columns, 8191).find("adjacent transforms"), std::string::npos);
-  EXPECT_EQ(described(columns, 8192).find("adjacent transforms"), std::string::npos);
+  const std::size_t bytes = std::size_t{32} * 16 * sizeof(c);
+  EXPECT_NE(described(columns, bytes - 1).find("adjacent transforms"), std::string::npos);
+  EXPECT_EQ(described(columns, bytes).find("adjacent transforms"), std::string::npos);
   {
     // With adjacent_team_chain, a plan whose lanes take the chain's radices keeps the route for
     // one thread and holds a team program that is the chain (the team tests run 16 x 16 x 7).
