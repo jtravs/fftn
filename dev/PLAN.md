@@ -6,10 +6,11 @@ session; update a phase when its tasks or findings change.
 
 ## Status
 
-**As of 2026-11-25 (lead).** Phase 1's exit is met; phases 2–4 are built, with their exits not
-yet checked; phase 5 (fusion) has started with step 5.1, plan edges. **Priority (the maintainer,
-2026-11-25): features first, phase 5 and then phase 6, then refine the remaining performance.**
-The performance follow-ups are parked in "Tasks" below until then. This section is also the
+**As of 2026-11-26 evening (lead).** Phase 1's exit is met; phases 2–4 are built, with their exits not
+yet checked; phase 5 (fusion) is built through 5.3e and phase 6's first features are in (rows
+below). **Priority (the maintainer, 2026-11-25): features first, phase 5 and then phase 6, then
+refine the remaining performance.** The performance follow-ups are parked in "Tasks" below until
+then. This section is also the
 handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in DESIGN.md section
 19, open questions in DESIGN.md section 18.2.
 
@@ -20,8 +21,8 @@ handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in D
 | 2 | Built: real transforms, any length, `planning::measure`, wisdom, `next_fast_length`. Open: 2.2's double c2c batch acceptance on AVX-512; X6; X13; the cost model's second pass. Exit not checked. The client catalogue's real-row gap mostly closed (X72, X75, X78; Ice Lake X82, Zen 2 X81). |
 | 3 | Built: the engine, scheduler, OpenMP adapter, `thread_pool`, Kokkos (provisional API). Scheduling improved: anchored whole transforms (X73 Zen 3, X74 Apple, X79 the Xeon 6240's class), the team state on pages of its own on the Xeon 6240's class (X79, after X76's diagnosis), real rows split by complex points there (X83). Open: T2, T4, T6; 3.6 against its acceptance. Exit not checked. |
 | 4 | 4.3 done. 4.1 and 4.2 built; acceptance not met case by case (large threaded planes against oneMKL, some volumes). |
-| 5 | Started 2026-11-25: 5.1 built (5.1a–5.1e; X65 judged); 5.2 designed (steps 5.2a–5.2g, DESIGN 12.2), its API questions open (DESIGN 18.2); 5.2a built 2026-11-26 (batched forms adopted narrowed for c2c rows on one leaf on the EPYC 7763's and the Xeon 6240's classes, X65's P1); 5.2b built 2026-11-26 (the pipeline API, provisional, and the `<C, C, C>` chain pair); 5.2c built 2026-11-26 (`<T, C, T>` and `convolution_rows`); the API awaits the maintainer's answers to DESIGN 18.2; 5.3 designed (steps 5.3a–5.3h, DESIGN 12.3, experiments X66 and X68), its API questions open (DESIGN 18.2, "Callbacks"); 5.3a built 2026-11-26 (callbacks on c2c rows' chains, provisional; DESIGN 12.3 "As built"); 5.3b built 2026-11-26 (callbacks in every row strategy, on real rows, and in the edge driver's row blocks and flat form; PRs 152 and 153). Next: 5.2d (stored runs on pipelines and the depth-first pair, in review), then 5.2e–5.2g and 5.3c–5.3h. |
-| 6 | Started 2026-11-26; broken into steps 6.1–6.20 (phase 6 table), with API proposals in DESIGN 5.4, 5.7–5.9 and questions for the maintainer in DESIGN 18.2, "Phase 6". Built 2026-11-26: 6.1 (packaging, PR 147), 6.2 (the size report, PR 146), 6.3 (the real-to-real kind and the DHT, PR 148), 6.4 (DCT-II/III and DST-II/III, PR 151) and 6.6 (`fftn/easy.hpp`, PR 149); the new API is provisional. 6.5 (DCT/DST IV and I, PR 155) built too. |
+| 5 | Started 2026-11-25. Built, all new API provisional with a second read: 5.1 (5.1a–5.1e; X65 judged); 5.2a (batched forms, X65's P1), 5.2b (the pipeline API and the `<C, C, C>` chain pair), 5.2c (`<T, C, T>`, `convolution_rows`), 5.2d (stored runs on pipelines; the depth-first pair, forced only, PR 154), 5.2e (fan-out, PR 162); 5.3a–5.3c (block callbacks on rows, every row strategy, multi-axis plans; PRs 141, 152, 153, 158), 5.3d (prologue, middle and epilogue callbacks on pipelines, PR 165), 5.3e (inverse-first spectral pairs and `<C, T, C>`, PR 166). The APIs await the maintainer's answers to DESIGN 18.2 ("Pipelines", "Callbacks"). In progress 2026-11-26 evening: 5.2f (the lanes pair, forced only) then 5.3f (`group`); 5.5 (owner-computes, `docs/fusion.md`). Then the experiments 5.2g (X67, the pair rules), 5.3g (X66), 5.3h (X68) and 5.4 (X9). |
+| 6 | Started 2026-11-26; steps 6.1–6.20 (phase 6 table), API proposals in DESIGN 5.4, 5.7–5.9, questions in DESIGN 18.2, "Phase 6". Built 2026-11-26, new API provisional with a second read: 6.1 (packaging, PR 147), 6.2 (size report, PR 146), 6.3 (r2r kind and DHT, PR 148), 6.4 (DCT/DST II and III, PR 151), 6.5 (DCT/DST IV and I, PR 155), 6.6 (`fftn/easy.hpp`, PR 149), 6.7's real-to-real part (PRs 159, 161; the Kokkos one-shots, PR 160, wait for the maintainer), 6.8 (the C API for plans, PR 157), 6.11 (float coverage, PR 163; X84 float's standing, PR 164). Waiting for the maintainer: 6.9 (C fusion API, after the review of DESIGN 12's APIs), 6.10 and 6.13 (split complex: Q2's scope). Later: 6.12 (r2r speed), 6.14–6.16 (machines; cloud needs approval), 6.17 (documents, after the features), 6.18–6.20 (release). |
 | 7 | Not started. |
 
 **Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
