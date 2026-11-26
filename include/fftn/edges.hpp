@@ -117,15 +117,17 @@ template <class In, class Out> struct plan_edges {
 /// that reads it; a callback's pointer is passed to it as given, null included.
 ///
 /// Preconditions at execution: a plan whose input or output edge has a factor needs that
-/// edge's array, addressing coordinate 0 (with negative strides not the lowest address),
-/// valid for every element the factor's strides reach, with any alignment of at least its
-/// element type's, and not written during the execution. The plan only reads it. An
-/// execution without an array the plan needs (null, or through an overload of `execute`
-/// that takes no `exec_args`) ends the program (`std::abort`, with a message on stderr).
+/// edge's array (a pipeline likewise its prologue's, middle's and epilogue's, fftn/pipeline.hpp),
+/// addressing coordinate 0 (with negative strides not the lowest address), valid for every element
+/// the factor's strides reach, with any alignment of at least its element type's, and not written
+/// during the execution. The plan only reads it. An execution without an array the plan needs
+/// (null, or through an overload of `execute` that takes no `exec_args`) ends the program
+/// (`std::abort`, with a message on stderr).
 struct exec_args {
   /// The input edge's factor array (`edge::mul` of `plan_edges::in`).
   const void* in_factor = nullptr;
-  /// A pipeline's middle factor array (pipelines are not built yet; plans ignore it).
+  /// A pipeline's middle factor array (`pipeline_desc::middle`, fftn/pipeline.hpp); plans
+  /// ignore it.
   const void* mid_factor = nullptr;
   /// The output edge's factor array (`edge::mul` of `plan_edges::out`).
   const void* out_factor = nullptr;

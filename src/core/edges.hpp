@@ -83,6 +83,17 @@ struct resolved_edges {
   return e.in.call != nullptr || e.out.call != nullptr;
 }
 
+// One edge validated as resolve_edges validates each (std::invalid_argument naming `name`'s
+// fields: name.scale, name.mul.axis_strides, ...), without its placement: a pipeline's prologue,
+// middle (as an output edge) and epilogue (core/pipeline.cpp), on the c2c shape of its line.
+[[nodiscard]] edge_side resolve_edge_side(const shape_view& s, const edge_view& e, bool output,
+                                          const std::string& name);
+
+// Whether a scale can be applied in precision `prec`, and the check that refuses one that cannot,
+// naming `name` (as resolve_edges checks the edges' scales and their product).
+[[nodiscard]] bool scale_fits_precision(double scale, precision prec);
+void check_edge_scale(double scale, precision prec, const std::string& name);
+
 // Whether either edge's factor is fused into the passes (fuse above).
 [[nodiscard]] inline bool any_fused(const edge_plan& p) noexcept {
   return p.in.fused || p.out.fused;

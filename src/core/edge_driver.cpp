@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -21,7 +22,7 @@
 namespace fftn::inline v0::detail {
 namespace {
 
-constexpr const char* missing_array = "fftn: a plan whose edges have factors was executed "
+constexpr const char* missing_array = "fftn: a plan or pipeline with factors was executed "
                                       "without the factor arrays it needs (exec_args)";
 
 const void* source_of(slot s, const slot_addresses& at) noexcept {
@@ -74,18 +75,35 @@ slot_addresses moved(const slot_addresses& at, const std::array<std::ptrdiff_t, 
   return next;
 }
 
-factor_cursors moved(factor_cursors f, const std::array<std::ptrdiff_t, 2>& step,
-                     std::size_t times) noexcept {
+factor_cursors moved(factor_cursors f, const factor_steps& step, std::size_t times) noexcept {
   const auto k = static_cast<std::ptrdiff_t>(times);
   f.in += static_cast<std::uintptr_t>(step[0] * k);
   f.out += static_cast<std::uintptr_t>(step[1] * k);
+  f.mid += static_cast<std::uintptr_t>(step[2] * k);
   return f;
 }
 
-factor_cursors moved_by(factor_cursors f, const std::array<std::ptrdiff_t, 2>& bytes) noexcept {
+factor_cursors moved_by(factor_cursors f, const factor_steps& bytes) noexcept {
   f.in += static_cast<std::uintptr_t>(bytes[0]);
   f.out += static_cast<std::uintptr_t>(bytes[1]);
+  f.mid += static_cast<std::uintptr_t>(bytes[2]);
   return f;
+}
+
+// Sets the factor pointers of `a` that read cursors (`moving`, stage::moving_factors) from f:
+// in_factor from the input's cursor or the middle's, out_factor from the output's or the
+// middle's.
+void set_cursors(pass_args& a, std::uint8_t moving, factor_cursors f) noexcept {
+  if ((moving & moving_in_factor) != 0) {
+    a.in_factor = reinterpret_cast<const void*>(f.in);
+  } else if ((moving & moving_mid_in_factor) != 0) {
+    a.in_factor = reinterpret_cast<const void*>(f.mid);
+  }
+  if ((moving & moving_out_factor) != 0) {
+    a.out_factor = reinterpret_cast<const void*>(f.out);
+  } else if ((moving & moving_mid_out_factor) != 0) {
+    a.out_factor = reinterpret_cast<const void*>(f.mid);
+  }
 }
 
 // The bytes a loop moves slot s per iteration (0 for the scratch lines, which never move).
@@ -106,9 +124,22 @@ std::ptrdiff_t step_of(const loop& l, slot s) noexcept {
 
 // Whether a stage reading the cursors `moving` reads the same factors on every iteration of a
 // loop that moves them by `step`.
-bool cursors_fixed(std::uint8_t moving, const std::array<std::ptrdiff_t, 2>& step) noexcept {
+bool cursors_fixed(std::uint8_t moving, const factor_steps& step) noexcept {
   return ((moving & moving_in_factor) == 0 || step[0] == 0) &&
-         ((moving & moving_out_factor) == 0 || step[1] == 0);
+         ((moving & moving_out_factor) == 0 || step[1] == 0) &&
+         ((moving & moving_mid_factor) == 0 || step[2] == 0);
+}
+
+// The bytes the factor of an edge pass reading the cursor `moving` (one of them: the input's, the
+// output's or the middle's) moves per iteration of a loop moving the cursors by `step`.
+std::ptrdiff_t block_factor_step(std::uint8_t moving, const factor_steps& step) noexcept {
+  if ((moving & moving_out_factor) != 0) {
+    return step[1];
+  }
+  if ((moving & moving_mid_factor) != 0) {
+    return step[2];
+  }
+  return step[0];
 }
 
 // `a` with the cursors in the factors a stage reads (`moving`), copied into `local`; `a` itself
@@ -119,12 +150,7 @@ const pass_args* with_cursors(const pass_args& a, std::uint8_t moving, factor_cu
     return &a;
   }
   local = a;
-  if ((moving & moving_in_factor) != 0) {
-    local.in_factor = reinterpret_cast<const void*>(f.in);
-  }
-  if ((moving & moving_out_factor) != 0) {
-    local.out_factor = reinterpret_cast<const void*>(f.out);
-  }
+  set_cursors(local, moving, f);
   return &local;
 }
 
@@ -146,12 +172,7 @@ void run_stage(const stage& st, const edge_record& e, const slot_addresses& at, 
   if (st.moving_twiddles) {
     args.twiddles = static_cast<const std::byte*>(args.twiddles) + at.tw;
   }
-  if ((st.moving_factors & moving_in_factor) != 0) {
-    args.in_factor = reinterpret_cast<const void*>(f.in);
-  }
-  if ((st.moving_factors & moving_out_factor) != 0) {
-    args.out_factor = reinterpret_cast<const void*>(f.out);
-  }
+  set_cursors(args, st.moving_factors, f);
   const void* src = source_of(st.src, at);
   void* dst = destination_of(st.dst, at);
   if (e.leaf != nullptr) {
@@ -213,12 +234,7 @@ void run_lane_stage(const stage& st, const edge_record& e, const slot_addresses&
   args.rows = static_cast<std::uint32_t>(rows);
   pass_fn run = st.run;
   if (st.moving_factors != 0) {
-    if ((st.moving_factors & moving_in_factor) != 0) {
-      args.in_factor = reinterpret_cast<const void*>(f.in);
-    }
-    if ((st.moving_factors & moving_out_factor) != 0) {
-      args.out_factor = reinterpret_cast<const void*>(f.out);
-    }
+    set_cursors(args, st.moving_factors, f);
     run = e.run;
   }
   run(&args, source_of(st.src, at), destination_of(st.dst, at), 0, st.units);
@@ -302,13 +318,7 @@ public:
     if (a == nullptr) {
       return &forms_.flat[k].s.args;
     }
-    const std::uint8_t moving = forms_.flat[k].moving;
-    if ((moving & moving_in_factor) != 0) {
-      a->in_factor = reinterpret_cast<const void*>(f.in);
-    }
-    if ((moving & moving_out_factor) != 0) {
-      a->out_factor = reinterpret_cast<const void*>(f.out);
-    }
+    set_cursors(*a, forms_.flat[k].moving, f);
     return a;
   }
 
@@ -376,7 +386,7 @@ void run_edge_row_blocks(const program& p, const std::vector<edge_record>& e,
                          const edge_forms& forms, std::size_t first, std::size_t count,
                          const slot_addresses& base, factor_cursors f) noexcept {
   const loop& l = *std::get_if<loop>(p.records.data());
-  const std::array<std::ptrdiff_t, 2>& fs = e[0].factor_step;
+  const factor_steps& fs = e[0].factor_step;
   const std::size_t end = first + count;
   slot_addresses at = transform_addresses(p, first, base);
   factor_cursors cursors = edge_transform_cursors(p, e, first, f);
@@ -479,8 +489,7 @@ std::ptrdiff_t offset_of(slot s, const offsets& off) noexcept {
 // reads one set of factors per call). False where the program has moving twiddles or more
 // than calls_max calls.
 bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, std::size_t begin,
-                         std::size_t end, const offsets& off,
-                         const std::array<std::ptrdiff_t, 2>& factor_off,
+                         std::size_t end, const offsets& off, const factor_steps& factor_off,
                          const std::vector<std::size_t>& arg_of, std::vector<edge_call>& out) {
   for (std::size_t i = begin; i < end; ++i) {
     const record& r = p.records[i];
@@ -547,7 +556,8 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
       if (!unroll_edge_records(
               p, e, i + 1, l.body_end,
               {from[0] + l.step[0] * k, from[1] + l.step[1] * k, from[2] + l.step[2] * k},
-              {factor_off[0] + e[i].factor_step[0] * k, factor_off[1] + e[i].factor_step[1] * k},
+              {factor_off[0] + e[i].factor_step[0] * k, factor_off[1] + e[i].factor_step[1] * k,
+               factor_off[2] + e[i].factor_step[2] * k},
               arg_of, out)) {
         return false;
       }
@@ -636,9 +646,10 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
       }
       continue;
     }
-    // A separate edge pass (edge_pass_stage): its rows src_dist and dst_dist elements apart, its
-    // factor the batch loop's factor step apart.
-    const bool edge_pass = st.name.starts_with("edge in") || st.name.starts_with("edge out");
+    // A separate edge pass (edge_pass_stage, or a pipeline's middle pass): its rows src_dist and
+    // dst_dist elements apart, its factor the batch loop's step of the cursor it reads apart.
+    const bool edge_pass = st.name.starts_with("edge in") || st.name.starts_with("edge out") ||
+                           st.name.starts_with("edge middle");
     if (!edge_pass || st.args.rows != 0 || st.args.src_dist != 0 || st.args.dst_dist != 0 ||
         src_dist % element_bytes != 0 || dst_dist % element_bytes != 0) {
       continue;
@@ -646,8 +657,26 @@ edge_forms make_edge_forms(const program& p, const std::vector<edge_record>& e, 
     x.block_call = true;
     x.s.args.src_dist = src_dist / element_bytes;
     x.s.args.dst_dist = dst_dist / element_bytes;
-    x.s.args.dst_qstride =
-        (st.moving_factors & moving_out_factor) != 0 ? e[0].factor_step[1] : e[0].factor_step[0];
+    x.s.args.dst_qstride = block_factor_step(st.moving_factors, e[0].factor_step);
+  }
+  // run_edge_row_blocks runs the stages between two block calls row by row through the scratch
+  // lines a and b, which hold one row's line: a stage may read a scratch line only where a stage
+  // since the last block call wrote it (block calls themselves touch neither, dist() above), or
+  // a row would read the block's last row's line.
+  bool written_a = false;
+  bool written_b = false;
+  for (const edge_flat_stage& x : forms.flat) {
+    if (x.block_call) {
+      written_a = false;
+      written_b = false;
+      continue;
+    }
+    if ((x.s.src == slot::a && !written_a) || (x.s.src == slot::b && !written_b)) {
+      throw std::logic_error(
+          "fftn: internal: a row-block stage reads a scratch line written before a block call");
+    }
+    written_a = written_a || x.s.dst == slot::a;
+    written_b = written_b || x.s.dst == slot::b;
   }
   return forms;
 }
@@ -666,12 +695,15 @@ void factor_guard_leaf(const pass_args* /*args*/, const void* /*src*/, void* /*d
 factor_cursors cursors_of(const exec_args& args, std::uint8_t needed) noexcept {
   const bool in = (needed & moving_in_factor) != 0;
   const bool out = (needed & moving_out_factor) != 0;
-  if ((in && args.in_factor == nullptr) || (out && args.out_factor == nullptr)) {
+  const bool mid = (needed & moving_mid_factor) != 0;
+  if ((in && args.in_factor == nullptr) || (out && args.out_factor == nullptr) ||
+      (mid && args.mid_factor == nullptr)) {
     contract_failure(missing_array);
   }
   return {
       .in = in ? reinterpret_cast<std::uintptr_t>(args.in_factor) : 0,
       .out = out ? reinterpret_cast<std::uintptr_t>(args.out_factor) : 0,
+      .mid = mid ? reinterpret_cast<std::uintptr_t>(args.mid_factor) : 0,
   };
 }
 

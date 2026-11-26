@@ -7,8 +7,8 @@
 # team_threads and executor_rows start std::threads, which need the platform's thread library
 # on some systems.
 find_package(Threads REQUIRED)
-foreach(example IN ITEMS axes callbacks edges executor_rows lengths planning planes_volumes
-                        rows_c2c team_threads)
+foreach(example IN ITEMS axes callbacks edges executor_rows lengths pipeline planning
+                        planes_volumes rows_c2c team_threads)
   add_executable(fftn_example_${example} ${example}.cpp)
   fftn_configure_target(fftn_example_${example})
   target_link_libraries(fftn_example_${example} PRIVATE fftn::fftn Threads::Threads)

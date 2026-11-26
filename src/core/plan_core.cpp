@@ -14,6 +14,7 @@
 #include "core/driver.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
+#include "core/pipeline.hpp"
 #include "core/program.hpp"
 #include "core/runs.hpp"
 #include "core/wisdom_entry.hpp"
@@ -341,7 +342,7 @@ struct view {
 // (mark_cursors, edge_record::factor_step). Batch loops take theirs from the batch strides.
 struct edge_loop {
   std::size_t record = 0;
-  std::array<std::ptrdiff_t, 2> step{};
+  factor_steps step{};
 };
 
 // The bytes `elements` steps along axis e move each of the views' slots, as a loop's step
@@ -1189,6 +1190,104 @@ constexpr std::string_view batch_one_row_reason =
 // rows' transforms; chunk_points' 2048, unmeasured otherwise.
 constexpr std::size_t edge_row_block_points = 2048;
 
+} // namespace
+
+void lay_out_workspace(plan_core& c, std::size_t scratch, std::size_t complex_bytes, bool stagger_b,
+                       std::size_t callback_scratch) {
+  constexpr std::size_t line_alignment = 64;
+  const auto round_up = [](std::size_t v) {
+    return (v + line_alignment - 1) / line_alignment * line_alignment;
+  };
+  c.scratch_line = scratch;
+  const std::size_t line_bytes = round_up(scratch * complex_bytes);
+  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
+  // multiple of a's size, so that the passes ping-ponging between them do not read and
+  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
+  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
+  // and no case slower; the chain's lines were not part of it.
+  const std::size_t stagger = stagger_b ? 7 * 64 : 0;
+  c.offset_b = line_bytes + stagger;
+  c.offset_block = 2 * line_bytes + stagger;
+  std::size_t used = c.offset_block + c.block_elements * complex_bytes;
+  // Each slot ends with the callback area (task 5.3a), from a 128-byte boundary: the largest of
+  // the callbacks' scratch, one member never running two at once, plus the 64 bytes that align
+  // it where the slot starts on a 64-byte boundary only (serial execution; core/callbacks.cpp,
+  // callback_area). Plans without callback scratch keep their layout.
+  if (callback_scratch != 0) {
+    constexpr std::size_t area_alignment = 128;
+    c.offset_callback = (used + area_alignment - 1) / area_alignment * area_alignment;
+    c.callback_bytes = callback_scratch;
+    // scratch_bytes is bounded at validation (core/edges.cpp), so nothing here overflows.
+    used = c.offset_callback + line_alignment + callback_scratch;
+  }
+  c.bytes = used == 0 ? 0 : used + line_alignment;
+  c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
+}
+
+target_profile plan_profile(const plan_core& c, std::size_t complex_lanes,
+                            const build_settings& settings) {
+  target_profile profile = profile_of(c.isa_target, complex_lanes, settings.profile.vendor);
+  if (settings.leaf_limit != 0) {
+    profile.leaf_limit = settings.leaf_limit;
+  }
+  if (settings.layout != layout_choice::rules) {
+    profile.split = settings.layout == layout_choice::split;
+  }
+  // X69: on the 2 MiB-L2 key the fit limits serve that key's table, not the target's.
+  if (settings.profile.fit_large_l2) {
+    profile.fit_overrides = large_l2_fit_overrides(c.isa_target, complex_lanes);
+  }
+  if (settings.rader == 0) {
+    profile.rader_below = 0;
+  } else if (settings.rader > 0) {
+    profile.rader_from = 0;
+    profile.rader_below = std::numeric_limits<std::size_t>::max();
+  }
+  return profile;
+}
+
+template <class T>
+chain_builder<T> plan_chain(plan_core& c, const target_profile& profile,
+                            const build_settings& settings) {
+  const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
+  chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
+                         settings.bluestein_above, fusion_of(settings, c.isa_target));
+  // X32: only on the machines whose profile keeps long powers of two as chains, the ones
+  // the radix sequences were measured on (the Xeon lost with chains of either).
+  if (settings.profile.pow2_chain_bytes != 0) {
+    chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
+  }
+  // X36: a convolution is always a chain, so a long one takes the long-row radices beyond
+  // the profile's long_convolution_bytes, radix 8 throughout where the profile sets no
+  // limit; a Bluestein length's power-of-two part follows the profile.
+  chain.use_long_convolutions(settings.profile.long_convolution_bytes,
+                              settings.profile.pow2_chain_bytes != 0
+                                  ? settings.profile.pow2_radix8_bytes
+                                  : std::numeric_limits<std::size_t>::max(),
+                              settings.profile.bluestein_pow2_part_bytes);
+  chain.use_whole_lanes(settings.profile.bluestein_whole_lanes);
+  chain.force_convolution_length(settings.bluestein_length);
+  if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
+    chain.use_narrow_leaves(&of<T>(*narrow));
+  }
+  if (const pair_leaf_table* pairs = find_pair_leaves(c.isa_target);
+      pairs != nullptr && settings.pair_leaves) {
+    // Another target's leaves in double only (X37): in float they would also change the
+    // lanes' chains (strategies/lanes.cpp), which nothing has measured.
+    const pair_leaf_table* more =
+        std::is_same_v<T, double> ? find_more_pair_leaves(c.isa_target) : nullptr;
+    chain.use_pair_leaves(&of<T>(*pairs), more != nullptr ? &of<T>(*more) : nullptr);
+  }
+  return chain;
+}
+
+template chain_builder<double> plan_chain<double>(plan_core& c, const target_profile& profile,
+                                                  const build_settings& settings);
+template chain_builder<float> plan_chain<float>(plan_core& c, const target_profile& profile,
+                                                const build_settings& settings);
+
+namespace {
+
 // A row's stored runs (none where the side has none).
 const std::vector<line_run>& row_runs(const side_runs& runs) {
   static const std::vector<line_run> none;
@@ -1354,51 +1453,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
            std::vector<edge_loop>& edge_loops, std::vector<edge_loop>& tail_loops) {
   c.isa_target = plan_target_of(opts);
   const kernels_of<T>& kernels = of<T>(*find_kernels(c.isa_target));
-  target_profile profile = profile_of(c.isa_target, kernels.complex_lanes, settings.profile.vendor);
-  if (settings.leaf_limit != 0) {
-    profile.leaf_limit = settings.leaf_limit;
-  }
-  if (settings.layout != layout_choice::rules) {
-    profile.split = settings.layout == layout_choice::split;
-  }
-  // X69: on the 2 MiB-L2 key the fit limits serve that key's table, not the target's.
-  if (settings.profile.fit_large_l2) {
-    profile.fit_overrides = large_l2_fit_overrides(c.isa_target, kernels.complex_lanes);
-  }
-  if (settings.rader == 0) {
-    profile.rader_below = 0;
-  } else if (settings.rader > 0) {
-    profile.rader_from = 0;
-    profile.rader_below = std::numeric_limits<std::size_t>::max();
-  }
-  chain_builder<T> chain(kernels, profile, tables_of<T>(c), settings.chunk_points, settings.radices,
-                         settings.bluestein_above, fusion_of(settings, c.isa_target));
-  // X32: only on the machines whose profile keeps long powers of two as chains, the ones
-  // the radix sequences were measured on (the Xeon lost with chains of either).
-  if (settings.profile.pow2_chain_bytes != 0) {
-    chain.use_long_rows(settings.profile.grid_min_bytes, settings.profile.pow2_radix8_bytes);
-  }
-  // X36: a convolution is always a chain, so a long one takes the long-row radices beyond
-  // the profile's long_convolution_bytes, radix 8 throughout where the profile sets no
-  // limit; a Bluestein length's power-of-two part follows the profile.
-  chain.use_long_convolutions(settings.profile.long_convolution_bytes,
-                              settings.profile.pow2_chain_bytes != 0
-                                  ? settings.profile.pow2_radix8_bytes
-                                  : std::numeric_limits<std::size_t>::max(),
-                              settings.profile.bluestein_pow2_part_bytes);
-  chain.use_whole_lanes(settings.profile.bluestein_whole_lanes);
-  chain.force_convolution_length(settings.bluestein_length);
-  if (const narrow_leaf_table* narrow = find_narrow_leaves(c.isa_target)) {
-    chain.use_narrow_leaves(&of<T>(*narrow));
-  }
-  if (const pair_leaf_table* pairs = find_pair_leaves(c.isa_target);
-      pairs != nullptr && settings.pair_leaves) {
-    // Another target's leaves in double only (X37): in float they would also change the
-    // lanes' chains (strategies/lanes.cpp), which nothing has measured.
-    const pair_leaf_table* more =
-        std::is_same_v<T, double> ? find_more_pair_leaves(c.isa_target) : nullptr;
-    chain.use_pair_leaves(&of<T>(*pairs), more != nullptr ? &of<T>(*more) : nullptr);
-  }
+  const target_profile profile = plan_profile(c, kernels.complex_lanes, settings);
+  chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const std::size_t r = s.axes.size();
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
@@ -1948,27 +2004,24 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       row_edges && (lanes != 0 || grid_plan.phases != 0 || !depth_tops.empty() ||
                     !bluestein_tops.empty() || real_grid.phases != 0 || !real_depth_tops.empty());
   const bool use_edge_phases = edge_phases && !row_strategy && adjacent == 0;
-  // The edge driver's row-block form (machine_profile::edge_batched_forms, task 5.2a): a c2c
-  // plan of rows of one batch dimension whose separate edge passes include a factor (so that it
-  // runs on the edge driver) takes its rows in blocks of about edge_row_block_points points,
-  // each row with a line of its own in the workspace block (c2c_axis), the edge passes and the
-  // leaves once per block.
+  // The edge driver's batched forms (machine_profile::edge_batched_forms, task 5.2a): every plan
+  // with edges where the profile's reach is all; where it is leaf_rows, a plan of c2c rows whose
+  // line's transform is one leaf, which c2c_axis decides (X65's P1, narrowed).
+  const edge_forms_reach forms_reach = settings.profile.edge_batched_forms;
+  // Callbacks (task 5.3a) keep the walked form: their stages run from the edge records only.
+  c.edge_batched_on =
+      edge_ops != nullptr && forms_reach == edge_forms_reach::all && !any_callback(*edge_ops);
+  // The row-block form: a c2c plan of rows of one batch dimension whose separate edge passes
+  // include a factor (so that it runs on the edge driver) takes its rows in blocks of about
+  // edge_row_block_points points, each row with a line of its own in the workspace block
+  // (c2c_axis), the edge passes and the leaves once per block.
   if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
-      s.batches.size() == 1 && settings.profile.edge_batched_forms && !any_callback(*edge_ops) &&
+      s.batches.size() == 1 && forms_reach != edge_forms_reach::none && !any_callback(*edge_ops) &&
       (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
       !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
     const std::size_t rows =
         std::min(s.batches[0].count, std::max<std::size_t>(edge_row_block_points / n_in, 1));
     c.edge_row_block = rows >= 2 ? rows : 0;
-  }
-  // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
-  // which separate edge passes between the rows break up: each row's leaf runs alone, except
-  // in the row-block form. Not over a reason already given: where the input edge's pass has
-  // moved the rows (above), the plan without the edges may have no batch leaves at all, and
-  // the move is the cause; name_forced_strategy gives this reason where that plan has them.
-  if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
-      c.edge_row_block == 0 && edge_fallback.empty()) {
-    edge_fallback = batch_one_row_reason;
   }
   const bool accumulate = edge_ops != nullptr && edge_ops->out.accumulate;
   // The output's prior values for accumulation into a row's strategy, which writes the output:
@@ -2408,6 +2461,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         endpoint from = at(src, e);
         const endpoint to = at(dst, e);
         bool uses_block = false;
+        // Whether the line's transform is one leaf (the leaf_rows reach below); a line with
+        // callbacks leaves it false, so that it keeps the walked form (core/callbacks.cpp).
+        bool one_leaf = false;
         if (any_callback(*edge_ops)) {
           // Block callbacks (task 5.3a) in DESIGN.md 12.3's order: read or produce, modify,
           // then the vocabulary; the vocabulary, modify, then store, accumulate or consume.
@@ -2492,7 +2548,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
               out_pruning = line.out_head ? run_pruning::half : run_pruning::none;
             }
           }
+          const std::size_t line_first = st.size();
           need = chain.c2c_line(n, sign, from, line_to, from.where == line_to.where, line, st);
+          one_leaf = st.size() == line_first + 1 && st[line_first].leaf != nullptr;
           if (edge_ops->out.runs.any() && out_pass) {
             run_line_stages(s.prec, edge_ops->out, true, n, edge_ops->out.runs.of(0),
                             {.src = slot::block, .dst = to.where, .dst_stride = to.stride},
@@ -2510,6 +2568,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
             std::ranges::any_of(st, [](const stage& x) { return x.moving_twiddles; })) {
           c.edge_row_block = 0;
         }
+        // Where the reach is leaf_rows, a line whose transform is more than one leaf keeps the
+        // walked form (X65's P1, narrowed: chains of 256-1024 points moved 0.90-1.01).
+        if (forms_reach == edge_forms_reach::leaf_rows) {
+          c.edge_batched_on = one_leaf;
+          if (!one_leaf) {
+            c.edge_row_block = 0;
+          }
+        }
         // Only where the line starts or ends in the block: a side whose runs the chain's pruned
         // first or last pass reads or writes where they are stored needs none (task 5.1e).
         if (uses_block) {
@@ -2521,6 +2587,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           return;
         }
         need = chain.c2c_line(c.lengths[d], sign, at(src, e), at(dst, e), aliased, line, st);
+        // A row's chain with fused factors, where the reach is leaf_rows: the batched forms for
+        // a line of one leaf (as above).
+        if (edge_ops != nullptr && r == 1 && forms_reach == edge_forms_reach::leaf_rows) {
+          c.edge_batched_on = st.size() == 1 && st[0].leaf != nullptr;
+        }
       }
       lines(e, extent, src, dst, need, std::move(st));
       c.axis_notes.push_back("axis " + std::to_string(listed(d)) +
@@ -2828,6 +2899,16 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
                         ", each separate pass, and a leaf, once per block";
       }
     }
+    // Batch leaves take a batch of rows in one call of the leaf (driver.hpp, run_leaf_rows),
+    // which separate edge passes between the rows break up: each row's leaf runs alone, except
+    // in the row-block form, which c2c_axis may have dropped (so decided here, after it). Not
+    // over a reason already given: where the input edge's pass has moved the rows (above), the
+    // plan without the edges may have no batch leaves at all, and the move is the cause;
+    // name_forced_strategy gives this reason where that plan has them.
+    if (row_edges && !row_strategy && batch != nullptr && s.kind == transform_kind::c2c &&
+        c.edge_row_block == 0 && edge_fallback.empty()) {
+      edge_fallback = batch_one_row_reason;
+    }
     c.edge_fallback = edge_fallback;
     if (any_callback(*edge_ops)) {
       // Task 5.3a: callbacks on the chain only (core/edges.cpp refuses them elsewhere); the
@@ -2878,40 +2959,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
   }
 
-  // Workspace layout.
-  constexpr std::size_t line_alignment = 64;
-  const auto round_up = [](std::size_t v) {
-    return (v + line_alignment - 1) / line_alignment * line_alignment;
-  };
-  c.scratch_line = scratch;
-  const std::size_t line_bytes = round_up(scratch * 2 * sizeof(T));
-  // A grid's scratch line b starts an odd number of 64-byte lines (seven) after a whole
-  // multiple of a's size, so that the passes ping-ponging between them do not read and
-  // write the same cache sets (DESIGN.md 10, rule 4): a grid's scratch lines are a block of
-  // a power-of-two size for most lengths. Experiment X4 measured 8-9 % at 2^22 on the Mac
-  // and no case slower; the chain's lines were not part of it.
-  const std::size_t stagger = grid_plan.phases != 0 ? 7 * 64 : 0;
-  c.offset_b = line_bytes + stagger;
-  c.offset_block = 2 * line_bytes + stagger;
-  std::size_t used = c.offset_block + c.block_elements * 2 * sizeof(T);
-  // Each slot ends with the callback area (task 5.3a), from a 128-byte boundary: the largest of
-  // the callbacks' scratch, one member never running two at once, plus the 64 bytes that align
-  // it where the slot starts on a 64-byte boundary only (serial execution; core/callbacks.cpp,
-  // callback_area). Plans without callback scratch keep their layout.
   const std::size_t callback_scratch =
       edge_ops != nullptr
           ? std::max(edge_ops->in.call.any() ? edge_ops->in.call.scratch_bytes : 0,
                      edge_ops->out.call.any() ? edge_ops->out.call.scratch_bytes : 0)
           : 0;
-  if (callback_scratch != 0) {
-    constexpr std::size_t area_alignment = 128;
-    c.offset_callback = (used + area_alignment - 1) / area_alignment * area_alignment;
-    c.callback_bytes = callback_scratch;
-    // scratch_bytes is bounded at validation (core/edges.cpp), so nothing here overflows.
-    used = c.offset_callback + line_alignment + callback_scratch;
-  }
-  c.bytes = used == 0 ? 0 : used + line_alignment;
-  c.slot_bytes = (used + sync_line - 1) / sync_line * sync_line;
+  lay_out_workspace(c, scratch, 2 * sizeof(T), grid_plan.phases != 0, callback_scratch);
 }
 
 // The shape's counts and direction, which everything else depends on (std::invalid_argument
@@ -3184,7 +3237,7 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   mark_flat(c->prog, settings.unroll_calls && r > 1);
   // The edge driver's batched forms (task 5.2a): rows too are unrolled there, the walked form
   // being what X65 measured them against.
-  if (c->needs_args && settings.profile.edge_batched_forms && c->callback_sites.empty()) {
+  if (c->needs_args && c->edge_batched_on) {
     const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * real_bytes);
     c->edge_batched =
         make_edge_forms(c->prog, c->edge_records, settings.unroll_calls, c->edge_row_block,
@@ -3192,6 +3245,14 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
     // describe() and the workspace layout name the row blocks that build() planned.
     if (c->edge_batched.row_block != c->edge_row_block) {
       throw std::logic_error("fftn: internal: the row blocks planned are not the form built");
+    }
+    // The other forms, which describe() names too, so that a run's notes show which plans take
+    // them (the row blocks' line comes from build()).
+    const edge_forms& f = c->edge_batched;
+    if (f.row_block == 0 && (!f.flat.empty() || !f.calls.empty())) {
+      c->edges_note += std::string("\nedge forms: ") +
+                       (f.flat.empty() ? "the unrolled calls" : "the flat form") +
+                       " with the factor cursors";
     }
   }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
@@ -3243,6 +3304,34 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
 std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& opts,
                                            const build_settings& given, const edge_plan* edges) {
   return build_core(s, opts, given, edges, true);
+}
+
+row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real) {
+  check_counts(s);
+  if (s.kind != transform_kind::c2c || s.axes.size() != 1 || !s.runs.empty()) {
+    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows without runs");
+  }
+  const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
+  const auto cb = static_cast<std::ptrdiff_t>(real ? real_bytes : 2 * real_bytes);
+  const std::vector<std::size_t> full{s.axes[0].n};
+  const side_runs none;
+  const side in = resolve(s, full, full[0], true, true, cb, none);
+  const side out = resolve(s, full, full[0], false, true, cb, none);
+  check_reach(s, in, true);
+  check_reach(s, out, false);
+  check_no_overlap(s, out);
+  if (in_place) {
+    check_in_place(s, in, out);
+  }
+  row_layout l{
+      .in_stride = in.stride[0],
+      .out_stride = out.stride[0],
+      .in_dist = in.dist,
+      .out_dist = out.dist,
+  };
+  std::tie(l.in_lo, l.in_hi) = span_of(s, in);
+  std::tie(l.out_lo, l.out_hi) = span_of(s, out);
+  return l;
 }
 
 namespace {
@@ -3561,21 +3650,25 @@ isa instruction_set(const plan_core& core) noexcept {
 
 std::string describe(const plan_core& core) {
   std::ostringstream o;
-  o << "fftn plan: " << kind_name(core.kind);
-  if (core.kind == transform_kind::c2c) {
-    o << (core.dir == direction::forward ? " forward" : " backward");
+  if (!core.pipeline_title.empty()) {
+    o << core.pipeline_title << "\n";
+  } else {
+    o << "fftn plan: " << kind_name(core.kind);
+    if (core.kind == transform_kind::c2c) {
+      o << (core.dir == direction::forward ? " forward" : " backward");
+    }
+    o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
+    // The lengths as the shape lists its axes (plan_core::axis_of).
+    std::vector<std::size_t> listed = core.lengths;
+    for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
+      listed[core.axis_of[d]] = core.lengths[d];
+    }
+    for (std::size_t d = 0; d < listed.size(); ++d) {
+      o << (d == 0 ? "" : " x ") << listed[d];
+    }
+    o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
+      << (core.in_place ? ", in place" : ", out of place") << "\n";
   }
-  o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
-  // The lengths as the shape lists its axes (plan_core::axis_of).
-  std::vector<std::size_t> listed = core.lengths;
-  for (std::size_t d = 0; d < core.axis_of.size(); ++d) {
-    listed[core.axis_of[d]] = core.lengths[d];
-  }
-  for (std::size_t d = 0; d < listed.size(); ++d) {
-    o << (d == 0 ? "" : " x ") << listed[d];
-  }
-  o << ", " << core.prog.transforms << (core.prog.transforms == 1 ? " transform" : " transforms")
-    << (core.in_place ? ", in place" : ", out of place") << "\n";
   o << "instruction set: " << isa_name(instruction_set(core)) << "\n";
   // Some avx2 rules apply to one vendor's processors only (DESIGN.md 13.5).
   o << "processor vendor: " << cpu_vendor_name(core.profile.vendor) << "\n";

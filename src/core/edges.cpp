@@ -70,8 +70,8 @@ std::size_t side_length(const shape_view& s, std::size_t d, bool output) {
 }
 
 // Validates one edge and returns it as the plan applies it (fused and separate set later).
-edge_side side_of(const shape_view& s, const edge_view& e, bool output) {
-  const std::string name = output ? "edges.out" : "edges.in";
+// name: the edge's field in messages.
+edge_side side_of(const shape_view& s, const edge_view& e, bool output, const std::string& name) {
   check_scale(e.scale, s.prec, name + ".scale");
   if (e.accumulate && !output) {
     reject(name + ".accumulate", "is for the output edge only");
@@ -342,6 +342,17 @@ std::string exact(double v) {
 
 } // namespace
 
+edge_side resolve_edge_side(const shape_view& s, const edge_view& e, bool output,
+                            const std::string& name) {
+  return side_of(s, e, output, name);
+}
+
+bool scale_fits_precision(double scale, precision prec) { return scale_fits(scale, prec); }
+
+void check_edge_scale(double scale, precision prec, const std::string& name) {
+  check_scale(scale, prec, name);
+}
+
 resolved_edges resolve_edges(const shape_view& s, const options& opts, const edges_view& e,
                              bool fuse) {
   resolved_edges r{.opts = opts, .plan = {}};
@@ -349,8 +360,8 @@ resolved_edges resolve_edges(const shape_view& s, const options& opts, const edg
   // options::scale first, as a plan without edges judges it: the product below may move it
   // into a separate pass, where the plan's own check would not see it.
   check_scale(opts.scale, s.prec, "options.scale");
-  p.in = side_of(s, e.in, false);
-  p.out = side_of(s, e.out, true);
+  p.in = side_of(s, e.in, false, "edges.in");
+  p.out = side_of(s, e.out, true, "edges.out");
   if (opts.scale != 1.0 && e.out.scale != 1.0) {
     reject("edges.out.scale", "and options.scale are both given; options.scale is a shortcut for "
                               "edges.out.scale, so give one of them");

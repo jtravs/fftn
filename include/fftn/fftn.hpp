@@ -12,6 +12,7 @@
 #include "fftn/isa.hpp"         // IWYU pragma: export
 #include "fftn/lengths.hpp"     // IWYU pragma: export
 #include "fftn/options.hpp"     // IWYU pragma: export
+#include "fftn/pipeline.hpp"    // IWYU pragma: export
 #include "fftn/plan.hpp"        // IWYU pragma: export
 #include "fftn/shape.hpp"       // IWYU pragma: export
 #include "fftn/team.hpp"        // IWYU pragma: export

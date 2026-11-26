@@ -109,6 +109,38 @@ template <class In, class Out> edges_view view_of(const plan_edges<In, Out>& e) 
   return {.in = view_of(e.in), .out = view_of(e.out)};
 }
 
+// The kinds of pipeline<In, Mid, Out> (fftn/pipeline.hpp, DESIGN.md 12.2), from its element
+// types: two complex transforms, r2c then c2r (a real convolution), or c2r then r2c.
+enum class pipeline_kind : unsigned char { complex_pair, real_convolution, real_middle };
+
+template <class In, class Mid, class Out> struct pipeline_kind_of;
+template <class T> struct pipeline_kind_of<std::complex<T>, std::complex<T>, std::complex<T>> {
+  static constexpr pipeline_kind value = pipeline_kind::complex_pair;
+};
+template <class T> struct pipeline_kind_of<T, std::complex<T>, T> {
+  static constexpr pipeline_kind value = pipeline_kind::real_convolution;
+};
+template <class T> struct pipeline_kind_of<std::complex<T>, T, std::complex<T>> {
+  static constexpr pipeline_kind value = pipeline_kind::real_middle;
+};
+
+// A pipeline description (pipeline_desc) as plain values, borrowing its vectors as shape_view
+// does; the middle is an edge_view without accumulation.
+struct pipeline_view {
+  pipeline_kind kind = pipeline_kind::complex_pair;
+  precision prec = precision::f64;
+  direction first = direction::forward;
+  axis line{};
+  std::span<const batch> batches;
+  std::span<const stored_run> runs;
+  edge_view prologue;
+  edge_view middle;
+  edge_view epilogue;
+  std::size_t fanout = 1;
+  std::ptrdiff_t fanout_out_dist = 0;
+  std::ptrdiff_t fanout_factor_dist = 0;
+};
+
 class plan_core;
 
 // Validates the shape and options and builds the plan; throws std::invalid_argument naming
@@ -118,6 +150,12 @@ class plan_core;
 // The same with edges (src/core/edges.cpp validates them).
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_plan_core_with_edges(const shape_view& shape, const options& opts, const edges_view& edges);
+
+// Validates a pipeline description and builds its program (src/core/pipeline.cpp); throws
+// std::invalid_argument naming the offending field (desc.line.n, desc.middle.mul.kind, ...). The
+// pipeline runs on the plan entry points below, with an exec_args.
+[[nodiscard]] std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& desc,
+                                                                  const options& opts);
 
 // Runs transforms [first, first + count) of the batch; in and out address element 0 of
 // transform 0. Preconditions as for plan<In, Out>::execute_transforms.

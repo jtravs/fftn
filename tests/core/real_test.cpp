@@ -822,18 +822,22 @@ TEST(Real, PlanesAndVolumes) {
 
 // The rules: a long row's half-length transform is a grid where a c2c row of that length
 // would be one (with a profile fixed here: the machine's own may keep 2^19 points a chain,
-// X29); a short row is a leaf.
+// X29, or take the depth-first chain, X72 and X75); a short row is a leaf.
 TEST(Real, RulesChooseTheRoute) {
   const std::size_t big = std::size_t{1} << 20U;
   build_settings s;
   s.profile.grid_min_bytes = std::size_t{512} * 1024;
   s.profile.pow2_chain_bytes = 0; // the profile's power-of-two chains would keep it a chain
+  // The Xeon 6240's and Ice Lake's classes run such a half length on the depth-first chain
+  // instead (X75, X82; Real.RulesTakeTheDepthFirstHalfLength* test that route).
+  s.profile.depth_real_max_bytes = 0;
   for (const bool r2c : {true, false}) {
     const auto core = r2c ? make_plan_core(fftn::detail::view_of(fftn::rows_r2c<double>(big, 1)),
                                            fftn::options(), s)
                           : make_plan_core(fftn::detail::view_of(fftn::rows_c2r<double>(big, 1)),
                                            fftn::options(), s);
-    EXPECT_NE(fftn::detail::describe(*core).find("half-length complex grid"), std::string::npos);
+    EXPECT_NE(fftn::detail::describe(*core).find("half-length complex grid"), std::string::npos)
+        << fftn::detail::describe(*core);
   }
   EXPECT_NE(fftn::c2r_plan<double>(fftn::rows_c2r<double>(16, 1)).describe().find("a leaf of 8"),
             std::string::npos);

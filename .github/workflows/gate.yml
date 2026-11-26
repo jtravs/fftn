@@ -129,6 +129,15 @@ jobs:
         run: bash .github/scripts/fetchcontent-cache.sh restore ~/.cache/fftn-fetchcontent
       - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
+      # The library's text size per instruction-set target in the job summary, from the Release
+      # build when the job made one (tools/size_report.py). Informational: it never fails the
+      # job (DESIGN.md 14.3).
+      - &size
+        name: Library size (informational)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: uv run --frozen --quiet python tools/size_report.py build/check-release --summary "$GITHUB_STEP_SUMMARY" || true
       - &ccache-stats
         name: ccache (statistics)
         if: always()
@@ -221,6 +230,7 @@ jobs:
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
+      - *size
       - *ccache-stats
       - *ccache-save
       - *detected
@@ -263,6 +273,7 @@ jobs:
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
+      - *size
       - *ccache-stats
       - *ccache-save
       - *detected
@@ -307,6 +318,7 @@ jobs:
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
+      - *size
       - *ccache-stats
       - *ccache-save
       - *detected
@@ -330,6 +342,9 @@ jobs:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
       FFTN_CHECK_STAGES: ${{ matrix.stages }}
+      # The size report's tool (tools/size_report.py): the pinned LLVM's, since the image has
+      # no binutils.
+      FFTN_SIZE_TOOL: C:/fftn-llvm/bin/llvm-size.exe
     # No ccache here: clang-cl's debug information would need /Z7 for it.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -369,6 +384,7 @@ jobs:
       - *fetchcontent-place
       - name: Gate, ${{ matrix.stages }}
         run: bash scripts/check.sh
+      - *size
       - *detected
       - name: Windows on Arm feature probe (B2)
         if: always() && matrix.arch == 'arm64'
