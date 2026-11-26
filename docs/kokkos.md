@@ -185,11 +185,19 @@ As in Kokkos-FFT:
 - `fft`, `fft2` and `fftn` of a real View copy it into a complex temporary first.
 - `hfft` runs `irfft` on the conjugated input with the normalisation's direction swapped.
   The conjugate is a temporary, so the input is left unchanged; Kokkos-FFT conjugates a
-  non-const input in place.
+  non-const input in place. A real input is conjugated too, so the temporary's imaginary
+  parts are −0 where Kokkos-FFT's are +0. That can change only the sign of a zero in the
+  output.
 - `ihfft` runs `rfft` with the swapped normalisation and conjugates its output.
 - `fftn` and the rest take their axes before `norm`, and by default transform every
   dimension of the Views (at most three). A braced `{}` there means three zeros, not the
   default.
+- The temporaries are allocated after the instance is fenced, so they read what work queued
+  on it wrote. They keep the input's layout (LayoutLeft or LayoutRight; C order for
+  LayoutStride).
+
+After `using namespace fftn::kokkos::compat;` an unqualified `fftn(...)` is ambiguous with the
+namespace `fftn`: call it as `kfft::fftn` (or `fftn::kokkos::compat::fftn`), as the examples do.
 
 ## Moving a Kokkos-FFT call site
 

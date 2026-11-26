@@ -5,9 +5,9 @@
 // Kokkos' Serial back end and the build's threaded one: every function bit for bit what a
 // view_plan of the same Views executes with the same normalisation (or, for a real fft input,
 // hfft and ihfft, the view_plan of the transform Kokkos-FFT runs on its temporary), every
-// normalisation, default and explicit axes, in place, an output large enough to share its
-// scaling; a repeated call keeps one plan in the calling thread's convenience context; and
-// refusals as view_plan's.
+// normalisation, default and explicit axes, LayoutLeft and LayoutStride, in place, an output large
+// enough to share its scaling; a repeated call keeps one plan in the calling thread's convenience
+// context, and host threads calling at once each keep their own; and refusals as view_plan's.
 
 #include "kokkos/kokkos_helpers.hpp"
 
@@ -21,8 +21,11 @@
 #include <array>
 #include <complex>
 #include <cstddef>
+#include <latch>
 #include <optional>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -396,6 +399,171 @@ TYPED_TEST(KokkosOneShot, RepeatedCallsKeepOnePlanInTheThreadsContext) {
   kfft::fft(space, x, y, kfft::Normalization::backward, 0);
   EXPECT_EQ(ctx.cached_plans(), 3U);
   ctx.clear();
+}
+
+// The described elements of a rank-2 View, as reals in index order (the gaps of a strided View
+// left out).
+template <class View> auto elements_of(const View& v) {
+  using value = View::non_const_value_type;
+  using T = real_of<value>::type;
+  std::vector<T> r;
+  for (std::size_t i = 0; i < v.extent(0); ++i) {
+    for (std::size_t j = 0; j < v.extent(1); ++j) {
+      if constexpr (std::is_floating_point_v<value>) {
+        r.push_back(v(i, j));
+      } else {
+        r.push_back(v(i, j).real());
+        r.push_back(v(i, j).imag());
+      }
+    }
+  }
+  return r;
+}
+
+// LayoutStride Views (rows inside wider stores): the one-shot functions as the plans of the same
+// Views; a real fft input through its C-ordered temporary, as the plan of that copy.
+TYPED_TEST(KokkosOneShot, LayoutStrideViewsMatchAPlan) {
+  using T = TypeParam::real;
+  using S = TypeParam::space;
+  using cs = Kokkos::View<Kokkos::complex<T>**, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  using rs = Kokkos::View<T**, Kokkos::LayoutStride, Kokkos::HostSpace>;
+  const S space;
+  const std::size_t rows = 4;
+  const std::size_t n = 12;
+  const std::size_t h = n / 2 + 1;
+  const complex2<T> xs("xs", rows, n + 3);
+  const complex2<T> ys("ys", rows, n + 2);
+  const complex2<T> ws("ws", rows, n + 2);
+  const real2<T> rs_store("rs_store", rows, n + 1);
+  const complex2<T> hs("hs", rows, h + 2);
+  const complex2<T> hws("hws", rows, h + 2);
+  fill(xs, 31);
+  fill(rs_store, 32);
+  const cs x(xs.data(), Kokkos::LayoutStride(rows, n + 3, n, 1));
+  const cs y(ys.data(), Kokkos::LayoutStride(rows, n + 2, n, 1));
+  const cs w(ws.data(), Kokkos::LayoutStride(rows, n + 2, n, 1));
+  const rs r(rs_store.data(), Kokkos::LayoutStride(rows, n + 1, n, 1));
+  const cs hy(hs.data(), Kokkos::LayoutStride(rows, h + 2, h, 1));
+  const cs hw(hws.data(), Kokkos::LayoutStride(rows, h + 2, h, 1));
+  for (const kfft::Normalization norm : norms) {
+    SCOPED_TRACE("norm " + name_of(norm));
+    kfft::fft(space, x, y, norm);
+    const fftn::kokkos::view_plan p(space, x, w, kfft::Direction::forward, -1);
+    p.execute(x, w, norm);
+    expect_same_bits(elements_of(y), elements_of(w));
+    kfft::rfft(space, r, hy, norm);
+    const fftn::kokkos::view_plan q(space, r, hw, kfft::Direction::forward, -1);
+    q.execute(r, hw, norm);
+    expect_same_bits(elements_of(hy), elements_of(hw));
+    // fft of the strided real View: its temporary is C-ordered.
+    const complex2<T> rc("rc", rows, n);
+    for (std::size_t i = 0; i < rows; ++i) {
+      for (std::size_t j = 0; j < n; ++j) {
+        rc(i, j) = Kokkos::complex<T>(r(i, j), 0);
+      }
+    }
+    kfft::fft(space, r, y, norm);
+    const fftn::kokkos::view_plan c(space, rc, w, kfft::Direction::forward, -1);
+    c.execute(rc, w, norm);
+    expect_same_bits(elements_of(y), elements_of(w));
+  }
+}
+
+// LayoutLeft real input to fft and complex input to hfft, along dimension 0: the temporaries keep
+// LayoutLeft, so the one-shots are the plans of LayoutLeft copies.
+TYPED_TEST(KokkosOneShot, LayoutLeftRealFftAndHfft) {
+  using T = TypeParam::real;
+  using S = TypeParam::space;
+  using left = Kokkos::LayoutLeft;
+  const S space;
+  const std::size_t n = 18;
+  const std::size_t cols = 3;
+  const real2<T, left> r("r", n, cols);
+  fill(r, 41);
+  const complex2<T, left> rc("rc", n, cols);
+  const complex2<T, left> h("h", n / 2 + 1, cols);
+  fill(h, 42);
+  const complex2<T, left> hc("hc", n / 2 + 1, cols);
+  for (std::size_t j = 0; j < cols; ++j) {
+    for (std::size_t i = 0; i < n; ++i) {
+      rc(i, j) = Kokkos::complex<T>(r(i, j), 0);
+    }
+    for (std::size_t i = 0; i < n / 2 + 1; ++i) {
+      hc(i, j) = Kokkos::conj(h(i, j));
+    }
+  }
+  const complex2<T, left> y("y", n, cols);
+  const complex2<T, left> w("w", n, cols);
+  expect_as_planned(
+      r, y, w, [&](auto& i, auto& o, auto nm) { kfft::fft(space, i, o, nm, 0); },
+      [&](auto&, auto& o, auto nm) {
+        const fftn::kokkos::view_plan p(space, rc, o, kfft::Direction::forward, 0);
+        p.execute(rc, o, nm);
+      },
+      "fft of LayoutLeft reals");
+  const real2<T, left> o("o", n, cols);
+  const real2<T, left> ow("ow", n, cols);
+  const auto swapped = [](kfft::Normalization nm) {
+    if (nm == kfft::Normalization::forward) {
+      return kfft::Normalization::backward;
+    }
+    return nm == kfft::Normalization::backward ? kfft::Normalization::forward : nm;
+  };
+  expect_as_planned(
+      h, o, ow, [&](auto& i, auto& out, auto nm) { kfft::hfft(space, i, out, nm, 0); },
+      [&](auto&, auto& out, auto nm) {
+        const fftn::kokkos::view_plan p(space, hc, out, kfft::Direction::backward, 0);
+        p.execute(hc, out, swapped(nm));
+      },
+      "hfft of LayoutLeft");
+}
+
+// Host threads calling one-shot functions at once, on Serial: each finds its plan in its own
+// context, and every thread's results are the single thread's, bit for bit.
+TEST(KokkosOneShotThreads, EachHostThreadHasItsOwnContext) {
+  using T = double;
+  const Kokkos::Serial space;
+  const std::size_t rows = 6;
+  const std::size_t n = 40;
+  const int threads = 4;
+  std::vector<complex2<T>> in;
+  std::vector<complex2<T>> out;
+  std::vector<real2<T>> real_in;
+  std::vector<complex2<T>> half;
+  for (int t = 0; t < threads; ++t) {
+    in.emplace_back("in", rows, n);
+    out.emplace_back("out", rows, n);
+    real_in.emplace_back("real_in", rows, n);
+    half.emplace_back("half", rows, n / 2 + 1);
+    fill(in.back(), 50);
+    fill(real_in.back(), 51);
+  }
+  const complex2<T> want("want", rows, n);
+  const complex2<T> want_half("want_half", rows, n / 2 + 1);
+  kfft::ifft(space, in[0], want, kfft::Normalization::ortho);
+  kfft::rfft(space, real_in[0], want_half);
+  std::vector<std::size_t> cached(threads, 0);
+  std::latch start(threads);
+  std::vector<std::thread> pool;
+  for (int t = 0; t < threads; ++t) {
+    pool.emplace_back([&, t] {
+      const auto i = static_cast<std::size_t>(t);
+      start.arrive_and_wait();
+      for (int round = 0; round < 20; ++round) {
+        kfft::ifft(space, in[i], out[i], kfft::Normalization::ortho);
+        kfft::rfft(space, real_in[i], half[i]);
+      }
+      cached[i] = fftn::easy::thread_context().cached_plans();
+    });
+  }
+  for (std::thread& th : pool) {
+    th.join();
+  }
+  for (std::size_t t = 0; t < static_cast<std::size_t>(threads); ++t) {
+    EXPECT_EQ(cached[t], 2U) << "thread " << t;
+    expect_same_bits(reals_of(out[t]), reals_of(want));
+    expect_same_bits(reals_of(half[t]), reals_of(want_half));
+  }
 }
 
 // Refusals are view_plan's, naming the argument.
