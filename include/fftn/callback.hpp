@@ -82,7 +82,9 @@ struct block_info {
   std::ptrdiff_t element_stride = 1;
   /// The distance between consecutive lines, in elements of the data's type (0 for one line).
   std::ptrdiff_t line_stride = 0;
-  /// The members of a group handed together (a pipeline's `group`, not built yet): 1 otherwise.
+  /// The members of a group handed together: a pipeline's middle callback with
+  /// `pipeline_desc::group`, whose block is then member 0's line, member k's `k * group_stride`
+  /// elements further (task 5.3f, provisional); 1 otherwise.
   std::size_t group = 1;
   /// The distance between consecutive members of a group, in elements (0 without a group).
   std::ptrdiff_t group_stride = 0;

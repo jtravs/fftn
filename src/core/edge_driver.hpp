@@ -61,6 +61,9 @@ struct edge_record {
   // A pipeline's copies loop (task 5.3d): its iteration is the copy its callback stages are
   // passed (callback_env::copy).
   bool copies = false;
+  // A grouped pipeline's members loop (task 5.3f): its iteration is the member of the group
+  // (callback_env::group_member).
+  bool group_members = false;
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
