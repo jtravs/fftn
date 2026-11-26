@@ -39,6 +39,10 @@ fftn_always_optimise(pipeline_runs_test.cpp)
 fftn_add_test(fftn_pipeline_fanout_tests SOURCES pipeline_fanout_test.cpp
               LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_fanout_test.cpp)
+# Block callbacks on row pipelines (task 5.3d), likewise.
+fftn_add_test(fftn_pipeline_callbacks_tests SOURCES pipeline_callbacks_test.cpp
+              LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_callbacks_test.cpp)
 
 # Real-to-real plans (task 6.3) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)

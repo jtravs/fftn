@@ -58,6 +58,9 @@ struct edge_record {
   std::uint8_t origin_axis = 0;
   std::size_t origin_step = 0;
   std::array<std::size_t, 3> origin_start{};
+  // A pipeline's copies loop (task 5.3d): its iteration is the copy its callback stages are
+  // passed (callback_env::copy).
+  bool copies = false;
 };
 
 // The cursors of the edges' factor arrays, and of a pipeline's middle factor (task 5.2b):
@@ -72,7 +75,7 @@ struct factor_cursors {
 // values and the callbacks' user pointers (exec_args).
 struct edge_state {
   factor_cursors f;
-  std::array<void*, 2> user{};
+  std::array<void*, 3> user{};
   bool stand_in = false; // measured planning's (callback_env::stand_in)
 };
 
