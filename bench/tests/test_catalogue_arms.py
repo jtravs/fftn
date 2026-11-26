@@ -215,6 +215,11 @@ class ArmGrammar(unittest.TestCase):
         prefix = {"loaded_from": "/opt/fftw-old/lib/libfftw3.so", "expected_root": "/opt/fftw"}
         self.assertIsNotNone(arms.library_problem(prefix))
         self.assertIsNone(arms.library_problem({}))
+        # The single-precision library is checked as well (FFTW's libfftw3f).
+        both = {**ok, "loaded_from_f32": "/opt/fftw/lib/libfftw3f.so"}
+        self.assertIsNone(arms.library_problem(both))
+        float_wrong = {**ok, "loaded_from_f32": "/usr/lib/libfftw3f.so"}
+        self.assertIn("libfftw3f", arms.library_problem(float_wrong))
         # On Linux a symbol's address seen from the executable names the executable.
         with tempfile.TemporaryDirectory() as tmp:
             exe = Path(tmp) / "fbench-fftw"

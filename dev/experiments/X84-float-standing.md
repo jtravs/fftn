@@ -1,6 +1,6 @@
 # X84: float's standing against FFTW's float build
 
-- **Status:** done: float stands at 0.77–0.82 of FFTW's float build over the catalogue (c2c rows 0.69–0.70); 54, 81 and 94 cases above 1.10 on the Mac, the EPYC and the Xeon, listed below for the maintainer (Q23)
+- **Status:** done, with caveats: float stands at 0.77–0.82 of FFTW's float build over the catalogue (c2c rows 0.69–0.70); 54 (Mac, provisional: net battery discharge), 80 (EPYC, 7 more undecided) and 94 (Xeon, concurrent builds) cases above 1.10, listed below for the maintainer (Q23); follow-up: a quiet deciding EPYC run of the 7
 - **Owner:** task 6.11 session, 2026-11-26
 - **Phase / task:** 6.11, part 2 ([PLAN.md](../PLAN.md), phase 6 table); DESIGN 18.2 "Phase 6", Q23
 
@@ -66,11 +66,14 @@ library with its SIMD codelets, MEASURE, fresh wisdom per run.
   3. A case that fails fbench's accuracy check in either arm is reported as a failure, not
      timed.
 
-**Amendment 1** (2026-11-26 15:06 UTC, before the EPYC's deciding re-run). The EPYC's near-miss
-re-run (run 20261126-150451-f8fa, Slurm 520153) took six rounds in 18 s and its intervals span
-0.33–0.97 of FFTW ÷ FFTN for every case: too few rounds to decide anything. It is void as
-deciding; the deciding re-run repeats it with `--min-rounds 24`. The Mac's and the Xeon's
-re-runs (12 rounds each, intervals of a few per cent) stand.
+**Amendment 1** (committed 15:06:11 UTC, commit 65a2a270; the EPYC's deciding re-run was
+submitted at 15:06:14 and started at 15:06:23, run 20261126-150623-9a50, so the amendment came
+first, by 12 s). The EPYC's near-miss re-run (run 20261126-150451-f8fa, Slurm 520153) took six
+rounds in 18 s and its intervals span 0.33–0.97 of FFTW ÷ FFTN for every case: too few rounds
+to decide anything. It is void as deciding; the deciding re-run repeats it with
+`--min-rounds 24`. The Mac's and the Xeon's re-runs (12 rounds each; the Mac's intervals 1–4 %
+wide, the Xeon's 3–12 %) stand. The amendment's text first gave its time as 15:10, an estimate
+written before the commit; the commit's own time is the one above.
 
 ## Results
 
@@ -80,17 +83,26 @@ One thread, hot, median statistic; FFTN ÷ FFTW = 1 ÷ fbench's "F vs N" ratio, 
 | Machine | Run | Rounds (under load) | Band | Geomean, all 437 | c2c rows (201) | Beyond 1.05 (1 + band): all, c2c rows | Above 1.10 (1 + band) |
 |---|---|---|---|---|---|---|---|
 | Mac M5 Max | 20261126-132858-4724 | 12 (12) | ±1.24 % | **0.819** | 0.693 | 58 (13.3 %), 0 | 52 + 2 of 4 re-run = **54** |
-| EPYC 7763 | 20261126-133150-792a | 31 (5) | ±1.00 % | **0.796** | 0.701 | 90 (20.6 %), 29 (14.4 %) | 80 + 1 of 7 re-run = **81** |
+| EPYC 7763 | 20261126-133150-792a | 31 (5) | ±1.00 % | **0.796** | 0.701 | 90 (20.6 %), 29 (14.4 %) | **80**, and 7 undecided |
 | Xeon 6240 | 20261126-133155-bc03 | 23 (12) | ±3.13 % | **0.774** | 0.697 | 101 (23.1 %), 29 (14.4 %) | 92 + 2 of 9 re-run = **94** |
 
 Near-miss re-runs (rule 1), each deciding: Mac 20261126-135209-184d (12 rounds, ±2.32 %; r2c
 32 × 30 × 2 out of place 1.37 and c2r 2048 × 36 in place 1.21 above, c2r 32 × 30 × 2 out of place
 1.10 and c2c 32 × 32 × 16 1.11 not); EPYC 20261126-150623-9a50 (24 rounds, ±1.00 %, after
-amendment 1; c2c 16 × 4096 1.13 above, the other six 1.06–1.10 not); Xeon 20261126-150442-f67d
-(12 rounds, ±2.25 %; c2c 64 × 16 1.16 and r2c 2048 × 36 out of place 1.17 above, the other
-seven 1.03–1.17 with intervals reaching below 1.125 not). A first Mac re-run,
-20261126-135123-ef7c, ran on a tree with uncommitted test files (the binaries were 8eefad78's)
-and was repeated clean; the EPYC's void six-round run is 20261126-150451-f8fa.
+amendment 1: 36 rounds, 33 of them under load, load average median 49.7 and other processes
+31.9 cores median on the shared node; its band ±1.00 %), which therefore decides nothing (below);
+Xeon 20261126-150442-f67d (12 rounds, ±2.25 %; c2c 64 × 16 1.16 and r2c 2048 × 36 out of place
+1.17 above, the other seven, medians 1.08–1.14, with intervals reaching below 1.125 not). A
+first Mac re-run, 20261126-135123-ef7c, ran on a tree with uncommitted test files (the binaries
+were 8eefad78's) and was voided and repeated clean; it would have put c2r 32 × 30 × 2 out of
+place above 1.10 (1.19, interval from 1.15 against a bound of 1.11), as well as the two the clean
+run did. The EPYC's void six-round run is 20261126-150451-f8fa.
+
+**Undecided on the EPYC** (deciding run under load; FFTN ÷ FFTW median in the full run, then in
+the loaded re-run): c2c 1024 × 1024 1.12, 1.11; c2c 16 × 4096 1.12, 1.13; c2c 128 × 128 1.11,
+1.09; c2c 1024 × 256 1.11, 1.10; c2c 640 1.11, 1.10; c2c 128 × 128 × 16 1.11, 1.09; r2c
+2048 × 36 in place 1.10, 1.06. They are not counted among the 80 and need a deciding run on a
+quiet node (follow-up, not run now: the node is shared).
 
 By family, FFTN ÷ FFTW (geometric means; "batch" is more than three transforms):
 
@@ -109,32 +121,42 @@ For comparison, double's c2c rows against FFTW's double build (X56, 2026-11-18):
 EPYC 0.788, Xeon 0.658, with 3, 6 and 1 of 193 beyond noise. Float's c2c rows stand as well on
 the mean, but the x86 machines carry 29 of 201 beyond noise each.
 
-Validity and load. The Mac stayed on AC power from 13:28 to 13:50 UTC with no sleep (pmset and
-the power log); its battery read 99 % at the start and 90 % at the end with "AC attached; not
-charging" throughout, macOS holding the charge below its limit, not running on the battery.
-Every Mac round counted as loaded (other agents' work, 2.6 cores median). The Xeon's band is
-wide: its rounds shared the node with this step's own test builds (Slurm 17394, 17397, 17400)
-and other jobs. EPYC: DMOG node of Slurm 519947, shared, 5 of 31 rounds loaded.
+Validity and load.
+
+- **Mac: provisional.** pmset read "AC Power" at the start (13:28:57 UTC) and the end (13:49:44),
+  the wrapper's 15 s checks never saw another source, and the power log shows no sleep; but the
+  battery fell from 99 % to 90 % in those 21 minutes with "AC attached; not charging": net
+  discharge, which a charge limit does not explain. The Mac's numbers are provisional until a
+  run with a flat battery repeats them. The near-miss re-runs at 13:51:23–13:51:38 and
+  13:52:09–13:52:24 lie outside that recorded window; the wrapper read pmset before and after
+  each (89 %, AC, unchanged over their 15 s), which the same caveat covers. Every Mac round
+  counted as loaded (other agents' work, 2.6 cores median).
+- **Xeon: a protocol deviation.** This step's own test builds and runs (Slurm 17394, 17397, 17400,
+  8 CPUs each) ran on the node during the judging run, besides other users' jobs: 12 of 23 rounds
+  under load and a band of ±3.13 %. The Xeon's list carries that deviation. The wide band makes
+  it conservative: a case is listed only when its whole interval clears 1.10 × 1.0313.
+- **EPYC:** the full run on a shared DMOG node, 5 of 31 rounds loaded; the deciding re-run as
+  above.
 Slurm jobs: Xeon FFTW float build 17383, timing 17384 (build), 17385, 17405; EPYC 519946
-(build), 519947, 520153 (void), 520154.
+(build), 519947, 520153 (void), 520154 (under load).
 
 ## Verdict
 
 **Done; no code change** (Q23: tuning only for the cases the maintainer names). Float stands at
-0.82 (Mac), 0.80 (EPYC) and 0.77 (Xeon) of FFTW's float build over the standard catalogue,
+0.82 (Mac, provisional), 0.80 (EPYC) and 0.77 (Xeon) of FFTW's float build over the standard catalogue,
 inside DESIGN 1.3's double targets on the mean (≤ 0.85, ≤ 0.90, ≤ 0.85) but far outside its
 tail rule (13–23 % of cases beyond 1.05, against 5 %). The cases above 1.10, by family, for the
 maintainer to choose from:
 
 1. **Tiny real transforms** (all three machines, most of the list): r2c and c2r of 2, 3, 8, 15 and
-   16 points in batches of two (2–10 × FFTW), and the smoke tier's small real planes (5 × 7,
+   16 points in batches of two (2, 3, 8 and 15 points 1.7–9.9 × FFTW; 16 points 1.19–1.85 ×), and the smoke tier's small real planes (5 × 7,
    8 × 6, 16 × 12, 16 × 16, 32 × 30, 32 × 32: 1.13–4.0). FFTW has a codelet per size; FFTN's
    real route pays a pairing pass and a call per row. Double was not measured here; X6 (real-input
    codelets) is the standing proposal.
 2. **Real volumes** (all three): 16³, 32³, 48³ (Mac), 4 × 6 × 8 and 3 × 5 × 4, 1.13–2.2.
 3. **Real planes with a long last axis**: 2048 × 36 (all three, 1.12–1.24), 2048² in place (Xeon,
    1.40 and 1.52), 1536-point c2r rows (Xeon 1.46).
-4. **x86 c2c short-row batches**: 8, 12, 16, 32 and 64 points in batches of 16–4096 (EPYC 1.13–1.94,
+4. **x86 c2c short-row batches**: 8, 12, 16, 32 and 64 points in batches of 16–4096 (EPYC 1.25–1.94,
    Xeon 1.15–1.64), 96 × 1024 and 96 × 64 (Xeon), 1024 × 1–16 (EPYC 1.16–1.22).
 5. **x86 c2c rows of smooth mid lengths**: EPYC 80, 120, 160, 240, 384 (1.23–1.37); Xeon 20, 22,
    26, 160, 256, 131071 (1.19–1.51); 15 × 2 backward (both).
@@ -155,7 +177,7 @@ The full lists (FFTN ÷ FFTW, median), from the runs above with the re-runs' dec
   c2r-2048x36 op 1.23, ip 1.21 (re-run); c2r-16x12-b2 ip 1.24, op 1.23; r2c-16x12-b2 op 1.22,
   ip 1.22; c2r-32x30-b2 ip 1.18; r2c-16x16-b2 op 1.17, ip 1.17; r2c-32x30-b2 ip 1.17;
   r2c-8x6-b2 ip 1.16, op 1.15; c2r-16x16-b2 op 1.14, ip 1.13.
-- **EPYC (81):** c2r-3-b2 op 4.71, ip 4.71; r2c-3-b2 op 4.25, ip 4.20; r2c-5x7-b2 op 3.96,
+- **EPYC (80; the 7 undecided above are not in it):** c2r-3-b2 op 4.71, ip 4.71; r2c-3-b2 op 4.25, ip 4.20; r2c-5x7-b2 op 3.96,
   ip 3.93; c2r-5x7-b2 ip 3.75, op 3.74; c2r-2-b2 ip 3.09, op 3.07; r2c-2-b2 op 2.66, ip 2.56;
   c2r-15-b2 ip 2.63, op 2.61; r2c-15-b2 ip 2.24, op 2.20; c2c-8-b16 1.94; c2r-8-b2 op 1.88,
   ip 1.83; r2c-8x6-b2 op 1.88, ip 1.88; c2r-8x6-b2 ip 1.86, op 1.57; r2c-8-b2 op 1.86, ip 1.82;
@@ -168,8 +190,8 @@ The full lists (FFTN ÷ FFTW, median), from the runs above with the re-runs' dec
   c2c-16x12-b2 ip 1.25, op 1.25; c2c-8-b256 1.25; c2c-120 1.23; c2c-5x7-b2 ip 1.23, op 1.22;
   c2r-60-b2 op 1.22; c2c-1024 1.22; c2c-1024-b3 1.21; c2r-3x5x4 1.21; c2c-1024-b2 1.20;
   c2c-1024-b16 1.20; r2c-2048x36 op 1.19; c2c-16x16x16 1.18; c2r-2048x36 op 1.18;
-  c2c-1024 bwd 1.16; c2c-8-b2 ip 1.15; c2c-4x6x8 1.14; r2c-3x5x4 1.13; c2c-16-b4096 1.13
-  (re-run); c2c-16-b3 op 1.13, ip 1.13; c2r-2048x36 ip 1.12.
+  c2c-1024 bwd 1.16; c2c-8-b2 ip 1.15; c2c-4x6x8 1.14; r2c-3x5x4 1.13;
+  c2c-16-b3 op 1.13, ip 1.13; c2r-2048x36 ip 1.12.
 - **Xeon (94):** c2r-3-b2 ip 5.15, op 5.12; c2r-2-b2 ip 4.20, op 4.08; r2c-3-b2 op 4.13, ip 4.00;
   r2c-2-b2 ip 3.10, op 3.05; c2r-15-b2 op 2.51, ip 2.51; r2c-5x7-b2 op 2.50, ip 2.49;
   c2r-5x7-b2 op 2.39, ip 2.38; r2c-15-b2 op 2.25, ip 2.22; c2r-8x6-b2 op 2.23, ip 2.21;
@@ -191,4 +213,5 @@ The full lists (FFTN ÷ FFTW, median), from the runs above with the re-runs' dec
 Cases are out of place and one transform unless marked (`ip` in place, `-bN` a batch of N,
 `bwd` backward). The lists are where FFTN loses most, not a measure of the double tuning's reach:
 rules measured in double (cache-footprint limits, batch-leaf tables) apply to float unchanged.
-Lesson 1.14 in [LESSONS.md](../LESSONS.md).
+Lessons 1.14 and 1.15 in [LESSONS.md](../LESSONS.md). Follow-ups: a deciding EPYC run of the
+7 undecided cases on a quiet node; a Mac run with a flat battery before its list is final.
