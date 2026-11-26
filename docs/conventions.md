@@ -367,7 +367,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b to 5.2e and 5.3d, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -506,10 +506,17 @@ std::vector<std::complex<double>> y(n * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_user = &saturate});
 ```
 
-Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
-stored runs on either side, fan-out and block callbacks, planned by the rules (`options::effort` is ignored, and
-`pipeline::describe()` says so). Refused at construction, naming the field, until their steps: the
-inverse transform first (`spectral_pair_rows` with `direction::backward`), the kind `<C, T, C>`,
+A **spectral pair** runs the inverse transform first: `spectral_pair_rows(n, count,
+direction::backward)` (or `pipeline_desc::first`) for complex lines, and `pipeline<C, T, C>`, whose
+input and output lines are half spectra of n/2 + 1 bins (the c2r transform, ignoring the
+imaginary parts of bin 0 and, for even n, of bin n/2, then the middle on a real line of n points,
+which takes real factors only, then the r2c transform). A `<C, T, C>` pipeline's stored runs are
+bands of the half spectrum's bins.
+
+Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` and
+`pipeline<C, T, C>`, with stored runs on either side, fan-out and block callbacks, planned by the
+rules (`options::effort` is ignored, and
+`pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
 `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
 factor; a middle callback in another mode than `modify`, and `consume` in place, are refused too.
 On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring

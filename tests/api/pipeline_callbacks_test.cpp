@@ -15,8 +15,11 @@
 // in place, fan-out and the depth-first pair (forced), for <C, C, C> and <T, C, T> on every
 // instruction set in both precisions; serial, pieces of the batch, teams (completion::all and own)
 // and an executor bitwise alike. A convolution nested in a middle, on the callback's scratch,
-// bitwise under teams and an executor. Expectations hold on every target: none assumes a target's
-// radices or strategy unless the test forces it.
+// bitwise under teams and an executor. Spectral pairs inverse first (task 5.3e): <C, C, C> with
+// the backward transform first and <C, T, C> (c2r, a real middle, r2c), with and without
+// callbacks, bands of the half spectrum, fan-out and the depth-first pair (forced), likewise.
+// Expectations hold on every target: none assumes a target's radices or strategy unless the test
+// forces it.
 
 #include "core/pipeline.hpp"
 #include "core/plan_core.hpp"
@@ -490,7 +493,7 @@ template <class T, class E, class M = std::complex<T>> struct pcb_run {
     return c.epi == epi_cb::modify && !c.accumulate && c.out.empty();
   }
   [[nodiscard]] bool any_callback() const {
-    return c.pro != pro_cb::none || c.mid || c.epi != epi_cb::none;
+    return c.pro != pro_cb::off || c.mid || c.epi != epi_cb::off;
   }
 
   [[nodiscard]] fftn::exec_args args() {
@@ -520,9 +523,8 @@ template <class T, class E, class M = std::complex<T>> struct pcb_run {
   void expect_clean(const std::string& what) const {
     const auto side = [&](const auto& ctx, bool used, const std::vector<run_spec>& runs,
                           std::size_t copies, const char* name) {
-      EXPECT_EQ(ctx.errors.load(), 0)
-          << what << ": the " << name << "'s check failed (line " << ctx.first_error_line.load()
-          << ")";
+      EXPECT_EQ(ctx.errors.load(), 0) << what << ": the " << name << "'s check failed (line "
+                                      << ctx.first_error_line.load() << ")";
       std::size_t wrong = 0;
       for (std::size_t r = 0; r < c.count; ++r) {
         for (std::size_t k = 0; k < copies; ++k) {
@@ -610,10 +612,9 @@ template <class T, class E, class M = std::complex<T>> struct pcb_run {
     const int first = c.backward ? +1 : -1;
     const double pre = c.mid ? c.pro_scale : 1.0;
     const double post = c.options_scale * mid_scale * c.epi_scale * (c.mid ? 1.0 : c.pro_scale);
-    fftn::test::tolerance tol =
-        fftn::test::derived_tolerance<T>(c.n, fftn::test::fftn_bound(c.n)) * (1.0 + spread()) *
-            (c.epi_f != none ? 1.8 : 1.0) +
-        fftn::test::input_rounding<T>() * 6;
+    fftn::test::tolerance tol = fftn::test::derived_tolerance<T>(c.n, fftn::test::fftn_bound(c.n)) *
+                                    (1.0 + spread()) * (c.epi_f != none ? 1.8 : 1.0) +
+                                fftn::test::input_rounding<T>() * 6;
     // The callbacks' slopes (below 2.5) on the errors before them.
     if (c.mid) {
       tol = tol * 3;
@@ -729,8 +730,7 @@ template <class T, class E, class M = std::complex<T>> struct pcb_run {
           ++touched;
         }
       }
-      EXPECT_EQ(touched, 0U) << what << ": elements outside the copies' runs written\n"
-                             << describe;
+      EXPECT_EQ(touched, 0U) << what << ": elements outside the copies' runs written\n" << describe;
     }
   }
 

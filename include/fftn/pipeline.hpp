@@ -5,13 +5,14 @@
 /// Row pipelines: a transform, a pointwise middle and the inverse transform over one axis, in
 /// one sweep, the spectrum never reaching memory (dev/DESIGN.md 12.2).
 ///
-/// Provisional (tasks 5.2b to 5.2e and 5.3d, 2026-11-26): this API follows dev/DESIGN.md sections
-/// 12.2 and 12.3's API blocks with the proposals of its section 18.2 ("Pipelines", "Callbacks"),
-/// which the maintainer has yet to settle; it may change before the first release. Built so far:
-/// `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>` (r2c, then c2r),
-/// with their prologue, middle and epilogue vocabulary (scales, real and complex factors,
-/// accumulation), block callbacks on all three (fftn/callback.hpp), stored runs, and fan-out
-/// (several inverses per forward, each with its own middle factor and output).
+/// Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e, 2026-11-26): this API follows dev/DESIGN.md
+/// sections 12.2 and 12.3's API blocks with the proposals of its section 18.2 ("Pipelines",
+/// "Callbacks"), which the maintainer has yet to settle; it may change before the first release.
+/// Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` (r2c, then
+/// c2r) and `pipeline<C, T, C>` (c2r, then r2c), with their prologue, middle and epilogue
+/// vocabulary (scales, real and complex factors, accumulation), block callbacks on all three
+/// (fftn/callback.hpp), stored runs, and fan-out (several inverses per forward, each with its own
+/// middle factor and output).
 /// docs/conventions.md ("Pipelines") states what a pipeline computes.
 #pragma once
 
@@ -55,7 +56,10 @@ namespace fftn::inline v0 {
 /// line and the batch in the same way: the kernel of a convolution, whose array each execution
 /// passes in `exec_args::mid_factor`. The spectrum has n bins for `<C, C, C>` and the n/2 + 1
 /// bins of the r2c transform for `<T, C, T>` (bins 0 to n/2), whose c2r transform ignores the
-/// imaginary parts of bin 0 and, for even n, of bin n/2, as a c2r plan does.
+/// imaginary parts of bin 0 and, for even n, of bin n/2, as a c2r plan does. A `<C, T, C>`
+/// pipeline (task 5.3e) is the reverse: its input and output lines are half spectra of n/2 + 1
+/// bins (as a c2r plan's input and an r2c plan's output, the c2r transform ignoring the same
+/// imaginary parts), and its middle a real line of n points, which takes real factors only.
 /// Nothing is normalised: a round trip multiplies by n unless a scale or the kernel says
 /// otherwise. The scales of the prologue, the middle, the epilogue and `options::scale` are
 /// applied as one product; with a middle callback, as two (`middle.call`).
@@ -73,10 +77,10 @@ namespace fftn::inline v0 {
 /// execute another plan or pipeline on the line through a serial overload, with its workspace in
 /// `block_info::scratch`.
 ///
-/// Provisional (tasks 5.2b to 5.2e and 5.3d). A pipeline refuses, naming the field, what is not
-/// built yet: the inverse transform first (task 5.3), the kind `<C, T, C>` (task 5.3), stored runs
-/// on an in-place pipeline or beside a prologue or epilogue factor, and `fanout` above 1 in place;
-/// and a middle callback in a mode other than `modify`, and `consume` on an in-place pipeline.
+/// Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e). A pipeline refuses, naming the field, what is
+/// not built yet: stored runs on an in-place pipeline or beside a prologue or epilogue factor, and
+/// `fanout` above 1 in place; and a middle callback in a mode other than `modify`, and `consume`
+/// on an in-place pipeline.
 template <class In, class Mid, class Out> struct pipeline_desc {
   static_assert(
       (std::is_same_v<In, std::complex<double>> && std::is_same_v<Mid, std::complex<double>> &&
@@ -95,8 +99,9 @@ template <class In, class Mid, class Out> struct pipeline_desc {
       "C = std::complex<T>, in double or float");
 
   /// The direction of the first transform of a `<C, C, C>` pipeline; the second has the other.
-  /// `direction::forward` makes a convolution; `direction::backward` (a spectral pair) is
-  /// refused until task 5.3. The real kinds ignore it.
+  /// `direction::forward` makes a convolution; `direction::backward` a spectral pair, the inverse
+  /// transform first (task 5.3e). The real kinds ignore it: `<T, C, T>` runs r2c first and
+  /// `<C, T, C>` c2r first.
   direction first = direction::forward;
   /// The line: its logical length `n` (at least 1), the stride of its input elements
   /// (`in_stride`, in `In` elements) and of its output elements (`out_stride`, in `Out`
@@ -111,7 +116,8 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// or the output (`side::out`), validated as a shape's runs: input elements outside the input's
   /// runs are zero and not read, output elements outside the output's runs are not written, and
   /// each side's default distances and reach are by its stored extent (the end of its last run).
-  /// The logical positions are those of the line's n elements on both sides, for `<T, C, T>` too.
+  /// The logical positions are those of the line's n elements on both sides, for `<T, C, T>` too;
+  /// for `<C, T, C>` those of the half spectrum's n/2 + 1 bins (a band of bins, task 5.3e).
   /// Refused on an in-place pipeline and beside a prologue or epilogue factor (task 5.2d).
   std::vector<stored_run> runs{};
   /// The input edge: a block callback (`call`: `modify` or `produce`), then a scale and a factor
@@ -228,8 +234,8 @@ convolution_rows(std::size_t n, std::size_t count, std::span<const stored_run> r
 /// A batch of `count` complex rows of length `n`, stored one after another, as a spectral pair:
 /// the transform of direction `first`, the middle (none: set it), and the transform of the
 /// other direction. With `first` = `direction::forward` this is a convolution without its
-/// kernel; `complex_convolution_rows` names that case. Pipelines refuse
-/// `first` = `direction::backward` until task 5.3.
+/// kernel; `complex_convolution_rows` names that case. With `direction::backward` the inverse
+/// transform runs first (task 5.3e).
 ///
 /// `runs`: as for `complex_convolution_rows`. Exceptions, guarantees and status: as for
 /// `complex_convolution_rows`.

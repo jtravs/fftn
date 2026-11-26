@@ -3499,6 +3499,30 @@ Pipelines and plans without callbacks keep their programs: `describe()`, `worksp
 output bits of 1,560 probes (pipelines of every kind, fan-outs, runs, strides, in place, the
 depth-first pair forced, and c2c rows with callbacks) against `main` on the Mac.
 
+As built (task 5.3e; provisional, second reader pending): spectral pairs inverse first.
+- **`first = direction::backward` for `<C, C, C>`** is the chain pair with its directions swapped
+  (`c2c_line`'s signs; the twiddle tables are the same), fan-out included, and the depth-first pair
+  (forced) in either order (`depth_pair_form::first_sign`). The depth-first pair's passes that
+  read an input run and write an output run exist in one direction each (the forward first pass,
+  the backward top pass; `pass_args.hpp`), so inverse first its runs go through the read and store
+  stages; variants in the other direction are a kernel change for later.
+- **`<C, T, C>`** is the real chain pair reversed (`build_real_pair`'s `reversed`): `c2r_line`
+  from the input's n/2 + 1 bins into the workspace block, the middle on the n reals there, and
+  `r2c_line` from the block to the output's n/2 + 1 bins (the c2r pairing in the first chain's
+  first pass, the r2c pairing in the second's last, odd n by the full-length route, strided lines
+  through scratch). The sides are complex and take complex or real factors (judged as a c2r plan's
+  input edge and an r2c plan's output edge), the middle real factors only (as a c2r plan's output,
+  naming `desc.middle.mul.kind`); every factor is a pass on the line in the block. The sides'
+  layout and stored runs are those of a c2c line of n/2 + 1 elements: runs on the half spectrum
+  are bands of bins. Fan-out, accumulation, in place and 5.3d's callbacks (a real middle callback,
+  `block_fn<T>`) as on `<T, C, T>`. `first` is ignored for both real kinds.
+- `spectral_pair_rows(n, count, direction::backward)` describes the first; no helper describes
+  `<C, T, C>` (12.2's API block names none).
+- Not built: the lanes pair for `<C, C, C>` (5.2f has not started), in either order.
+
+Forward-first pipelines keep their programs and bits: `describe()`, `workspace_bytes()` and output
+bits of the 1,560 probes above, against `main`, unchanged by 5.3e too.
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -4999,6 +5023,7 @@ to change before a release.
 | 2026-11-26 | Convenience layer for real-to-real transforms (step 6.7, section 5.4, "As built"): provisional `dct`, `idct`, `dst`, `idst` (spans, both forms), `dctn`, `idctn`, `dstn`, `idstn` (views) and `dht` in `fftn::easy`, with scipy's `int` type and norms; `norm::ortho` implies scipy's `orthogonalize=True`, the flag not offered; one type on every axis; the orthogonalising weights as cached real edge factors; `dht` scaled as a forward transform, 1-D only. Awaits the maintainer's review of the API | scipy users' call sites translate one to one; the weights are what 12.1's real factors are for, so the layer adds no stage of its own |
 | 2026-11-26 | Fan-out on pipelines (task 5.2e, section 12.2, "As built"): the spectrum stays in the workspace block, a lines loop over the copies; a copy that writes its output itself is shared by a team's members, one that needs a line in memory (epilogue pass, accumulation, output runs, the depth-first pair) works in the block's second region through edge-record offsets and the copies run one after another; 18.2's proposals 5 and 6 as written | The design's copies loop on each member's scratch cannot hold a copy's line in memory: the block is shared by the team, so copies that work there are serial rather than given per-member regions (memory of a line per member for a rarer case). The depth-first first pass has no input-factor variant; a pass per copy into scratch costs one more sweep per copy there, and the pair is forced only until X67 |
 | 2026-11-26 | Block callbacks on planes and volumes (task 5.3c, section 12.3): the input's inside the first phase's line bodies (a modify callback's line copied first into the phase's destination, or for r2c into the real rows' copy in the workspace block), the output's inside the last phase's, on the line, the lanes column block's columns (lines along the last axis) or the block of adjacent transforms; a side with an edge phase of its own (a factor, accumulation) takes its callback there; the edge driver moves the coordinates with the enclosing loops; a consumed c2r output's rows in the workspace block over the half spectrum; no packed c2r intermediate with callbacks; refused beside stored runs on planes and volumes | DESIGN 12.3's table: a callback phase of its own would be the extra sweep that 12.5's stage exists to save. The edge phase a factor already has costs nothing more to carry the callback. Runs' edge phases are nests per run, left for a follow-up rather than refusing the whole feature |
+| 2026-11-26 | Spectral pairs inverse first (task 5.3e, section 12.3, "As built"): `<C, C, C>` with `first = direction::backward` (the chain pair and the forced depth-first pair with their directions swapped) and the kind `<C, T, C>` (the real chain pair reversed, its sides' layout and runs those of the n/2 + 1 bins, its middle real factors only); the lanes pair left to 5.2f. Awaits the maintainer's review of the API | 12.2's three kinds complete with the existing chains; the depth-first pair's run passes exist in one direction each, so inverse first takes its read and store stages rather than new kernels |
 | 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 

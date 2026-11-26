@@ -1064,8 +1064,7 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     std::vector<stage> body;
     endpoint from = home;
     if (pl.mid.separate) {
-      body.push_back(
-          middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::b, mid_real));
+      body.push_back(middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::b, mid_real));
       from = {.where = slot::b, .stride = 1};
       scratch = std::max(scratch, bins);
     }
@@ -1104,16 +1103,15 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   // describe()'s words for the two chains.
   const std::string chains =
       "line (n = " + std::to_string(n) + "): " + (reversed ? "backward " : "forward ") +
-      chain.real_text(n, !reversed, strided_in) + ", then " + (reversed ? "forward " : "backward ") +
-      chain.real_text(n, reversed, strided_out);
+      chain.real_text(n, !reversed, strided_in) + ", then " +
+      (reversed ? "forward " : "backward ") + chain.real_text(n, reversed, strided_out);
   if (fanned) {
     lay_out_workspace(c, scratch, 2 * sizeof(T), false, callback_scratch(pl));
     c.axis_notes.push_back(chains + " per copy");
     return;
   }
   if (pl.mid.separate) {
-    line.push_back(
-        middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::block, mid_real));
+    line.push_back(middle_stage(c.prec, pl.mid, mid_n, chunk, slot::block, slot::block, mid_real));
   }
   if (ec) {
     // An epilogue callback (task 5.3d): on the output the second chain (or the epilogue's pass
@@ -1122,8 +1120,8 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
     const bool to_out = epilogue_direct(pl.epi) && !pl.epi.separate;
     scratch = std::max(scratch, second_chain(home, to_out ? stored_out : home, scale, line));
-    row_output_with_callback(c.prec, side_real, pl.epi, side_n, stored_out,
-                             epilogue_direct(pl.epi), chunk, block_bytes, c.callback_sites, line);
+    row_output_with_callback(c.prec, side_real, pl.epi, side_n, stored_out, epilogue_direct(pl.epi),
+                             chunk, block_bytes, c.callback_sites, line);
   } else if (pl.epi.runs.any()) {
     // The output's runs: the second chain ends in the block, the store stage writes the runs.
     const double scale = pl.at == scale_at::inverse_out ? pl.scale : 1.0;
@@ -1386,8 +1384,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   // consume receives each line's copies in copy order instead.
   if (fanned && !consumed(v.epi)) {
     const std::size_t real_bytes = d.prec == precision::f64 ? sizeof(double) : sizeof(float);
-    const auto [lo, hi] = check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid,
-                                       sides.axes[0].n);
+    const auto [lo, hi] =
+        check_copies(d, layout, runs, real ? real_bytes : 2 * real_bytes, v.mid, sides.axes[0].n);
     c->out_lo += lo;
     c->out_hi += hi;
   }
@@ -1435,14 +1433,14 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
   c->runs_inline = runs_inline(c->graph, c->profile);
   c->built = depth ? strategy_choice::depth : strategy_choice::chain;
   c->strategy_name = real || real_mid ? "the real chain pair"
-                     : depth             ? "the depth-first pair"
-                                         : "the chain pair";
+                     : depth          ? "the depth-first pair"
+                                      : "the chain pair";
 
   // describe().
   const std::size_t lines = c->prog.transforms;
   c->pipeline_title = std::string("fftn pipeline: ") +
-                      (real       ? "<t, c, t> r2c then c2r, "
-                       : real_mid ? "<c, t, c> c2r then r2c, "
+                      (real                             ? "<t, c, t> r2c then c2r, "
+                       : real_mid                       ? "<c, t, c> c2r then r2c, "
                        : d.first == direction::backward ? "<c, c, c> backward then forward, "
                                                         : "<c, c, c> forward then backward, ") +
                       (d.prec == precision::f64 ? "double" : "float") +
@@ -1502,8 +1500,8 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
                      : fanned        ? fan_middle
                      : real ? "in a separate pass on the line's n/2 + 1 bins in the workspace block"
                      : real_mid ? "in a separate pass on the line's n reals in the workspace block"
-                     : depth ? "in a separate pass on the line in scratch"
-                             : "in a separate pass on the line in the workspace block") +
+                     : depth    ? "in a separate pass on the line in scratch"
+                                : "in a separate pass on the line in the workspace block") +
       "\n" +
       operation_text("epilogue", pl.epi,
                      fanned ? "in the backward chain's last pass, per copy"
@@ -1595,7 +1593,9 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       }
     };
     const auto edge_blocks = [&] {
-      return callback_blocks("", real_mid ? d.line.n / 2 + 1 : d.line.n, 1, side_bytes, block_bytes, "lines").block;
+      return callback_blocks("", real_mid ? d.line.n / 2 + 1 : d.line.n, 1, side_bytes, block_bytes,
+                             "lines")
+          .block;
     };
     add("prologue", pl.pro,
         std::string("on each line ") + home +
