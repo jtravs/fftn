@@ -294,7 +294,7 @@ of it, counted by `workspace_bytes()`).
 // Each output bin k of transform t times exp(i g |y|^2), a phase that depends on the bin's
 // own value: pure per element, so any team or executor gives the same bits.
 const double g = 0.01;
-const auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
+auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noexcept {
   for (std::size_t i = 0; i < info.length; ++i) {
     std::complex<double>& v = y[static_cast<std::ptrdiff_t>(i) * info.element_stride];
     v *= std::polar(1.0, g * std::norm(v));
@@ -302,12 +302,12 @@ const auto kerr = [g](const fftn::block_info& info, std::complex<double>* y) noe
 };
 const fftn::c2c_plan<double> plan(
     fftn::rows_c2c<double>(n, count, fftn::direction::forward), {},
-    {.out = {.call = {.fn = fftn::callback_of<const decltype(kerr), std::complex<double>>()}}});
+    {.out = {.call = {.fn = fftn::callback_of<decltype(kerr), std::complex<double>>()}}});
 fftn::workspace ws(plan);
 
 std::vector<std::complex<double>> y(n * count);
 // The lambda's address reaches the callback as its `user` pointer.
-plan.execute(x.data(), y.data(), ws, {.out_user = const_cast<decltype(kerr)*>(&kerr)});
+plan.execute(x.data(), y.data(), ws, {.out_user = &kerr});
 ```
 
 On the input edge the input is read (or produced), then a `modify` callback runs, then the
