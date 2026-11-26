@@ -5,12 +5,12 @@
 /// Row pipelines: a transform, a pointwise middle and the inverse transform over one axis, in
 /// one sweep, the spectrum never reaching memory (dev/DESIGN.md 12.2).
 ///
-/// Provisional (tasks 5.2b and 5.2c, 2026-11-26): this API follows dev/DESIGN.md section 12.2's
+/// Provisional (tasks 5.2b to 5.2e, 2026-11-26): this API follows dev/DESIGN.md section 12.2's
 /// API block with the proposals of its section 18.2 ("Pipelines"), which the maintainer has yet to
 /// settle; it may change before the first release. Built so far: `pipeline<C, C, C>` with the
 /// forward transform first and `pipeline<T, C, T>` (r2c, then c2r), with their prologue, middle
-/// and epilogue vocabulary (scales, real and complex factors, accumulation), one inverse per
-/// forward, and every line stored whole.
+/// and epilogue vocabulary (scales, real and complex factors, accumulation), stored runs, and
+/// fan-out (several inverses per forward, each with its own middle factor and output).
 /// docs/conventions.md ("Pipelines") states what a pipeline computes.
 #pragma once
 
@@ -58,9 +58,9 @@ namespace fftn::inline v0 {
 /// otherwise. The scales of the prologue, the middle, the epilogue and `options::scale` are
 /// applied as one product.
 ///
-/// Provisional (tasks 5.2b to 5.2d). A pipeline refuses, naming the field, what is not built yet:
-/// the inverse transform first (task 5.3), `fanout` above 1 (task 5.2e), the kind `<C, T, C>`
-/// (task 5.3), and stored runs on an in-place pipeline or beside a prologue or epilogue factor.
+/// Provisional (tasks 5.2b to 5.2e). A pipeline refuses, naming the field, what is not built yet:
+/// the inverse transform first (task 5.3), the kind `<C, T, C>` (task 5.3), stored runs on an
+/// in-place pipeline or beside a prologue or epilogue factor, and `fanout` above 1 in place.
 template <class In, class Mid, class Out> struct pipeline_desc {
   static_assert(
       (std::is_same_v<In, std::complex<double>> && std::is_same_v<Mid, std::complex<double>> &&
@@ -117,13 +117,19 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// transform, then stored, or added to the output's value with `accumulate` (a block
   /// callback, `call`, is refused until task 5.3d).
   edge<Out> epilogue{};
-  /// How many inverse transforms run on each middle spectrum, each with its own middle factor:
-  /// 1 (more is refused until task 5.2e).
+  /// How many inverse transforms (copies) run on each line's spectrum, at least 1. Copy k
+  /// (0 <= k < fanout) multiplies the spectrum by the middle's factor read `k *
+  /// fanout_factor_dist` elements past where copy 0 reads it, then runs the inverse transform and
+  /// the epilogue (whose factor is every copy's), writing `k * fanout_out_dist` elements past where
+  /// copy 0 writes; the forward transform and the prologue run once per line. Refused above 1 on
+  /// an in-place pipeline (dev/DESIGN.md 18.2, proposal 6). Provisional (task 5.2e).
   std::size_t fanout = 1;
-  /// With `fanout` above 1, the distance between copies' outputs, in `Out` elements (task 5.2e).
+  /// With `fanout` above 1, the distance between copies' outputs, in `Out` elements, of either
+  /// sign: no output element of one copy may be one of another copy's or another line's (each
+  /// side's reach by its stored extent with runs), so 0 is refused.
   std::ptrdiff_t fanout_out_dist = 0;
-  /// With `fanout` above 1, the distance between copies' middle factors, in the array's elements
-  /// (task 5.2e).
+  /// With `fanout` above 1, the distance between copies' middle factors, in the array's elements,
+  /// of either sign; 0 gives every copy the same factor. Ignored without a middle factor.
   std::ptrdiff_t fanout_factor_dist = 0;
 };
 
@@ -241,7 +247,12 @@ spectral_pair_rows(std::size_t n, std::size_t count, direction first,
 /// between its read and its store). `effort` and `use` are ignored: pipelines are planned by
 /// the rules until task 5.2g, and `describe()` says so.
 ///
-/// Provisional (tasks 5.2b to 5.2d): see `pipeline_desc`.
+/// With fan-out (`pipeline_desc::fanout`) each line's spectrum stays in the workspace while its
+/// copies run; a team shares a line's copies where each copy writes its output itself, and runs
+/// them one after another where a copy's line needs the workspace for an epilogue pass,
+/// accumulation or output runs (`describe()` says which).
+///
+/// Provisional (tasks 5.2b to 5.2e): see `pipeline_desc`.
 template <class In, class Mid, class Out> class pipeline {
 public:
   /// Builds the pipeline `desc` with options `opts`.
@@ -251,10 +262,11 @@ public:
   /// middle that is not valid (as `plan`'s edges are judged, with names such as
   /// `desc.epilogue.mul.batch_strides`; a complex factor on the real input or output of a
   /// `<T, C, T>` pipeline names `desc.prologue.mul.kind` or `desc.epilogue.mul.kind`),
-  /// `accumulate` on the prologue or on an in-place pipeline, both `options::scale` and
-  /// `desc.epilogue.scale` other than 1, a product of scales not representable in the
-  /// precision, a negative or non-finite `options::measure_seconds`, or what is not built yet
-  /// (`pipeline_desc`). Throws `std::bad_alloc` when memory runs out.
+  /// `accumulate` on the prologue or on an in-place pipeline, copies whose outputs overlap or
+  /// whose spans overflow (`desc.fanout_out_dist`, `desc.fanout_factor_dist`), both
+  /// `options::scale` and `desc.epilogue.scale` other than 1, a product of scales not
+  /// representable in the precision, a negative or non-finite `options::measure_seconds`, or
+  /// what is not built yet (`pipeline_desc`). Throws `std::bad_alloc` when memory runs out.
   explicit pipeline(const pipeline_desc<In, Mid, Out>& desc, const options& opts = {})
       : core_(detail::make_pipeline_core(view_of(desc), opts)) {}
 

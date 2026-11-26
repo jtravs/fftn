@@ -367,7 +367,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b to 5.2d, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2e, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -448,12 +448,36 @@ std::vector<double> y(m * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
 ```
 
+A **fan-out** runs several inverse transforms (copies) on each line's spectrum: the forward
+transform and the prologue once per line, then for each copy k the middle with its own factor,
+`fanout_factor_dist` k elements past copy 0's (0: one factor for every copy), the inverse
+transform and the epilogue (whose factor is every copy's), written `fanout_out_dist` k `Out`
+elements past copy 0's output. The copies' outputs must overlap neither one another nor other
+lines' (refused, naming `desc.fanout_out_dist`), and an in-place pipeline has one copy. The
+spectrum stays in the workspace while the copies run:
+
+```cpp file=examples/pipeline.cpp region=fanout
+// Every row transformed once, then convolved with three kernels: copy k multiplies the
+// row's spectrum by kernel k (n bins on) and writes a whole batch of rows (n * count
+// elements on).
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.middle.scale = 1.0 / static_cast<double>(n);
+desc.fanout = copies;
+desc.fanout_factor_dist = static_cast<std::ptrdiff_t>(n);
+desc.fanout_out_dist = static_cast<std::ptrdiff_t>(n * count);
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<std::complex<double>> y(n * count * copies);
+pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernels.data()});
+```
+
 Built so far: `pipeline<C, C, C>` with the forward transform first and `pipeline<T, C, T>`, with
-stored runs on either side, one inverse per forward, planned by the rules (`options::effort` is
-ignored, and `pipeline::describe()` says so). Refused at construction, naming the field, until
-their steps: the inverse transform first (`spectral_pair_rows` with `direction::backward`), the
-kind `<C, T, C>`, `fanout` above 1, and stored runs on an in-place pipeline or beside a prologue
-or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the
+stored runs on either side and fan-out, planned by the rules (`options::effort` is ignored, and
+`pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
+the inverse transform first (`spectral_pair_rows` with `direction::backward`), the kind
+`<C, T, C>`, `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a
+prologue or epilogue factor. On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the
 neighbouring transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and
 the runs' reading and storing, in a pass of its own over the line while it is in the workspace
 (`describe()` counts them), except that runs within the line's first half are read or written by

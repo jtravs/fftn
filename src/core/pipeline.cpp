@@ -514,9 +514,9 @@ void end_with_copies(program& p, const pipeline_view& d, const edge_side& mid,
 // line's copies one after another (loop::serial_lines).
 template <class T>
 void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout& l,
-                          const build_settings& settings, chain_builder<T>& chain,
-                          const placed& pl, run_prunings& pr, std::vector<stage>& line,
-                          std::size_t scratch, fanout_marks& fan) {
+                          const build_settings& settings, chain_builder<T>& chain, const placed& pl,
+                          run_prunings& pr, std::vector<stage>& line, std::size_t scratch,
+                          fanout_marks& fan) {
   program& p = c.prog;
   const std::size_t n = d.line.n;
   const std::size_t chunk = settings.chunk_points;
@@ -529,10 +529,10 @@ void build_complex_copies(plan_core& c, const pipeline_view& d, const row_layout
     inverse.in = edge_op::factor;
     inverse.in_factor = middle_tag;
   }
-  const bool direct = !pl.epi.accumulate && !pl.epi.separate &&
-                      (!pl.epi.runs.any() ||
-                       (within_half(pl.epi.runs.of(0), n) && chain.head_last(n) &&
-                        half_stored(pl.epi.runs.of(0), n, stored_out)));
+  const bool direct =
+      !pl.epi.accumulate && !pl.epi.separate &&
+      (!pl.epi.runs.any() || (within_half(pl.epi.runs.of(0), n) && chain.head_last(n) &&
+                              half_stored(pl.epi.runs.of(0), n, stored_out)));
   if (direct) {
     endpoint from = home;
     if (pl.mid.separate) {
@@ -723,10 +723,10 @@ bool build_pair(plan_core& c, const pipeline_view& d, const row_layout& l, const
 // the c2r chain's output.
 //
 // With fan-out (task 5.2e) the spectrum stays in the block and the scales' product goes to the
-// prologue's pass or the r2c chain's output (place_fanout). Where each copy writes its output itself
-// (no epilogue factor, accumulation or output runs), copy k is the middle's pass from the block
-// into scratch b (copy k's factor) and the c2r chain from there to copy k's output (or the c2r
-// chain from the block, without a middle factor), which only read the block: a team shares the
+// prologue's pass or the r2c chain's output (place_fanout). Where each copy writes its output
+// itself (no epilogue factor, accumulation or output runs), copy k is the middle's pass from the
+// block into scratch b (copy k's factor) and the c2r chain from there to copy k's output (or the
+// c2r chain from the block, without a middle factor), which only read the block: a team shares the
 // copies. Otherwise copy k's line goes to the block's second region, as for the <C, C, C> pair
 // (second_region), and a team runs a line's copies one after another.
 template <class T>
@@ -761,8 +761,9 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     forward_aliased = true;
   }
   const endpoint home{.where = slot::block, .stride = 1};
-  scratch = std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased,
-                                             pl.at == scale_at::forward_out ? pl.scale : 1.0, line));
+  scratch =
+      std::max(scratch, chain.r2c_line(n, forward_src, home, forward_aliased,
+                                       pl.at == scale_at::forward_out ? pl.scale : 1.0, line));
   const auto real_bytes = static_cast<std::ptrdiff_t>(sizeof(T));
   const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
   if (fanned && !pl.epi.separate && !pl.epi.runs.any()) {
@@ -785,8 +786,8 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
     scratch = std::max(scratch, chain.c2r_line(n, home, home, 1.0, body));
     if (pl.epi.runs.any()) {
       run_line_stages(c.prec, pl.epi, true, n, pl.epi.runs.of(0),
-                      {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk, true,
-                      body);
+                      {.src = slot::block, .dst = slot::out, .dst_stride = l.out_stride}, chunk,
+                      true, body);
     } else {
       body.push_back(edge_pass_stage(c.prec, pl.epi, true, n, slot::block, 1, slot::out,
                                      l.out_stride, chunk, true, pl.epi.axis_stride));
@@ -798,11 +799,10 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
   if (fanned) {
     lay_out_workspace(c, scratch, 2 * sizeof(T), false, 0);
     const bool strided_out = !pl.epi.separate && !pl.epi.runs.any() && l.out_stride != 1;
-    c.axis_notes.push_back("line (n = " + std::to_string(n) + "): forward " +
-                           chain.real_text(n, true, !pl.pro.separate && !pl.pro.runs.any() &&
-                                                        l.in_stride != 1) +
-                           ", then backward " + chain.real_text(n, false, strided_out) +
-                           " per copy");
+    c.axis_notes.push_back(
+        "line (n = " + std::to_string(n) + "): forward " +
+        chain.real_text(n, true, !pl.pro.separate && !pl.pro.runs.any() && l.in_stride != 1) +
+        ", then backward " + chain.real_text(n, false, strided_out) + " per copy");
     return;
   }
   if (pl.mid.separate) {
@@ -842,8 +842,7 @@ void build_real_pair(plan_core& c, const pipeline_view& d, const row_layout& l, 
 // the copies, fits std::ptrdiff_t. Returns the bytes the copies add to the output's reach on
 // each side.
 std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, const row_layout& l,
-                                                       const run_plan& runs,
-                                                       std::size_t out_bytes,
+                                                       const run_plan& runs, std::size_t out_bytes,
                                                        std::size_t factor_bytes) {
   constexpr auto limit = static_cast<std::size_t>(PTRDIFF_MAX);
   const std::size_t copies = d.fanout - 1;
@@ -855,8 +854,7 @@ std::pair<std::ptrdiff_t, std::ptrdiff_t> check_copies(const pipeline_view& d, c
   };
   const std::size_t out_dist = magnitude(d.fanout_out_dist);
   if (!fits(out_dist, out_bytes) ||
-      copies * out_dist * out_bytes >
-          limit - static_cast<std::size_t>(l.out_hi - l.out_lo)) {
+      copies * out_dist * out_bytes > limit - static_cast<std::size_t>(l.out_hi - l.out_lo)) {
     refuse("desc.fanout_out_dist", "times desc.fanout - 1 makes the output's span overflow");
   }
   if (factor_bytes != 0 && !fits(magnitude(d.fanout_factor_dist), factor_bytes)) {

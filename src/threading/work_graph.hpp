@@ -14,7 +14,8 @@
 // - a loop nest over the lines of one axis (2-D and 3-D transforms) is a phase whose
 //   chunks are runs of whole lines; each line runs all its stages on the scratch lines of
 //   the thread that runs it, and the task's block (if any) is shared. A nest that joins it
-//   (loop::joins: a column phase's narrower last block) adds its lines to the same phase.
+//   (loop::joins: a column phase's narrower last block) adds its lines to the same phase. A
+//   nest whose lines work in the shared block (loop::serial_lines) is one chunk.
 //
 // Either way a chunk runs exactly the code serial execution runs for it, on the same
 // elements, so the output does not depend on who runs which chunk (DESIGN.md 15.5).

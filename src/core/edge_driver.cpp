@@ -616,10 +616,10 @@ bool unroll_edge_records(const program& p, const std::vector<edge_record>& e, st
                 {
                     .leaf = reads ? e[i + 1].leaf : only->leaf,
                     .units = l.count,
-                    .src_off = offset_of(only->src, from) +
-                               block_offset(only->src, e[i + 1].block_src),
-                    .dst_off = offset_of(only->dst, from) +
-                               block_offset(only->dst, e[i + 1].block_dst),
+                    .src_off =
+                        offset_of(only->src, from) + block_offset(only->src, e[i + 1].block_src),
+                    .dst_off =
+                        offset_of(only->dst, from) + block_offset(only->dst, e[i + 1].block_dst),
                     .src_step = step_of(l, only->src),
                     .dst_step = step_of(l, only->dst),
                     .args = static_cast<std::uint32_t>(arg_of[i + 1]),
