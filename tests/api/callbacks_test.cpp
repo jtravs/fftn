@@ -140,12 +140,15 @@ template <class T> struct cb_context {
     }
   }
   // Checks common to every block, counts its elements, and checks and moves the member's mark.
+  // A block may hold several rows (the edge driver's row blocks, task 5.3b): line k is transform
+  // `transform + k`, line_stride elements on.
   bool check(const fftn::block_info& info, const std::complex<T>* data) {
-    const bool ok = info.lines == 1 && info.line_axis == fftn::along_transforms &&
+    const bool ok = info.lines >= 1 && info.line_axis == fftn::along_transforms &&
                     info.element_axis == 0 && info.origin.size() == 1 && info.length > 0 &&
                     info.origin[0] + info.length <= n && info.transform < count &&
-                    info.member >= 0 && info.member < lanes && info.copy == 0 && info.group == 1 &&
-                    info.scratch.size() == scratch;
+                    info.lines <= count - info.transform && info.member >= 0 &&
+                    info.member < lanes && info.copy == 0 && info.group == 1 &&
+                    info.scratch.size() == scratch && (info.lines > 1 || info.line_stride == 0);
     if (!ok) {
       fail(__LINE__);
       return false;
@@ -153,14 +156,18 @@ template <class T> struct cb_context {
     if (scratch != 0 && reinterpret_cast<std::uintptr_t>(info.scratch.data()) % 128 != 0) {
       fail(__LINE__);
     }
-    // The stride of an axis of one point is the shape's to ignore.
-    if (base != nullptr && (data != base + static_cast<std::ptrdiff_t>(info.transform) * dist +
-                                        static_cast<std::ptrdiff_t>(info.origin[0]) * stride ||
-                            (n > 1 && info.element_stride != stride))) {
-      fail(__LINE__);
-    }
-    for (std::size_t i = 0; i < info.length; ++i) {
-      hits[info.transform * n + info.origin[0] + i].fetch_add(1, std::memory_order_relaxed);
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      const std::size_t t = info.transform + k;
+      // The stride of an axis of one point is the shape's to ignore.
+      const std::complex<T>* line = data + static_cast<std::ptrdiff_t>(k) * info.line_stride;
+      if (base != nullptr && (line != base + static_cast<std::ptrdiff_t>(t) * dist +
+                                          static_cast<std::ptrdiff_t>(info.origin[0]) * stride ||
+                              (n > 1 && info.element_stride != stride))) {
+        fail(__LINE__);
+      }
+      for (std::size_t i = 0; i < info.length; ++i) {
+        hits[t * n + info.origin[0] + i].fetch_add(1, std::memory_order_relaxed);
+      }
     }
     // The member's scratch is its own: the mark it left on its last call is still there (FFTN
     // never writes the area and no other member uses it), then a new one, the whole area written.
@@ -178,54 +185,47 @@ template <class T> struct cb_context {
     }
     return true;
   }
+  // f(element, j, t) on each element of the block, after check().
+  template <class F> void each(const fftn::block_info& info, std::complex<T>* data, F f) {
+    if (!check(info, data)) {
+      return;
+    }
+    for (std::size_t k = 0; k < info.lines; ++k) {
+      for (std::size_t i = 0; i < info.length; ++i) {
+        f(data[static_cast<std::ptrdiff_t>(i) * info.element_stride +
+               static_cast<std::ptrdiff_t>(k) * info.line_stride],
+          info.origin[0] + i, info.transform + k);
+      }
+    }
+  }
 };
 
 template <class T>
 void modify_in(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
-  auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<T>& x = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    x = cubic_in(x, info.origin[0] + i, info.transform);
-  }
+  static_cast<cb_context<T>*>(user)->each(
+      info, data, [](std::complex<T>& x, std::size_t j, std::size_t t) { x = cubic_in(x, j, t); });
 }
 
 template <class T>
 void produce_in(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
-  auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    data[static_cast<std::ptrdiff_t>(i) * info.element_stride] =
-        produced<T>(info.origin[0] + i, info.transform);
-  }
+  static_cast<cb_context<T>*>(user)->each(
+      info, data, [](std::complex<T>& x, std::size_t j, std::size_t t) { x = produced<T>(j, t); });
 }
 
 template <class T>
 void modify_out(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
   auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    std::complex<T>& y = data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-    y = cubic_out(y, info.origin[0] + i, info.transform, ctx.n);
-  }
+  const std::size_t n = ctx.n;
+  ctx.each(info, data,
+           [n](std::complex<T>& y, std::size_t k, std::size_t t) { y = cubic_out(y, k, t, n); });
 }
 
 template <class T>
 void consume_out(void* user, const fftn::block_info& info, std::complex<T>* data) noexcept {
   auto& ctx = *static_cast<cb_context<T>*>(user);
-  if (!ctx.check(info, data)) {
-    return;
-  }
-  for (std::size_t i = 0; i < info.length; ++i) {
-    ctx.captured[info.transform * ctx.n + info.origin[0] + i] =
-        data[static_cast<std::ptrdiff_t>(i) * info.element_stride];
-  }
+  ctx.each(info, data, [&ctx](std::complex<T>& y, std::size_t k, std::size_t t) {
+    ctx.captured[t * ctx.n + k] = y;
+  });
 }
 
 // The stored extent of a side along the row: the end of its last run, or n.
