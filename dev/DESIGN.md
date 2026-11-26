@@ -2566,6 +2566,188 @@ The contract:
   from the same work done by separate plans and loops, within the transform's bound plus one
   rounding per vocabulary multiplication (15.5).
 
+**Plan for task 5.3** (designed 2026-11-26, nothing built yet; steps 5.3a–5.3h in PLAN phase 5,
+experiments X66 and X68; the API points the maintainer has to settle are listed in 18.2,
+"Callbacks"). It builds on 5.1's edges, 5.2a's edge driver (PR 138) and, for middles, 5.2's
+pipelines.
+
+- **API** (provisional, the block above, in a header of its own, `fftn/callback.hpp`, which
+  `fftn/edges.hpp` and `fftn/pipeline.hpp` include):
+  - `along_transforms` is a named constant (`std::size_t(-1)`) for `block_info::line_axis`:
+    line k of the block is then transform `transform + k`, consecutive in the innermost batch
+    dimension. A lanes block never crosses a run of that dimension (8.3, `lane_tail`), so this
+    numbering always holds.
+  - `origin` has one entry per transformed axis, in the order of `shape::axes`. Batch
+    coordinates come from `transform` in the documented batch order (innermost fastest).
+    `execute_transforms` numbers transforms absolutely: piece `first` starts at `first`.
+  - `edge::call` arrives in 5.3a. `pipeline_desc::middle.call` arrives in 5.3d and `group` in
+    5.3f. A callback whose `fn` is null is no callback, and its other fields must keep their
+    defaults.
+  - Modes by position: an input edge takes `modify` or `produce`, an output edge `modify` or
+    `consume`, a middle `modify`. Construction refuses any other mode, naming the field, as it
+    refuses `consume` with `accumulate` and `consume` on an in-place plan.
+  - With `produce`, `in` is not read and may be null. With `consume`, `out` is not written and
+    may be null, and the transform never uses the output as working memory. A c2r plane's
+    intermediate (9.1), for example, then stays in the workspace block, which
+    `workspace_bytes()` counts.
+  - `callback_of<F, T>()` returns a `noexcept` thunk that calls `(*static_cast<F*>(user))(info,
+    data)`. It refuses at compile time a callable that is not nothrow-invocable with
+    `(const block_info&, T*)`, so a lambda must be declared `noexcept`. `F` may be const.
+  - `exec_args::in_user`, `mid_user` and `out_user` reach the callbacks as `user`, unchecked:
+    null is passed as given.
+  - `callback::scratch_bytes` is per member. `block_info::scratch` is exactly that many bytes,
+    starting on a 128-byte boundary, and its contents are not kept between calls.
+- **Where a callback runs.** A **callback stage** is a new kind of stage: baseline code in
+  `src/core/callbacks.cpp`, never in an ISA unit, and never inside a leaf or a pass. It runs
+  between two passes, on data in the side's natural order and an affine layout. The data are
+  in one of three places:
+  - the caller's array, where FFTN may write it: the output, or the input of an in-place plan;
+  - a scratch line or the row block of the workspace;
+  - a lanes tile, where element i of row r is at i B + r (`element_stride` B, `line_stride`
+    1, `lines` the block's valid rows, never its idle lanes).
+
+  Never on an internal layout: split registers, scrambled orders (5.4), the packed c2r half
+  spectrum (X60) or padded lanes. Per strategy:
+
+  | Strategy | Input edge (after the read, before the first pass) | Output edge (after the last pass) |
+  |---|---|---|
+  | Chain (a row) | the row in a scratch line, or the input itself in place | the row in the output, or in the block for `consume`, accumulation or output runs |
+  | Lanes over rows | the tile after the gather (the plan takes the gathering first pass) | the tile before the scatter (the scattering last pass) |
+  | Batch leaves, short rows | the lines of 5.2a's row block (PR 138), which the leaves then read | the row block's lines, or the output rows the leaves just wrote |
+  | Grid, depth-first chain, Bluestein's depth-first convolution | a callback stage over the line in blocks, before the strategy | the same after it: one more sweep where the line exceeds the cache level, as X65's separate pass costs |
+  | Multi-axis plans | inside the first phase's line bodies: the block of lines a phase runs at once (a lanes column block; with the lanes over adjacent transforms, lines along transforms) | inside the last phase's line bodies, after the block's last pass |
+  | Real plans | the real side as real values (`T`), the complex side as its h + 1 bins | the same |
+  | Pipelines (5.2) | the prologue and epilogue as the edges of the pair's line; the middle on the scratch-resident line between the two transforms | |
+
+  On multi-axis plans the callback is part of the first or last phase, not an edge phase of its
+  own (5.1b-1), because a phase of its own would be the extra sweep that 12.5's stage exists to
+  save.
+- **Block size.** A block is one chunk of the callback stage. Chunks are fixed by the plan
+  (8.3), so a member always runs whole blocks.
+  - Lines up to `machine_profile::callback_block_bytes` are passed whole. The proposed default
+    is half the L1 data cache; X66 decides it per profile, and it reaches other machines by the
+    cache-key rule.
+  - Where a strategy holds several short lines together (a tile, a row block, a lanes column
+    block), one call takes them all.
+  - A longer line is cut into element ranges of that size.
+  - A team program's narrower lanes blocks (13.2) give a team narrower callback blocks.
+- **The modifying-edge copy.** A `modify` input callback must not change an out-of-place
+  plan's input.
+  - Where the strategy already copies the input into scratch, the callback runs on the copy,
+    and the copy costs nothing more. The lanes gather, the row block and the run read stage
+    (5.1d) are such copies. A copy that multiplies on the way, such as Bluestein's chirp or a
+    run copy with the side's scale, is not one: the callback must see the values before any
+    vocabulary.
+  - Elsewhere the input gets one copy stage (`edge_copy_stage`) into the scratch line or the
+    row block, and the first pass reads it there.
+  - For c2c out of place the copy may go to the output instead, and the strategy is then built
+    in place, as 5.1b-1's input phase does. X66 decides between the two per target.
+  - In place there is no copy. `produce` writes straight into the destination the copy would
+    have used.
+- **Driver.**
+  - A plan or pipeline with a callback runs on the edge driver. Its state gains the three user
+    pointers beside the factor cursors (`edge_state`).
+  - `edge_record` gains the callback geometry: which callback; its mode, slot and offset; its
+    length, lines and strides; its two axes; and, for each enclosing loop, the axis it advances
+    and the elements it moves per iteration.
+  - The edge driver keeps the enclosing loops' iteration indices in a small fixed array, and
+    from them builds `origin` and `transform` on the stack for each call. It already computes
+    the transform's cursors (`edge_transform_cursors`).
+  - Each form of the program runs callback stages: walked, flat (the transform index passed),
+    unrolled, and row blocks.
+  - **Member and scratch.** The drive policies' per-task entry (`at_task`, and `run` for
+    whole transforms) gains the running lane and its slot. `basic_team_env` passes the lane it
+    runs on; serial execution passes 0 and slot 0. `plain_drive` ignores both, and the plain
+    instantiations must compile to exactly `main`'s code, checked by disassembly as in 5.1 and
+    5.2a. The owner's slot cannot serve: a split task's stage chunks run on the owner's slot
+    (13.3), and two members may run blocks of one callback stage at once.
+  - Each slot ends with a callback area (`offset_callback`, 128-byte aligned): the largest
+    `scratch_bytes` among the object's callbacks, since one member never runs two at once.
+    `workspace_bytes(lanes)` grows by lanes times that area. Plans without callbacks keep their
+    layout.
+  - **No ISA state crosses.** The callback stage is called after a kernel has returned through
+    the ordinary ABI (on x86 the compilers' `vzeroupper` at the exits of AVX code). FFTN never
+    changes the floating-point environment, so the callback runs in the caller's.
+- **Teams, executors and determinism.**
+  - A callback stage's chunks are shared like any stage's chunks (13.2). `member` is the
+    running lane: the rank in a team, the task's index under an executor (below
+    `concurrency()`), and 0 serially.
+  - Blocks of one execution may run concurrently on different members and in any order. Shared
+    user state must therefore be read-only, or indexed by member or by coordinates.
+  - The coverage contract, which is published: each element of the side (each stored element,
+    with runs) is passed exactly once per execution; each middle line once per forward
+    transform; each epilogue element once per copy.
+  - With `completion::own` every block of member r's transforms (`transforms_of(r)`) runs on
+    member r. That is the owner-computes contract (12.4, 5.5).
+  - Pure callbacks (12.3's contract) give bitwise-identical results for serial execution,
+    pieces, teams of every size, executors and `completion::own`. The tests hold this with
+    pure callbacks that are nonlinear (cubic) and coordinate-dependent, on the program and on
+    the team program.
+- **Exceptions.** None can cross FFTN. `noexcept` is in `block_fn`'s type, and `callback_of`
+  refuses throwing callables at compile time (18.2, "Callbacks"). A callback may still end the
+  program (`std::abort`, `std::terminate`), which is the application's choice. The executor
+  overload stays not `noexcept` (18.2 item 14), because the user's executor may throw.
+- **Nested serial execution.**
+  - A callback may run another plan or pipeline through a serial overload (`execute(in, out,
+    ws[, args])`, `execute_transforms`). Its workspace is `fftn::workspace{info.scratch}`
+    (borrowed and `noexcept`), when `scratch_bytes` is at least the nested object's
+    `workspace_bytes()`, or the application's memory indexed by `member`.
+  - This is sound for four reasons. A plan's drivers keep no global or thread-local state. The
+    nested workspace lies inside a slot's callback area, apart from the outer team state and
+    scratch. A nested serial execution clears only its own workspace's word (18.2 item 5).
+    Callbacks run outside every ISA region.
+  - Team and executor overloads inside a callback are not supported in 5.3 (18.2). The tests
+    run a nested plan, and a nested pipeline in a middle, under outer teams and executors,
+    bitwise against serial execution, with ThreadSanitizer (a threading change).
+- **Stored runs and factors** compose in 12.1's order:
+  - input: read or `produce`, then `modify`, then the vocabulary;
+  - output: the vocabulary, then `modify`, then the store, accumulation or `consume`;
+  - middle: `modify`, then the middle's vocabulary, in the inverse's first pass (18.2). With a
+    middle callback the kernel therefore never takes the forward's last pass.
+
+  **Scales do not cross a callback.** 12.1 and 12.2 apply all the scales as one product, which
+  is sound only because everything between them is linear. With a `modify` callback the product
+  is formed between the callbacks:
+  - the scales of an object's edges apply after the input callback and before the output
+    callback;
+  - in a pipeline with a middle callback there are two products: the prologue's scale before
+    the middle callback, and the middle's, the epilogue's and `options::scale` after it.
+
+  With runs, blocks never cross a gap, and coordinates are logical. `produce` writes only run
+  elements and FFTN writes the zeros. `consume` receives only the output's runs. A callback is
+  allowed beside runs and beside a factor, since its stage runs where both already put the line.
+  Runs beside a factor stay refused until 5.1 lifts that refusal.
+- **Reuse of 5.2's pipeline machinery.**
+  - The middle callback is 5.2's bracketed middle stage on the scratch-resident line.
+  - **Fan-out:** the middle callback runs once per line, as copy 0, before the copies loop.
+    The epilogue's callback runs per copy (`copy` = k). `consume` receives each line's copies in
+    copy order, so a contraction over copies needs no overlapping outputs: the refusal stays
+    for stores (18.2, "Pipelines" 5).
+  - **`group`** turns that batch dimension into a lines loop in the body over G scratch lines
+    in the block. The first transform runs for each member, the callback once over all G
+    members (`group`, `group_stride`), and the second transform for each member. A task is one
+    group of lines, and teams share the per-member loops as line phases. For the bitwise
+    guarantee a grouped middle callback must be pure per group, as an ungrouped one must be
+    pure per line.
+  - **Spectral pairs, inverse first** (`first = direction::backward`):
+    - `<C, C, C>` is the chain pair with its directions swapped. The twiddle tables are shared.
+    - `<C, T, C>` is 5.2c's real chain pair reversed: the c2r pairing in the first chain's first
+      pass, the r2c pairing in the second chain's last, odd n by the full-length route, and the
+      middle a real line of n points. Its runs are on the half spectrum (a band of bins).
+    - The depth-first pair serves long lines in either order.
+    - The lanes pair takes `<C, C, C>` only, since there are no real lanes over adjacent lines
+      (12.2).
+- **Planning.**
+  - Construction never calls a callback. Measured candidates are timed with each callback stage
+    replaced by a stand-in that does nothing, at the same place, keeping the copies and stage
+    boundaries (18.2).
+  - The wisdom key gains each callback's position, mode and `scratch_bytes`, not the function.
+  - From 5.3b a callback forces no strategy: the rules' strategy takes it as the table above
+    says. In 5.3a, rows whose rules choose another strategy take the chain, and `describe()`
+    says so.
+    `describe()` gives a line per callback: where it runs, the block shape, any copy, and any
+    sweep beyond the cache level.
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -2599,10 +2781,29 @@ sweeps where a block of adjacent ω pencils over a whole plane fits a cache leve
 x are separate sweeps on each side of the pencils, which gives 5; that is the case at 384² on x86,
 where a block of 4 pencils is 9.4 MB.
 
+As planned for task 5.3 (12.3, "Plan for task 5.3"), the stage needs no object of its own:
+
+- **The planes' callbacks** run inside the first and last phases' line bodies (5.3c), so the
+  prologue and epilogue cost no sweep of their own. As a separate edge phase (5.1b-1) each would
+  cost one.
+- **The pencils** are spectral pairs `<C, T, C>` inverse first (5.3e), with the band as runs on
+  the half spectrum and `group` for coupled components (5.3f).
+- **The prologue's propagator** can be a callback (computed per element) or a complex factor
+  (read from an array as large as the field: one more volume of traffic). X66 prices the
+  difference, and X68 runs both.
+- **Where it is measured:** fbench gets the stage as a case (5.3h), whose three-object arm is
+  5.5's documented example.
+
 A multi-axis pipeline would add one thing: grouping the axes differently. It would run y alone,
 then for each y an (x, ω) slab (x inverse, the ω pairs, x forward), then y. That is 3 DRAM sweeps
 wherever a slab stays in a member's cache. It is built only if the free-space experiment shows
-that this beats the three objects at the client's sizes and thread counts. Fusing three fork/joins
+that this beats the three objects at the client's sizes and thread counts. X68 measures the
+grouping before anything is built (its arm G). G is made of the same objects executed per y slab:
+- each member runs whole slabs serially, dealt by `transforms_of` over y;
+- the slab's x plans and ω pairs run on it while it is in that member's cache;
+- the y plans run alone before and after.
+
+That is what a multi-axis pipeline would do, less its per-call overhead. Fusing three fork/joins
 into one is worth microseconds against a stage of hundreds of milliseconds, and the client's
 volumes (226 MB and up) never fit a cache, so neither is a reason to build it.
 
@@ -3475,6 +3676,48 @@ do not depend on the direction, and a workspace is plain bytes sized by
    PR 134 refuses them on plans, and both are lifted together.
 9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
    owner-computes work, since it is the plan's function on the same core.
+
+**Callbacks (task 5.3 design, 2026-11-26; for the maintainer).** These questions are open in
+12.3's API block. Each has a proposal, which is used until the maintainer settles it:
+
+1. **Header.** Proposal: `fftn/callback.hpp` (one concept per header), included by
+   `fftn/edges.hpp` and `fftn/pipeline.hpp`.
+2. **Throwing callables in `callback_of`.** Proposal: refused at compile time unless
+   nothrow-invocable, so lambdas are declared `noexcept`, matching "a function that may throw
+   does not convert". The alternative is to accept them, with a throw ending the program through
+   the `noexcept` thunk.
+3. **`along_transforms`.** Proposal: `inline constexpr std::size_t along_transforms =
+   std::size_t(-1)`. Line k is then transform `transform + k`. `origin` holds the transformed
+   axes only; batch coordinates come from `transform`.
+4. **No callback.** Proposal: a null `fn` means no callback, and construction refuses other
+   fields that are not their defaults.
+5. **`produce`, `consume` and the arrays.** Proposal: with `produce`, `in` may be null. With
+   `consume`, `out` may be null and is never used as working memory (the workspace may grow).
+   `consume` is refused on in-place plans and beside `accumulate`.
+6. **Order in a middle.** Proposal: the callback first, then the middle's vocabulary in the
+   inverse's first pass. With fan-out the middle callback runs once per line (copy 0) and the
+   epilogue callback once per copy. The other order would let the kernel take the forward's
+   last pass, but would give a fan-out's copies separate callbacks.
+7. **Scales around a callback.** Proposal: the one product of 12.1 and 12.2 is formed only
+   between callbacks: on the input edge after its callback, on the output edge before its
+   callback, and in two products around a middle callback. Without callbacks nothing changes.
+8. **Coverage and concurrency.** Proposal, published in the header: each element (each stored
+   element with runs) is passed exactly once per execution. Blocks of one execution may run
+   concurrently on different members and in any order. Block shapes may differ between
+   execution forms.
+9. **Nested execution.** Proposal: serial overloads only. Team and executor overloads inside a
+   callback are unsupported and not detected in 5.3.
+10. **Planning never calls a callback.** Proposal: measured candidates use stand-ins that do
+    nothing, at the callbacks' places. So the effort cannot see a heavy callback's cost; such a
+    callback's cache behaviour is X66's to price. The alternative is a planning option that
+    supplies a `user` pointer and lets planning call the callbacks.
+11. **Callbacks on long rows** (depth-first, grid). Proposal: the rules' strategy is kept, with
+    the callback stage over the line in blocks, one more sweep where the line exceeds the cache
+    level. `describe()` says so, as 5.1b-2 does for separate passes. Forcing the chain is the
+    alternative.
+12. **The scratch area.** Proposal: exactly `scratch_bytes`, from a 128-byte boundary, not kept
+    between calls. A slot's area is the largest of the object's callbacks' (one member never
+    runs two at once), so callbacks of one object share it.
 
 **Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
