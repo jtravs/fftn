@@ -1378,6 +1378,49 @@ template std::vector<std::size_t> convolution_depth_tops<float>(std::size_t n,
                                                                 const chain_builder<float>& chain,
                                                                 target isa);
 
+template <class T>
+lanes_pair_block convolution_lanes_block(std::size_t n, std::size_t rows, std::ptrdiff_t in_stride,
+                                         std::ptrdiff_t out_stride, std::ptrdiff_t in_dist,
+                                         std::ptrdiff_t out_dist, const build_settings& settings,
+                                         const target_profile& profile,
+                                         const chain_builder<T>& chain, std::size_t c) {
+  // Forced only, as the depth-first pair: when the rules take it is experiment X67's to decide.
+  if (settings.strategy != strategy_choice::lanes || rows < 2 || !chain.lanes_fit(n, false)) {
+    return {};
+  }
+  if (in_dist == 1 && out_dist == 1) {
+    // Adjacent lines (DESIGN.md 9.3): a lanes column phase's block for columns of n in a plane of
+    // `rows` columns, the lines' strides those of its axis.
+    const auto complex_bytes = static_cast<std::ptrdiff_t>(2 * sizeof(T));
+    const std::vector<std::size_t> extent{n, rows};
+    const view src{.where = slot::in, .stride = {in_stride, 1}, .element_bytes = complex_bytes};
+    const view dst{.where = slot::out, .stride = {out_stride, 1}, .element_bytes = complex_bytes};
+    if (const std::size_t block =
+            column_block<T>(0, extent, src, dst, line_edges(), settings, chain, c);
+        block != 0) {
+      return {.block = block, .columns = true};
+    }
+  }
+  const axis line{.n = n};
+  const batch inner{.count = rows};
+  const shape_view rows_shape{
+      .kind = transform_kind::c2c,
+      .axes = std::span<const axis>(&line, 1),
+      .batches = std::span<const batch>(&inner, 1),
+  };
+  return {.block = lanes_block<T>(rows_shape, side{}, side{}, settings, profile, chain, c)};
+}
+
+template lanes_pair_block
+convolution_lanes_block<double>(std::size_t, std::size_t, std::ptrdiff_t, std::ptrdiff_t,
+                                std::ptrdiff_t, std::ptrdiff_t, const build_settings&,
+                                const target_profile&, const chain_builder<double>&, std::size_t);
+template lanes_pair_block convolution_lanes_block<float>(std::size_t, std::size_t, std::ptrdiff_t,
+                                                         std::ptrdiff_t, std::ptrdiff_t,
+                                                         std::ptrdiff_t, const build_settings&,
+                                                         const target_profile&,
+                                                         const chain_builder<float>&, std::size_t);
+
 namespace {
 
 // A row's stored runs (none where the side has none).

@@ -39,6 +39,14 @@ fftn_always_optimise(pipeline_runs_test.cpp)
 fftn_add_test(fftn_pipeline_fanout_tests SOURCES pipeline_fanout_test.cpp
               LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_fanout_test.cpp)
+# The lanes pair on row pipelines (task 5.2f), likewise.
+fftn_add_test(fftn_pipeline_lanes_tests SOURCES pipeline_lanes_test.cpp
+              LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_lanes_test.cpp)
+# Groups on row pipelines (task 5.3f), likewise.
+fftn_add_test(fftn_pipeline_group_tests SOURCES pipeline_group_test.cpp
+              LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_group_test.cpp)
 # Block callbacks on row pipelines (task 5.3d), likewise.
 fftn_add_test(fftn_pipeline_callbacks_tests SOURCES pipeline_callbacks_test.cpp
               LIBRARIES fftn_test_support)

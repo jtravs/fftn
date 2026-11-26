@@ -149,6 +149,7 @@ struct pipeline_view {
   std::size_t fanout = 1;
   std::ptrdiff_t fanout_out_dist = 0;
   std::ptrdiff_t fanout_factor_dist = 0;
+  std::size_t group = static_cast<std::size_t>(-1); // fftn::no_group
 };
 
 class plan_core;
