@@ -45,6 +45,8 @@ is why results do not depend on the thread count.
 
 - [docs/building.md](docs/building.md): building, installing and using FFTN from CMake,
   pkg-config or FetchContent.
+- [docs/easy.md](docs/easy.md): numpy's FFT functions in one call each, with cached plans
+  (provisional).
 - [dev/DESIGN.md](dev/DESIGN.md): goals, evidence, architecture and design decisions.
 - [dev/PLAN.md](dev/PLAN.md): the phased implementation and experiment plan, with current
   status.
