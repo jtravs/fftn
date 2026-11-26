@@ -536,6 +536,12 @@ bool takes_f32() {
   return text.substr(at, end - at).find(R"("f32")") != std::string::npos;
 }
 
+// Whether the backend's describe says its output is each transform's input delayed by one
+// element ("output":"delay", backend.hpp), which check_delay checks instead of the DFT.
+bool delayed_output() {
+  return std::string(fbench_describe()).find(R"("output":"delay")") != std::string::npos;
+}
+
 std::string run_case(const case_spec& c, const settings& s, const counters* pmu) {
   const fbench::layout& l = c.layout;
   const std::uint64_t seed = hash(c.id) ^ s.seed;
@@ -612,7 +618,8 @@ std::string run_case(const case_spec& c, const settings& s, const counters* pmu)
     fbench::perturb_output(l, result, s.perturb, seed);
   }
   const fbench::check_result chk =
-      fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);
+      delayed_output() ? fbench::check_delay(l, reference_in.data(), result)
+                       : fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);
   out.str("status", "ok").num("plan_s", plan_s);
   if (!note.empty()) {
     out.str("note", note);

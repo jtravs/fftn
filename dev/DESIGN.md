@@ -3538,6 +3538,15 @@ with fewer transforms than members, one each for the first members; nothing is c
 others or split), which requires that every member of the team takes part. Pipelines deal
 their transforms the same way (`pipeline::transforms_of`).
 
+**As built (task 5.5).** No library change: the static deal of `completion::own`
+(`owned_tasks`) already served plans with edges and callbacks and pipelines of every kind.
+`tests/api/owner_computes_test.cpp` checks it for them (members arriving one after another
+write exactly their own transforms; members at once are recorded by a callback's
+`block_info::member` as the owners), and `examples/owner_computes.cpp` (OpenMP, quoted in
+`docs/fusion.md`) runs a pipeline, the application's own row kernel and a plan with edges in
+one region on one deal. fbench's `PIPELINE=fused|separate` times convolution rows against the
+same work as two plans and a loop, checked by a delay kernel (`"output":"delay"`).
+
 
 ### 12.5 Multi-dimensional stages
 
@@ -4479,6 +4488,27 @@ do not depend on the direction, and a workspace is plain bytes sized by
    PR 134 refuses them on plans, and both are lifted together.
 9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
    owner-computes work, since it is the plan's function on the same core.
+10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5; not built, no design yet). PLAN's 5.5 names
+    it, but neither 5.5 nor 12 describes it; the fusion proposal of 2026-11-24 had one line
+    ("`array_of(view)`, which returns the `std::vector<axis>` that `shape_of` already
+    computes"). Proposal: `array_of(in, out, halved = -1)`, two host Views of equal rank
+    forming one of FFTN's kinds, returns one `axis` per dimension in the Views' order: `n` the
+    extent (the real side's on the halved dimension), `in_stride` and `out_stride` the Views'
+    strides in elements. A real kind names its `halved` dimension (negative counts from the
+    end; refused for c2c), because the extents alone cannot say which it is (n/2 + 1 equals n
+    for n of 1 and 2), and it must be the dimension the `axes_*` call lists last. It keeps
+    `shape_of`'s checks that a list of axes can carry: the Views' types, ranks and host access
+    (at compile time), extents not 0, a 0 stride only at extent 1, and the extents against the
+    kind (equal, but n/2 + 1 against n on `halved`), with `shape_of`'s errors (`fftn::kokkos:`
+    and the argument's name). It drops the checks that need the Views' addresses: whether they
+    overlap and whether they are one array in place, so the caller sets `options::in_place`,
+    and plan or pipeline construction then checks the in-place strides (FFTW's padding on the
+    halved dimension) and the output's overlap from the axes, as for any shape. It feeds
+    `axes_c2c`, `axes_r2c`, `axes_c2r` and `axes_r2r` (their `array` argument, the selected
+    axes then chosen by index, stored runs included), and a pipeline's line and batches are
+    written from its entries. `docs/kokkos.md` would
+    show it with a plan with edges and `callback_of` with a host functor; `compat` gains
+    nothing (Kokkos-FFT has no fusion).
 
 Task 5.2b (2026-11-26) built the API with proposals 1–9 as written, with one gap: proposal 7
 names `max_lanes` and `strict_layout`, which `options` does not have; a pipeline takes `scale`,
@@ -5040,6 +5070,7 @@ to change before a release.
 | 2026-11-26 | Spectral pairs inverse first (task 5.3e, section 12.3, "As built"): `<C, C, C>` with `first = direction::backward` (the chain pair and the forced depth-first pair with their directions swapped) and the kind `<C, T, C>` (the real chain pair reversed, its sides' layout and runs those of the n/2 + 1 bins, its middle real factors only); the lanes pair left to 5.2f. Awaits the maintainer's review of the API | 12.2's three kinds complete with the existing chains; the depth-first pair's run passes exist in one direction each, so inverse first takes its read and store stages rather than new kernels |
 | 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
+| 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
 
 ---
 

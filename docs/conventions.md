@@ -223,6 +223,9 @@ order, as "Shapes and layouts" above describes.
 
 ## Edges
 
+[Fusion](fusion.md) says which of edges, block callbacks, stored runs, pipelines and
+owner-computes fits which work; this section and the next three state their rules.
+
 Provisional (task 5.1, `fftn/edges.hpp`). A plan may take an input edge and an output edge
 (`plan_edges`) of linear pointwise work, applied in its own passes:
 

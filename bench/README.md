@@ -38,7 +38,7 @@ The other competitors are configured the same way; see
 | `harness/` | the C++ harness shared by every backend: cases, buffers, timing, the check |
 | `harness/backend.hpp` | the C interface a backend implements |
 | `backends/<library>.cpp` | one backend per library, built as `<build>/bench/fbench-<library>` (see "Competitor backends") |
-| `catalogues/*.toml` | case catalogues (`standard`, `threads`) |
+| `catalogues/*.toml` | case catalogues (`standard`, `threads`, `pipelines`, and experiments' own) |
 | `t1/` | the harness of experiment T1 and its driver (see "The T1 harness") |
 | `tests/` | the driver's self-tests (CTest `bench.selftest`) |
 | `x2/` | experiment X2's radix-sequence search, a campaign of fbench runs (`x2/search.py --help`) |
@@ -137,6 +137,7 @@ one; its arms are written `fftn_omp`.
 | `WORKSPACE=library\|page` | fftn, fftn_omp | each plan's workspace from `fftn::workspace(bytes)`, on the heap (default), or in memory of the backend's own that starts a page, so that the team state at its start shares that page with no other allocation ([X76](../dev/experiments/X76-bimodal-864.md)) |
 | `EDGE_IN=KIND.LAYOUT`, `EDGE_OUT=KIND.LAYOUT[.acc]` or `EDGE_OUT=acc` | fftn, fftn_omp | plan edges ([DESIGN 12.1](../dev/DESIGN.md), `fftn/edges.hpp`): a `real` or `complex` factor whose array is laid out as `line` (one line of the side for every transform), `full` (as large as the side), `s2` (twice the tight strides: every other element of a wider array) or `row` (one value per transform), every value 1 so that the check holds; and accumulation on the output, which is zeroed for the check. A case the edges do not apply to (a complex factor on a real side, accumulation in place, more than one batch dimension or the interleaved layout) is unsupported. Each case's `note` adds the plan's `edges:` line ([X65](../dev/experiments/X65-edges.md)) |
 | `EDGE_ARM=library\|loop` | fftn, fftn_omp (with `EDGE_IN` or `EDGE_OUT`) | the plan with the edges (default), or what a user writes without them: the plain plan and their own loops, the input's in place before it, the output's after it, and accumulation by a transform into a buffer of its own and a loop adding it to the output; the loops are plain C++ on contiguous lines, cloned for AVX2 and AVX-512 on x86-64 Linux, shared over the executor's lanes with `THREADS` |
+| `PIPELINE=fused\|separate` | fftn, fftn_omp | a convolution of every row instead of the case's transform ([DESIGN 12.2](../dev/DESIGN.md), `fftn/pipeline.hpp`): the rows of a c2c forward case through `pipeline<C, C, C>`, of an r2c case through `pipeline<T, C, T>` (the output rows real, each at the start of its row of n/2 + 1 complex values), with one kernel spectrum for every row that delays it by one element, 1/n folded in. `fused` is the row pipeline; `separate` the same work as a user writes it with plans and no buffer of their own, the unfused baseline: the forward plan into the output, a multiply loop there (plain C++, cloned as the edge loops, shared over the executor's lanes with `THREADS`) and the inverse plan in place. Both are planned by the rules with `ISA`'s instruction set, since pipelines are (`PLANNING` and the build settings reach neither). `describe` says `"output":"delay"`, so the check compares each row with its input delayed by one ([The correctness check](#the-correctness-check)), and lists c2c and r2c as `partial`: forward rows out of place only, other cases unsupported. Serial or with `THREADS`, not with `CALL=team`, `EDGE_IN`, `EDGE_OUT` or `RADICES`. Each case's `note` is the pipeline's `describe` or the two plans' axis lines. Catalogue `pipelines`, for example `fbench run S=fftn+PIPELINE=separate P=fftn+PIPELINE=fused --catalogue pipelines` |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
 | `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to, or real rows whose half length they do (see below) |
@@ -252,6 +253,13 @@ It reports relative RMS and maximum errors; the case passes when both are within
 precision. A single-precision input is the double-precision one rounded to float, and the
 reference transforms the rounded values. Accuracy is stored with every timing.
 
+A backend whose `describe` says `"output":"delay"` times a convolution rather than the
+transform (FFTN's `PIPELINE` arms): each row's output is then its input delayed by one
+element, and the check compares every output of the first and last row with the input so
+delayed, and their energies, within twice the transform's tolerance (two transforms). Rows of
+c2c and r2c cases only; for r2c the output rows are real, n values at the start of each row
+of n/2 + 1 complex values.
+
 ## `smoke`
 
 `smoke --build DIR --strict` runs every backend in `DIR/bench` through its own `selftest`
@@ -313,7 +321,8 @@ The standard catalogue has tiers `smoke` (seconds, correctness, every kind, plac
 rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) and `full`.
 The `threads` catalogue holds the shapes that exercise threading's rules (single long rows,
 few rows, leftover rows after whole rounds, many rows, small jobs, planes and volumes), for
-threaded arms; its groups are named after the rule they exercise.
+threaded arms; its groups are named after the rule they exercise. The `pipelines` catalogue
+holds convolution rows for the FFTN backend's `PIPELINE` arms.
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
 

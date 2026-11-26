@@ -78,7 +78,10 @@ void fbench_end();
 /// driver can refuse a binary that resolved the wrong one; and "supports", the list of kinds
 /// ("c2c", "r2c", "c2r") the backend claims, for which smoke fails on an unsupported case;
 /// optionally "precisions", the list of precisions ("f64", "f32") it takes (default f64
-/// only). Valid until fbench_end.
+/// only); and optionally "output":"delay" when the session times a convolution instead of the
+/// case's transform (FFTN's pipeline options): each row's output is then its input delayed by one
+/// element, y_j = x_((j - 1) mod n), which the harness checks instead of the DFT (check.hpp,
+/// check_delay; rows of c2c and r2c cases only). Valid until fbench_end.
 const char* fbench_describe();
 
 /// Plans one case. `in` and `out` are buffers of the case's size and of the alignment

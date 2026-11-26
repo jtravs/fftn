@@ -434,6 +434,61 @@ check_result check_output(const layout& l, const void* in, const void* out, std:
   return r;
 }
 
+check_result check_delay(const layout& l, const void* in, const void* out) {
+  const auto* x = static_cast<const double*>(in);
+  const auto* y = static_cast<const double*>(out);
+  check_result r;
+  const bool real = l.kind == fbench_r2c;
+  if (l.rank != 1 || l.interleave != 1 || l.in_place || (l.kind != fbench_c2c && !real)) {
+    return r; // not a layout the delayed check knows: never a pass
+  }
+  const double eps = l.precision == fbench_f32 ? std::numeric_limits<float>::epsilon()
+                                               : std::numeric_limits<double>::epsilon();
+  // Two transforms and a multiplication: twice the transform's bound.
+  r.tol = 20.0 * eps * (1.0 + std::log2(static_cast<double>(l.n_total)));
+  const std::int64_t n = l.dims.at(0);
+  // An r2c case's output rows hold n reals from the start of each row of n/2 + 1 complex values
+  // (FFTW's padded in-place layout of the real side).
+  const auto out_value = [&](std::int64_t b, std::int64_t j) -> value {
+    if (real) {
+      return {y[idx(2 * l.out.offset(b, 0) + j)], 0.0};
+    }
+    return load(l.out, y, b, j);
+  };
+  std::vector<std::int64_t> rows{0};
+  if (l.batch > 1) {
+    rows.push_back(l.batch - 1);
+  }
+  r.rows = static_cast<std::int64_t>(rows.size());
+  r.samples = n;
+  double diff2 = 0.0;
+  double ref2 = 0.0;
+  double diff_max = 0.0;
+  for (const std::int64_t b : rows) {
+    double e_in = 0.0;
+    double e_out = 0.0;
+    for (std::int64_t j = 0; j < n; ++j) {
+      const value want = load(l.in, x, b, (j + n - 1) % n);
+      const value got = out_value(b, j);
+      const double dre = got.re - want.re;
+      const double dim = got.im - want.im;
+      const double d2 = dre * dre + dim * dim;
+      diff2 += d2;
+      ref2 += want.re * want.re + want.im * want.im;
+      diff_max = std::isnan(d2) ? std::numeric_limits<double>::infinity()
+                                : std::max(diff_max, std::sqrt(d2));
+      e_in += want.re * want.re + want.im * want.im;
+      e_out += got.re * got.re + got.im * got.im;
+    }
+    const double p = std::abs(e_out - e_in) / e_in;
+    r.parseval = std::isnan(p) ? std::numeric_limits<double>::infinity() : std::max(r.parseval, p);
+  }
+  r.err_rms = std::sqrt(diff2 / ref2);
+  r.err_max = diff_max / std::sqrt(ref2 / static_cast<double>(r.rows * n));
+  r.pass = r.err_rms <= r.tol && r.err_max <= 8.0 * r.tol && r.parseval <= r.tol;
+  return r;
+}
+
 namespace {
 
 // Writes an impulse (c2c, r2c) or the half spectrum of one (c2r) at multi-index p into
@@ -515,6 +570,41 @@ std::string check_impulses() {
   return {};
 }
 
+// The delayed check (check_delay): an exact delay passes, one wrong value, no delay and a delay
+// of two fail, for complex rows and for real rows in an r2c case's output.
+std::string check_delays() {
+  for (const std::int32_t kind : {fbench_c2c, fbench_r2c}) {
+    const layout l = make_layout(kind, 1, {12, 1, 1}, 3, -1, false, fbench_f64);
+    std::vector<double> x(l.reals_in());
+    fill_input(l, x.data(), 7);
+    const auto write = [&](std::int64_t delay) {
+      std::vector<double> y(l.reals_out(), 0.0);
+      for (std::int64_t b = 0; b < l.batch; ++b) {
+        for (std::int64_t j = 0; j < 12; ++j) {
+          const value v = load(l.in, x.data(), b, (j + 12 - delay) % 12);
+          if (kind == fbench_r2c) {
+            y[idx(2 * l.out.offset(b, 0) + j)] = v.re;
+          } else {
+            y[idx(2 * l.out.offset(b, j))] = v.re;
+            y[idx(2 * l.out.offset(b, j) + 1)] = v.im;
+          }
+        }
+      }
+      return y;
+    };
+    std::vector<double> y = write(1);
+    if (!check_delay(l, x.data(), y.data()).pass) {
+      return "the delayed check rejects an exact delay (kind " + std::to_string(kind) + ")";
+    }
+    y[idx(kind == fbench_r2c ? 2 * l.out.offset(2, 0) + 5 : 2 * l.out.offset(2, 5))] += 1e-9;
+    if (check_delay(l, x.data(), y.data()).pass || check_delay(l, x.data(), write(0).data()).pass ||
+        check_delay(l, x.data(), write(2).data()).pass) {
+      return "the delayed check accepts a wrong output (kind " + std::to_string(kind) + ")";
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 std::string selftest() {
@@ -541,7 +631,10 @@ std::string selftest() {
       std::abs((eighth.re - eighth.im).hi) > close) {
     return "unit_root misses cos(pi/3) = 1/2 or cos(pi/4) = sin(pi/4)";
   }
-  return check_impulses();
+  if (std::string failed = check_impulses(); !failed.empty()) {
+    return failed;
+  }
+  return check_delays();
 }
 
 } // namespace fbench
