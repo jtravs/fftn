@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# pkg-config file of FFTN (written by cmake/FftnPackage.cmake). The headers need C++20: compile
+# with -std=c++20 or later.
+prefix=@FFTN_PC_PREFIX@
+includedir=@FFTN_PC_INCLUDEDIR@
+libdir=@FFTN_PC_LIBDIR@
+
+Name: fftn
+Description: Fast Fourier transforms for CPUs (C++20 static library)
+URL: https://github.com/jtravs/fftn
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lfftn @FFTN_PC_THREADS@
