@@ -2319,8 +2319,9 @@ for lines that are one leaf or pair leaf, nor a last Bluestein stage). Where the
 of exactly n/2 from logical 0, stored with stride 1 (and, for the output, not accumulated), the
 pass reads or writes it where it is stored and the side has no separate pass; otherwise the
 separate pass moves the runs through the block's first half only, zeros there alone. A pruned
-last pass is interleaved, so a split run ends one pass earlier, and its destination is not used
-as a scratch line. `describe()` says which (`run_pruning`) and counts the separate passes left.
+last pass is interleaved, so its line takes no split run (a split run ends in an untwiddled last
+pass), and its destination is not used as a scratch line. `describe()` says which
+(`run_pruning`) and counts the separate passes left.
 The codelets save a tenth to a quarter of the pass's arithmetic and a quarter of its memory
 accesses; the separate pass that no longer runs is the larger gain. Not yet: pruned passes on
 real rows and on the lines of multi-axis plans (edge phases, as 5.1d built them), and runs

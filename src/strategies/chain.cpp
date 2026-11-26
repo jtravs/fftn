@@ -1098,12 +1098,10 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
   // the EPYC a 512-point row refilled L1 517 times with three lines against FFTW's 181
   // (dev/experiments/X47-epyc-mid-2.md). Not after a generic pass, which may store as it goes.
   const bool two_lines = via_dst && rad.size() == 2 && has_codelet(rad.back());
-  // A pruned last pass is interleaved: a split run then ends before it, in the pass that writes
-  // the interleaved line (layout_of), if the passes before it make a run.
-  const std::size_t split_end = rad.size() - (edges.out_head ? 1 : 0);
+  // A pruned last pass is interleaved, and a split run ends only in a chain's last pass (its
+  // last kernel is untwiddled, m = 1): such a line takes no split run.
   const std::size_t split =
-      edges.out_head ? split_from(std::vector<std::size_t>(rad.begin(), rad.end() - 1), false, 1)
-                     : split_from(rad, bluestein, copy_out ? 1 : dst.stride);
+      edges.out_head ? rad.size() : split_from(rad, bluestein, copy_out ? 1 : dst.stride);
   std::size_t s = 1;
   for (std::size_t i = 0; i < rad.size(); ++i) {
     const bool last = i + 1 == rad.size();
@@ -1117,8 +1115,7 @@ std::size_t chain_builder<T>::c2c_line(std::size_t n, int sign, endpoint src, en
       next = last_stage_to(rad[i], at, next);
       add_bluestein(n, rad[i], sign, at, next, edges, i == 0, stages);
     } else {
-      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1,
-               i < split_end ? layout_of(i, split, split_end) : pass_layout::interleaved);
+      add_pass(n, rad, i, s, sign, at, next, edges, stages, 1, layout_of(i, split, rad.size()));
     }
     at = next;
     s *= rad[i];

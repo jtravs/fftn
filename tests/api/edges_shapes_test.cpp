@@ -2396,6 +2396,114 @@ TEST(EdgeShapes, StoredRunsPrunedPasses) {
   }
 }
 
+// The pruned passes with the radices and the layout forced (task 5.1e): split layouts, which a
+// pruned last pass turns off, an interleaved chain, radix 2 at either end; the half read
+// and written in place, and a band in and a crop out through the block. Against the plan
+// without runs on the zero-padded line, cropped; nothing outside the output's runs written;
+// serial, team and executor alike.
+TYPED_TEST(EdgeShapes, StoredRunsPrunedPassesForced) {
+  using T = TypeParam;
+  using C = std::complex<T>;
+  using fftn::side;
+  namespace d = fftn::detail;
+  const std::size_t n = 1024;
+  const std::size_t count = 3;
+  struct runs_of {
+    std::size_t in_logical, in_stored, in_count, out_logical, out_stored, out_count;
+  };
+  const std::vector<runs_of> runs{{0, 2, n / 2, 0, 1, n / 2}, {3, 0, 100, 300, 0, 9}};
+  const std::vector<std::vector<std::size_t>> radices{{4, 4, 4, 16}, {2, 8, 8, 8}, {16, 32, 2}};
+  fftn::test::input_source src(0x51EULL);
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const auto& rad : radices) {
+      for (const d::layout_choice layout :
+           {d::layout_choice::split, d::layout_choice::interleaved}) {
+        for (const runs_of& ro : runs) {
+          SCOPED_TRACE(std::string(fftn::isa_name(t)) + " radices " + std::to_string(rad[0]) +
+                       " first, split " + std::to_string(layout == d::layout_choice::split) +
+                       ", in count " + std::to_string(ro.in_count));
+          fftn::shape<C, C> s;
+          s.axes = {{.n = n}};
+          s.batches = {{.count = count}};
+          s.runs = {{.where = side::in,
+                     .logical = ro.in_logical,
+                     .stored = ro.in_stored,
+                     .count = ro.in_count},
+                    {.where = side::out,
+                     .logical = ro.out_logical,
+                     .stored = ro.out_stored,
+                     .count = ro.out_count}};
+          const std::size_t in_dist = ro.in_stored + ro.in_count;
+          const std::size_t out_dist = ro.out_stored + ro.out_count;
+          d::build_settings settings;
+          settings.radices = rad;
+          settings.layout = layout;
+          const fftn::options opts{.scale = 0.5, .force_isa = t};
+          const core_plan p{d::make_plan_core_with_edges(
+              d::view_of(s), opts, d::view_of(fftn::plan_edges<C, C>{}), settings)};
+          const std::string text = p.describe();
+          EXPECT_NE(text.find("pruned: reads legs"), std::string::npos) << text;
+          EXPECT_NE(text.find("pruned: writes legs"), std::string::npos) << text;
+          std::vector<C> x = src.complexes<T>(in_dist * count);
+          const std::vector<C> init = src.complexes<T>(out_dist * count + 4);
+          std::vector<C> y = init;
+          const fftn::workspace ws(p.workspace_bytes(3));
+          p.execute(x.data(), y.data(), ws, {});
+          // The plan without runs on the zero-padded lines.
+          std::vector<C> padded(n * count, C(0));
+          for (std::size_t b = 0; b < count; ++b) {
+            for (std::size_t j = 0; j < ro.in_count; ++j) {
+              padded[b * n + ro.in_logical + j] = x[b * in_dist + ro.in_stored + j];
+            }
+          }
+          fftn::shape<C, C> whole;
+          whole.axes = {{.n = n}};
+          whole.batches = {{.count = count}};
+          std::vector<C> full(n * count);
+          const fftn::plan<C, C> plain(whole, opts);
+          fftn::workspace plain_ws(plain);
+          plain.execute(padded.data(), full.data(), plain_ws);
+          T worst = 0;
+          T largest = 0;
+          std::vector<bool> written(y.size(), false);
+          for (std::size_t b = 0; b < count; ++b) {
+            for (std::size_t k = 0; k < ro.out_count; ++k) {
+              const std::size_t i = b * out_dist + ro.out_stored + k;
+              written[i] = true;
+              worst = std::max(worst, std::abs(y[i] - full[b * n + ro.out_logical + k]));
+              largest = std::max(largest, std::abs(full[b * n + ro.out_logical + k]));
+            }
+          }
+          EXPECT_LE(worst, largest * 64 * std::numeric_limits<T>::epsilon() * 10) << text;
+          for (std::size_t i = 0; i < y.size(); ++i) {
+            if (!written[i]) {
+              EXPECT_EQ(y[i], init[i]) << "element " << i << " outside the runs written";
+            }
+          }
+          std::vector<C> teamed = init;
+          std::vector<std::thread> members;
+          for (int rank = 1; rank < 3; ++rank) {
+            members.emplace_back([&, rank] {
+              p.execute(x.data(), teamed.data(), fftn::team{.rank = rank, .size = 3}, ws,
+                        fftn::completion::all, {});
+            });
+          }
+          p.execute(x.data(), teamed.data(), fftn::team{.rank = 0, .size = 3}, ws,
+                    fftn::completion::all, {});
+          for (std::thread& m : members) {
+            m.join();
+          }
+          EXPECT_TRUE(same_bits(teamed, y)) << "a team differs";
+          const fftn::thread_pool pool(3);
+          std::vector<C> pooled = init;
+          p.execute(x.data(), pooled.data(), pool, ws, {});
+          EXPECT_TRUE(same_bits(pooled, y)) << "the executor differs";
+        }
+      }
+    }
+  }
+}
+
 TYPED_TEST(EdgeShapes, StoredRunsOnEveryAxisAndSide) {
   using T = TypeParam;
   using enum transform_kind;
