@@ -1101,7 +1101,10 @@ of their time on the EPYC 7763, but rows whose factor was fused into a single-ro
 0.83–1.01, and chains of 256–1024 points to 0.98–1.01: the walk itself was a small part of their
 cost. Choosing the separate pass so as to keep the batch leaf helped 16-point rows (0.66–0.75
 on both machines) and lost on 64-point rows on the EPYC (1.14; 0.81 on the Xeon 6240). Price the kernel each
-structure reaches, not only the overhead it removes. [X65](experiments/X65-edges.md).
+structure reaches, not only the overhead it removes. Narrowed to rows whose transform is one leaf,
+the forms paid on both machines (0.39–0.76; geometric means EPYC 0.549, Xeon 0.584) with nothing
+else moved: a change judged over a mixed target set can hide a clear win in a subset its
+mechanism names in advance. [X65](experiments/X65-edges.md).
 
 ## 5. Threading
 

@@ -731,14 +731,17 @@ std::shared_ptr<const detail::plan_core> make_edge_core(const fbench_case& c,
   return make_edge_core<cplx, T>(c, o, r);
 }
 
-// The plan's lines of its describe that say where its edges went ("edges: ...").
+// The plan's lines of its describe that say where its edges went ("edges: ...") and which of
+// the edge driver's batched forms it takes ("edge forms: ...", "edge row blocks: ..."), so that a
+// run's notes show the plans that take them (X65's P1).
 std::string edge_lines_of(const std::string& describe) {
   std::string out;
   std::size_t at = 0;
   while (at < describe.size()) {
     const std::size_t end = std::min(describe.find('\n', at), describe.size());
     const std::string_view line = std::string_view(describe).substr(at, end - at);
-    if (line.find("edges: ") != std::string_view::npos) {
+    if (line.find("edges: ") != std::string_view::npos || line.starts_with("edge forms: ") ||
+        line.starts_with("edge row blocks: ")) {
       out += (out.empty() ? "" : "; ") + std::string(line);
     }
     at = end + 1;

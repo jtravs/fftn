@@ -2329,8 +2329,9 @@ accesses; the separate pass that no longer runs is the larger gain. Not yet: pru
 real rows and on the lines of multi-axis plans (edge phases, as 5.1d built them), and runs
 outside the line's first half.
 
-Batched forms on the edge driver (task 5.2a, X65's P1): where the profile says
-(`machine_profile::edge_batched_forms`), a plan whose edges have factors runs whole executions
+Batched forms on the edge driver (task 5.2a, X65's P1): where the profile's reach says
+(`machine_profile::edge_batched_forms`: `none`, `leaf_rows` or `all`), a plan whose edges have
+factors runs whole executions
 through `edge_forms` (`core/edge_driver.hpp`), built once with the plan from its program and edge
 records, instead of walking the program a transform at a time. A flat program runs its body's stages
 with the cursors moved per transform, and rows of one leaf are one call of the leaf where every row
@@ -2341,21 +2342,29 @@ dimension with separate edge passes and a factor takes the row-block form: its r
 about 2048 points, each row with a line of its own in the workspace block
 (`plan_core::edge_row_block`; the block grows by that factor), each separate pass one call over the
 block's rows (`pass_args::rows`), a leaf (batch leaves included) one call over them, and the stages
-between, which pass a row through the scratch lines, row by row. `describe()` names the blocks
-("edge row blocks"), and such a plan on batch leaves keeps the strategy of the plan without the
-edges. Every form runs the walked form's kernels on the same arguments, so the bits are the same,
+between, which pass a row through the scratch lines, row by row (`make_edge_forms` refuses a
+program in which a stage would read a scratch line written before a block call). `describe()` names
+the blocks ("edge row blocks") or the form ("edge forms"), and such a plan on batch leaves keeps the
+strategy of the plan without the edges. Every form runs the walked form's kernels on the same arguments, so the bits are the same,
 and a team's pieces stay walked. Plans without factors (accumulation, scales) run on `driver.hpp` as
 before, and plain plans' code is unchanged: the new members are last in `plan_core` and
 `machine_profile`, and the plain driver functions disassemble the same (Clang, arm64 and x86-64).
 Not built: a fused factor inside batch leaves, which needs batch-leaf kernels with a factor edge
 (such rows take the fused leaf's rows form), and the middle cursor and the byte offset into the
-block that 5.2's pipelines need (5.2b). The flag is off on every profile: X65's P1 rule (a geometric
-mean of 0.80 of the walked form over c2c and real rows below 4096 points, on the EPYC 7763 and the
-Xeon 6240) was missed (EPYC 0.868 and 0.854 for two arms, Xeon 0.839), since rows on batch leaves
-with a separate factor gained (0.39–0.56 of their time) but fused leaves and chains of 256 points
-and more barely moved (0.94–1.01). Taking the separate passes on batch leaves instead of a fusable
-factor's chain helped 16-point rows (0.66–0.75) and slowed 64-point rows on the EPYC (1.14;
-0.81–0.82 on the Xeon), so the fused chain stays. Pipelines take the forms from 5.2b.
+block that 5.2's pipelines need (5.2b). X65's P1 rule (a geometric mean of 0.80 of the walked form
+over c2c and real rows below 4096 points, on the EPYC 7763 and the Xeon 6240) was missed (EPYC 0.868
+and 0.854 for two arms, Xeon 0.839): rows on batch leaves with a separate factor gained (0.39–0.56
+of their time), but fused leaves and chains of 256 points and more barely moved (0.94–1.01).
+Taking the separate passes on batch leaves instead of a fusable factor's chain helped 16-point rows
+(0.66–0.75) and slowed 64-point rows on the EPYC (1.14; 0.81–0.82 on the Xeon), so the fused chain
+stays. P1 was then adopted narrowed (AGENTS.md section 6): the reach `leaf_rows`, set on Zen 3's
+class and the Xeon 6240's (Intel's cores), gives the forms only to plans of c2c rows whose line's
+transform, between any separate edge passes, is one stage and a leaf (a leaf of radix n, a pair leaf
+or batch leaves), which build() decides from the stages the chain adds for the line; every other
+plan keeps the walked form. In the declared deciding run such rows took 0.39–0.76 of their time
+(geometric means EPYC 0.549, Xeon 0.584), every other case was on its walked form and none was
+slower beyond the band. Every other profile is `none` until measured; tests set `all`. Pipelines
+take the forms from 5.2b.
 
 ### 12.2 Row pipelines
 
@@ -3937,6 +3946,7 @@ to change before a release.
 | 2026-11-25 | Stored runs (task 5.1d, section 12.1): provisional public `side`, `stored_run`, `shape::runs` and the runs argument of `axes_*`; runs in any order, disjoint in logical and stored positions; built as separate edge passes through the workspace block or the output, on the chain, with pruning by restricted loops in multi-axis transforms; refused on in-place plans and beside a factor; planned by the rules | Correctness first, as the brief orders ("a line with runs may read into scratch with zeros, compute the full line, then store only the runs"); the edge phases' block and loops carry runs with no new kernel beyond a zero fill. The refusals and the rules-only planning are the parts not built yet, listed for the maintainer's review with the API choices |
 | 2026-11-25 | Edges on multi-axis and real plans (task 5.1b-1, section 12.1): every factor and accumulation an edge phase of its own over the edge side's rows, before or after the transform, through the output (c2c input edge without accumulation) or one transform in the workspace block (in an in-place transform's layout, shared by both edges); team cores built with the edges | Correctness first (5.1): a phase of rows needs no kernel and no change to any strategy's phases, reaches every axis order, layout and kind, and teams share it by lines. Fusing into the first and last phases' passes (natural for the input edge on the rows) is X65's to price (5.1f) |
 | 2026-11-25 | X65 (task 5.1f, section 12.1): no fused edge variant is built yet; the separate edge pass stays baseline code; batched forms for plans with edges come first (proposal, the maintainer's decision) | Edges cost 1.5–6 times the plain plan on batched rows of 16–256 points whether fused or separate, more than the user's own loop, because such plans lose the batched program forms; a vectorised separate pass moved its cases by 0.99 on the EPYC (arm V, rejected) |
+| 2026-11-26 | X65's P1 adopted narrowed (section 12.1, AGENTS.md section 6): `machine_profile::edge_batched_forms` becomes a reach, `leaf_rows` on Zen 3's class and the Xeon 6240's, so c2c rows whose transform is one leaf take the batched forms; every other plan with edges, and every other machine, keeps the walked form | The deciding run (declared before it, E1, E2, E4, E5 on both machines): such rows 0.39–0.76 of their time (geometric means EPYC 0.549, Xeon 0.584), every excluded case on its walked form, none slower beyond the band; the excluded chains, real rows and planes had moved 0.90–1.01 in P1's runs, with Xeon c2c 1024 × 64 at 1.029 |
 | 2026-11-26 | The edge driver's batched forms (task 5.2a, section 12.1; X65's P1) built behind `machine_profile::edge_batched_forms`, off: the flat form, rows of one leaf and the unrolled calls with the factor cursors, and row blocks for c2c rows with separate edge passes; the middle cursor and the block offset left to 5.2b, which first reads them | P1's rule was missed on the EPYC 7763 by both arms (0.868 and 0.854 against 0.80): batch leaves with a separate factor gained a factor of two, fused leaves and chains barely moved. The forms are bitwise the walked form's, and pipelines need them from 5.2b, so the code stays, tested with the flag on |
 | 2026-11-26 | Row pipelines' API and the `<C, C, C>` chain pair (task 5.2b, section 12.2): provisional `fftn/pipeline.hpp` with 18.2's proposals; the chain pair as two `c2c_line` chains through the workspace block, factors of stride 1 fused, others edge passes on the line in cache; the middle cursor; the edge driver's batched forms always on for pipelines | The design's API block and plan, read literally; `c2c_line` already places fused factors, strides and Bluestein for both chains, so the convolution builder's generalisation waits for fan-out and the depth-first pair, which need it. X65 measured what losing the batched forms costs, so pipelines take them from the start |
 | 2026-11-26 | Pruned codelets (task 5.1e, section 12.1): `dif_head` and `plain_head`, halves of the even codelet radices only, for the first and last passes of c2c rows whose stored runs lie in the line's first half; one run of the half stored with stride 1 is read or written in place with no separate pass | Counted from the generator (gen/README.md): halves cost 0.77–0.89 of `dif`'s and 0.86–0.94 of `plain`'s vector operations at radices 8–64 and three quarters of the memory accesses; the gain is the separate pass that disappears. A half of an even radix is the line's first half whatever the radix, so one variant pair per radix covers the valid half of a zero-padded row and any band or crop inside it. Quarters and odd radices were counted and left out (smaller or no gains; `plain_head` of 9 and 25 would cost more than `plain`) |
