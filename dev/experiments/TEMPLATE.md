@@ -30,6 +30,8 @@ option>. Any switch used is registered in `dev/KNOBS.toml`.
 
 Run IDs, the noise band from the A/A control, a short table. Link to the stored runs; do
 not paste raw output.
+When the change adds or removes code, the library's text size before and after
+(`tools/size_report.py`, or the table in the pull request's job summaries).
 
 ## Verdict
 
