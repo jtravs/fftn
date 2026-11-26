@@ -1783,8 +1783,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // runs on the edge driver) takes its rows in blocks of about edge_row_block_points points,
   // each row with a line of its own in the workspace block (c2c_axis), the edge passes and the
   // leaves once per block.
-  if (row_edges && !row_strategy && s.kind == transform_kind::c2c && s.batches.size() == 1 &&
-      settings.profile.edge_batched_forms &&
+  if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
+      s.batches.size() == 1 && settings.profile.edge_batched_forms &&
       (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none) &&
       !edge_ops->in.runs.any() && !edge_ops->out.runs.any()) {
     const std::size_t rows =
@@ -2259,6 +2259,12 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           st.push_back(edge_pass_stage(s.prec, edge_ops->out, true, n, slot::block, 1, to.where,
                                        to.stride, settings.chunk_points, false,
                                        edge_ops->out.axis_stride));
+        }
+        // The row-block form runs flat programs only (make_edge_forms): a line of more stages
+        // (a Bluestein length) runs a transform at a time, unrolled.
+        if (st.size() > flat_stages_max ||
+            std::ranges::any_of(st, [](const stage& x) { return x.moving_twiddles; })) {
+          c.edge_row_block = 0;
         }
         c.block_elements =
             std::max(c.block_elements, n * std::max<std::size_t>(c.edge_row_block, 1));
@@ -2896,6 +2902,10 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
     c->edge_batched =
         make_edge_forms(c->prog, c->edge_records, settings.unroll_calls, c->edge_row_block,
                         static_cast<std::ptrdiff_t>(c->lengths[0]) * complex_bytes, complex_bytes);
+    // describe() and the workspace layout name the row blocks that build() planned.
+    if (c->edge_batched.row_block != c->edge_row_block) {
+      throw std::logic_error("fftn: internal: the row blocks planned are not the form built");
+    }
   }
   c->graph = build_work_graph(c->prog, points, settings.chunk_points);
   // A real row on a chain's stages likewise, where the profile says (X83: on the Xeon 6240 teams

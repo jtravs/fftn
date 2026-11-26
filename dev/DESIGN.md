@@ -2307,6 +2307,28 @@ field), runs in the lanes, grid and depth-first strategies (`describe()` names t
 plan without runs takes), and measured planning and wisdom for runs (planned by the rules; the
 wisdom key carries the runs). 5.1e adds pruned codelets within the line.
 
+Batched forms on the edge driver (task 5.2a, X65's P1): where the profile says
+(`machine_profile::edge_batched_forms`), a plan whose edges have factors runs whole executions
+through `edge_forms` (`core/edge_driver.hpp`), built once with the plan from its program and
+edge records, instead of walking the program a transform at a time. A flat program runs its
+body's stages with the cursors moved per transform, and rows of one leaf are one call of the
+leaf where every row reads the same factors (a call per row otherwise, since a leaf reads one
+set of factors per call); a walked program of at most `calls_max` calls per transform, rows
+included, runs unrolled, a loop of one leaf one call unless the loop moves the cursors it reads.
+A c2c plan of rows of one batch dimension with separate edge passes and a factor takes the
+row-block form: its rows in blocks of about 2048 points, each row with a line of its own in the
+workspace block (`plan_core::edge_row_block`; the block grows by that factor), each separate
+pass one call over the block's rows (`pass_args::rows`), a leaf (batch leaves included) one call
+over them, and the stages between, which pass a row through the scratch lines, row by row.
+`describe()` names the blocks ("edge row blocks"), and such a plan on batch leaves keeps the
+strategy of the plan without the edges. Every form runs the walked form's kernels on the same
+arguments, so the bits are the same, and a team's pieces stay walked. Plans without factors
+(accumulation, scales) run on `driver.hpp` as before, and plain plans' code is unchanged: the
+new members are last in `plan_core` and `machine_profile`, and the plain driver functions
+disassemble the same (Clang, arm64 and x86-64). Not built: a fused factor inside batch leaves,
+which needs batch-leaf kernels with a factor edge (such rows take the fused leaf's rows form),
+and the middle cursor and the byte offset into the block that 5.2's pipelines need (5.2b).
+
 ### 12.2 Row pipelines
 
 A **pipeline** is a fixed form over one transformed axis, which may be strided, under any number
@@ -2455,8 +2477,8 @@ experiment X67; the API points the maintainer has to settle are listed in 18.2, 
     kernel in the inverse's first pass and runs the inverse on the member's own scratch lines
     a and b.
   - On a depth-first pair the sub-rows use a and b, so the spectrum needs a second region.
-    Edge-driver records gain a byte offset into the block (5.2a), which only the edge driver
-    reads.
+    Edge-driver records gain a byte offset into the block, which only the edge driver reads
+    (with the first step that reads it: 5.2a left it out).
   - This is the "loop over a scratch-resident line" that X36b asked for. Bluestein's copies one
     at a time (a loop moving the block by a copy's M) could later use it; that is not part of
     5.2.
