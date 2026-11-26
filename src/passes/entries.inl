@@ -94,7 +94,25 @@ template <class T, std::size_t R> consteval pass_fn depth_first_c2r_entry() {
 
 template <class T, std::size_t R, edge_op OutOp> consteval pass_fn depth_top_chirp_entry() {
   if constexpr (depth_top_radix<R>) {
-    return &depth_top_pass<T, R, +1, OutOp, true>;
+    return &depth_top_pass<T, R, +1, OutOp, true, true>;
+  } else {
+    return nullptr;
+  }
+}
+
+// The depth-first pair's forward first pass reading one input run from logical 0 and backward
+// top pass writing one output run (DESIGN.md 12.2, task 5.2d).
+template <class T, std::size_t R> consteval pass_fn depth_first_head_entry() {
+  if constexpr (depth_radix<R>) {
+    return &depth_first_pass<T, R, -1, first_input::head>;
+  } else {
+    return nullptr;
+  }
+}
+
+template <class T, std::size_t R, edge_op OutOp> consteval pass_fn depth_top_part_entry() {
+  if constexpr (depth_top_radix<R>) {
+    return &depth_top_pass<T, R, +1, OutOp, true, false>;
   } else {
     return nullptr;
   }
@@ -345,6 +363,8 @@ template <class T, std::size_t I> struct radix_entries {
       .depth_first_chirp = depth_first_chirp_entry<T, R>(),
       .depth_top_chirp = {depth_top_chirp_entry<T, R, nop>(), depth_top_chirp_entry<T, R, scl>()},
       .depth_first_c2r = depth_first_c2r_entry<T, R>(),
+      .depth_first_head = depth_first_head_entry<T, R>(),
+      .depth_top_part = {depth_top_part_entry<T, R, nop>(), depth_top_part_entry<T, R, scl>()},
   };
 };
 

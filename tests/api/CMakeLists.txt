@@ -29,6 +29,9 @@ fftn_always_optimise(callbacks_strategies_test.cpp)
 # Row pipelines (tasks 5.2b, 5.2c) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_pipeline_tests SOURCES pipeline_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(pipeline_test.cpp)
+# Stored runs and the depth-first pair on row pipelines (task 5.2d), likewise.
+fftn_add_test(fftn_pipeline_runs_tests SOURCES pipeline_runs_test.cpp LIBRARIES fftn_test_support)
+fftn_always_optimise(pipeline_runs_test.cpp)
 
 # Real-to-real plans (task 6.3) against the quadruple-precision reference, optimised likewise.
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)

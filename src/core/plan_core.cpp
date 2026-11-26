@@ -1287,6 +1287,27 @@ template chain_builder<double> plan_chain<double>(plan_core& c, const target_pro
 template chain_builder<float> plan_chain<float>(plan_core& c, const target_profile& profile,
                                                 const build_settings& settings);
 
+template <class T>
+std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_settings& settings,
+                                                const chain_builder<T>& chain, target isa) {
+  // Forced only: when the rules take the pair is experiment X67's to decide (task 5.2g; AGENTS.md
+  // section 6), so a pipeline by the rules keeps the chain pair.
+  if (settings.strategy != strategy_choice::depth ||
+      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+    return {};
+  }
+  return depth_tops_for<T>(n, settings, chain, isa, true);
+}
+
+template std::vector<std::size_t> convolution_depth_tops<double>(std::size_t n,
+                                                                 const build_settings& settings,
+                                                                 const chain_builder<double>& chain,
+                                                                 target isa);
+template std::vector<std::size_t> convolution_depth_tops<float>(std::size_t n,
+                                                                const build_settings& settings,
+                                                                const chain_builder<float>& chain,
+                                                                target isa);
+
 namespace {
 
 // A row's stored runs (none where the side has none).
@@ -3758,17 +3779,16 @@ std::shared_ptr<plan_core> build_plan_core(const shape_view& s, const options& o
   return build_core(s, opts, given, edges, true);
 }
 
-row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real) {
+row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real, const run_plan& runs) {
   check_counts(s);
-  if (s.kind != transform_kind::c2c || s.axes.size() != 1 || !s.runs.empty()) {
-    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows without runs");
+  if (s.kind != transform_kind::c2c || s.axes.size() != 1) {
+    throw std::logic_error("fftn: internal: resolve_row_layout takes c2c rows");
   }
   const std::size_t real_bytes = s.prec == precision::f64 ? sizeof(double) : sizeof(float);
   const auto cb = static_cast<std::ptrdiff_t>(real ? real_bytes : 2 * real_bytes);
   const std::vector<std::size_t> full{s.axes[0].n};
-  const side_runs none;
-  const side in = resolve(s, full, full[0], true, true, cb, none);
-  const side out = resolve(s, full, full[0], false, true, cb, none);
+  const side in = resolve(s, full, full[0], true, true, cb, runs.in);
+  const side out = resolve(s, full, full[0], false, true, cb, runs.out);
   check_reach(s, in, true);
   check_reach(s, out, false);
   check_no_overlap(s, out);

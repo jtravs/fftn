@@ -216,6 +216,11 @@ struct radix_passes {
   // A c2r row's half-length chain's first pass (backward) with the pairing fused in, from the
   // row's h + 1 bins (experiment X78).
   pass_fn depth_first_c2r;
+  // The depth-first pair's forward first pass reading one stored run from logical 0 with zeros
+  // beyond, and its backward top pass writing one stored run [output edge none or scale]
+  // (DESIGN.md 12.2, task 5.2d).
+  pass_fn depth_first_head;
+  pass_fn depth_top_part[2];
 };
 
 template <class T> struct pass_kernels {

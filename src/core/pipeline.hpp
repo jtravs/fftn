@@ -29,6 +29,7 @@
 #pragma once
 
 #include "core/plan_core.hpp"
+#include "core/runs.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/options.hpp"
 #include "planner/rules.hpp"
@@ -40,11 +41,12 @@
 
 namespace fftn::inline v0::detail {
 
-// The layout of a c2c shape of one axis without runs (a pipeline's line under its batch), with
-// every default resolved and checked as a plan checks it (std::invalid_argument naming the
-// shape's fields): strides and distances in elements, and the bytes each side spans [lo, hi).
-// real: the elements are reals, not complex values (a <T, C, T> pipeline's input and output,
-// whose sides have the same logical extents and, in place, the same layout).
+// The layout of a c2c shape of one axis (a pipeline's line under its batch), with every default
+// resolved and checked as a plan checks it (std::invalid_argument naming the shape's fields):
+// strides and distances in elements, and the bytes each side spans [lo, hi). real: the elements
+// are reals, not complex values (a <T, C, T> pipeline's input and output, whose sides have the
+// same logical extents and, in place, the same layout). runs: the line's stored runs
+// (resolve_runs; task 5.2d), whose stored extents set the defaults and the reach, as a plan's.
 struct row_layout {
   std::ptrdiff_t in_stride = 0;
   std::ptrdiff_t out_stride = 0;
@@ -55,7 +57,8 @@ struct row_layout {
   std::ptrdiff_t out_lo = 0;
   std::ptrdiff_t out_hi = 0;
 };
-[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real = false);
+[[nodiscard]] row_layout resolve_row_layout(const shape_view& s, bool in_place, bool real = false,
+                                            const run_plan& runs = {});
 
 // The target profile of c's instruction set (c.isa_target, set by the caller) with the settings'
 // overrides, and the chain builder on it with the settings' rules, its tables in c's: what
@@ -65,6 +68,16 @@ struct row_layout {
 template <class T>
 [[nodiscard]] chain_builder<T> plan_chain(plan_core& c, const target_profile& profile,
                                           const build_settings& settings);
+
+// The top factors of the depth-first pair (DESIGN.md 12.2, task 5.2d) for a line of n, or none:
+// forced only (build_settings::strategy depth), wherever a convolution's split fits
+// (depth_tops_for: C divides the tops' product, so that the first pass's blocks are whole);
+// never by the rules until experiment X67 (task 5.2g) gives them a rule, nor with forced radices
+// for n.
+template <class T>
+[[nodiscard]] std::vector<std::size_t>
+convolution_depth_tops(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
+                       target isa);
 
 // c's workspace layout from its scratch lines of `scratch` complex values of complex_bytes each
 // and its block (c.block_elements); stagger_b: scratch line b starts seven 64-byte lines further
