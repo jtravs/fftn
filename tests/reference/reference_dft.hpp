@@ -65,4 +65,11 @@ std::vector<exact_complex> c2c_plane(int sign, std::size_t ny, std::size_t nx,
                                      std::span<const std::complex<double>> x,
                                      std::span<const std::pair<std::size_t, std::size_t>> points);
 
+// The discrete Hartley transform (DESIGN.md 5.7) of a C-ordered array of reals of the given
+// extents (one or more): the separable product of the 1-D transforms
+// H_k = sum_j x_j cas(2 pi jk / n), cas = cos + sin, along every axis, evaluated in 113-bit
+// arithmetic throughout (the intermediate axes are not rounded). Not remembered: callers that
+// repeat an input keep the result.
+std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x);
+
 } // namespace fftn::test::reference

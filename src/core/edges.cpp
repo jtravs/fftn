@@ -55,9 +55,10 @@ void check_scale(double scale, precision prec, const std::string& name) {
   }
 }
 
-// Whether the side is real: the input of r2c, the output of c2r.
+// Whether the side is real: the input of r2c, the output of c2r, both sides of r2r.
 bool real_side(const shape_view& s, bool output) {
-  return output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c;
+  return s.kind == transform_kind::r2r ||
+         (output ? s.kind == transform_kind::c2r : s.kind == transform_kind::r2c);
 }
 
 // The lengths of the side's logical coordinates along each axis: for c2c the axes' lengths;
