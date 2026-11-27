@@ -368,6 +368,7 @@ template <class In, class Out, class R> void check_plan(const plan_case& c) {
       .r2r_kinds = c.r2r.empty() ? nullptr : c.r2r.data(),
       .run_count = 0,
       .runs = nullptr,
+      .split = 0,
   };
   const fftn_plan_edges edges = {.in = c_edge(c.in), .out = c_edge(c.out)};
   fftn_options options = fftn_options_default();

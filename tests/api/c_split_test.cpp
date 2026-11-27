@@ -36,15 +36,15 @@ namespace {
 struct split_case {
   fftn_kind kind = FFTN_C2C;
   int direction = FFTN_FORWARD;
-  std::vector<std::size_t> n;
+  std::vector<std::size_t> n{};
   std::size_t count = 1;
-  std::vector<std::ptrdiff_t> in_strides; // empty: all 0
-  std::vector<std::ptrdiff_t> out_strides;
+  std::vector<std::ptrdiff_t> in_strides{}; // empty: all 0
+  std::vector<std::ptrdiff_t> out_strides{};
   std::ptrdiff_t in_dist = 0;
   std::ptrdiff_t out_dist = 0;
   bool in_place = false;
   double scale = 1.0;
-  std::string name;
+  std::string name{};
 };
 
 std::ptrdiff_t stride_at(const std::vector<std::ptrdiff_t>& s, std::size_t d) {
