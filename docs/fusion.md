@@ -7,7 +7,8 @@ together and what is built. The exact rules (orders, layouts, refusals, accuracy
 declarations, preconditions and guarantees are in the public headers, the API reference:
 `include/fftn/edges.hpp`, `include/fftn/callback.hpp`, `include/fftn/pipeline.hpp`,
 `include/fftn/shape.hpp` (stored runs) and the team overloads of `plan::execute`. The design
-and its reasons are in [DESIGN section 12](../dev/DESIGN.md#12-fusion-and-pipelines).
+and its reasons are in [DESIGN section 12](../dev/DESIGN.md#12-fusion-and-pipelines). C
+programs have the same objects through `fftn/c_api.h` ([c_api.md](c_api.md#fusion)).
 
 **Provisional.** Everything on this page except `completion::own` and `transforms_of` on plans
 is provisional, as its headers say: edges, the vocabulary, stored runs, block callbacks and
