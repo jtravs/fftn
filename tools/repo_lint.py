@@ -8,9 +8,10 @@
     tools/repo_lint.py docs    relative links in tracked Markdown resolve; PLAN.md has
                                its status section; no file is referenced that is ignored
     tools/repo_lint.py knobs   experimental switches are registered and not expired
-    tools/repo_lint.py snippets  code blocks in docs/ are quoted from files in examples/
+    tools/repo_lint.py snippets  code blocks in docs/ and README.md are quoted from files in
+                                 examples/
 
-A snippet is a fenced block in docs/*.md whose info string names its source:
+A snippet is a fenced block in docs/*.md or README.md whose info string names its source:
 
     ```cpp file=examples/rows.cpp region=plan
     ...
@@ -18,8 +19,8 @@ A snippet is a fenced block in docs/*.md whose info string names its source:
 
 The block must equal the lines of that file between `// snippet-begin: plan` and
 `// snippet-end: plan` (without `region=`, the whole file after its SPDX header), after
-removing their common indentation. Every C or C++ block in docs/ must name a source, so no
-untested code reaches a document.
+removing their common indentation. Every C or C++ block in docs/ and README.md must name a
+source, so no untested code reaches a document.
 
 Standard library only. Files are taken from git (tracked plus untracked-but-not-ignored),
 so a new file is checked before its first commit.
@@ -207,7 +208,7 @@ def check_snippets(files: list[Path]) -> list[str]:
     problems = []
     for f in files:
         rel = f.relative_to(ROOT)
-        if f.suffix != ".md" or rel.parts[0] != "docs":
+        if f.suffix != ".md" or (rel.parts[0] != "docs" and rel != Path("README.md")):
             continue
         lines = f.read_text(encoding="utf-8").splitlines()
         i = 0
