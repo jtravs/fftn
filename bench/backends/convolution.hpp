@@ -121,21 +121,44 @@ std::vector<std::complex<T>> delay_kernel(std::size_t n, std::size_t bins, std::
   return k;
 }
 
-// The user's multiply loop over rows [first, first + count) of a spectrum, rows `dist` complex
-// values apart: each bin of `src` times the kernel's (one for every row), into `dst` (which may
-// be `src`), the complex arithmetic written out so that the compiler vectorises it.
+// One row of the user's multiply loop: each bin times the kernel's, in place (one restrict
+// pointer to the row) or from `src` into a distinct `dst`, the complex arithmetic written out so
+// that the compiler vectorises it. Without restrict the compilers version the loop on an overlap
+// check, which an in-place call fails, and run the scalar copy (the second reader of task 5.2g).
 template <class T>
-[[gnu::always_inline]] inline void multiply_rows_as(T* dst, const T* src, const T* __restrict k,
+[[gnu::always_inline]] inline void multiply_row_in_place(T* __restrict row, const T* __restrict k,
+                                                         std::size_t bins) {
+  for (std::size_t j = 0; j < bins; ++j) {
+    const T vr = row[2 * j];
+    const T vi = row[2 * j + 1];
+    row[2 * j] = vr * k[2 * j] - vi * k[2 * j + 1];
+    row[2 * j + 1] = vr * k[2 * j + 1] + vi * k[2 * j];
+  }
+}
+
+template <class T>
+[[gnu::always_inline]] inline void multiply_row_into(T* __restrict row, const T* __restrict from,
+                                                     const T* __restrict k, std::size_t bins) {
+  for (std::size_t j = 0; j < bins; ++j) {
+    const T vr = from[2 * j];
+    const T vi = from[2 * j + 1];
+    row[2 * j] = vr * k[2 * j] - vi * k[2 * j + 1];
+    row[2 * j + 1] = vr * k[2 * j + 1] + vi * k[2 * j];
+  }
+}
+
+// The user's multiply loop over rows [first, first + count) of a spectrum, rows `dist` complex
+// values apart: each bin of `src` times the kernel's (one for every row), into `dst`, which is
+// `src` (in place) or an array of its own.
+template <class T>
+[[gnu::always_inline]] inline void multiply_rows_as(T* dst, const T* src, const T* k,
                                                     std::size_t bins, std::size_t dist,
                                                     std::size_t first, std::size_t count) {
   for (std::size_t r = first; r < first + count; ++r) {
-    T* row = dst + 2 * r * dist;
-    const T* from = src + 2 * r * dist;
-    for (std::size_t j = 0; j < bins; ++j) {
-      const T vr = from[2 * j];
-      const T vi = from[2 * j + 1];
-      row[2 * j] = vr * k[2 * j] - vi * k[2 * j + 1];
-      row[2 * j + 1] = vr * k[2 * j + 1] + vi * k[2 * j];
+    if (dst == src) {
+      multiply_row_in_place(dst + 2 * r * dist, k, bins);
+    } else {
+      multiply_row_into(dst + 2 * r * dist, src + 2 * r * dist, k, bins);
     }
   }
 }

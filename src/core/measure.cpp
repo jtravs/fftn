@@ -275,8 +275,11 @@ private:
 
 // The most executions in one sample of an in-place plan before an unnormalised transform of
 // `points` points could overflow from values below 1: each multiplies the largest magnitude
-// by at most `points`. Out of place the input is never written, so no bound.
-std::size_t reps_cap(const plan_core& c) {
+// by at most `points`, and an execution makes `transforms` such transforms one after another (a
+// pipeline two: its forward and inverse transforms, with the middle's scratch factor 1/n where
+// there is one, and none, a growth of n per transform, where there is not). Out of place the
+// input is never written, so no bound.
+std::size_t reps_cap(const plan_core& c, std::size_t transforms) {
   if (!c.in_place) {
     return std::numeric_limits<std::size_t>::max();
   }
@@ -284,7 +287,8 @@ std::size_t reps_cap(const plan_core& c) {
   for (const std::size_t n : c.lengths) {
     points *= n;
   }
-  const double growth = std::max(1.0, std::log2(static_cast<double>(points)));
+  const double growth =
+      static_cast<double>(transforms) * std::max(1.0, std::log2(static_cast<double>(points)));
   const double headroom = c.prec == precision::f64 ? 900.0 : 100.0; // bits of exponent, less margin
   return std::max<std::size_t>(1, static_cast<std::size_t>(headroom / growth));
 }
@@ -417,6 +421,7 @@ struct measure_job {
   std::function<std::shared_ptr<plan_core>(const build_settings&)> build_full;
   std::function<std::unique_ptr<factor_scratch>()> factors;
   std::function<void(plan_core&, const build_settings&)> finish;
+  std::size_t transforms = 1; // unnormalised transforms per execution (reps_cap)
 };
 
 // The batch counts of the timing shape for the rules' plan (reduced_counts): its data, workspace
@@ -537,8 +542,9 @@ std::shared_ptr<const plan_core> measure(const measure_job& job, const build_set
       if (real_clock) {
         const double once = time_once(*c.core, *scratch, 1, factors.get());
         const double want = b.sample_seconds / std::max(once, 1e-9);
-        c.reps = std::clamp<std::size_t>(static_cast<std::size_t>(std::ceil(want)), 1,
-                                         std::min<std::size_t>(reps_cap(*c.core), 1U << 20U));
+        c.reps = std::clamp<std::size_t>(
+            static_cast<std::size_t>(std::ceil(want)), 1,
+            std::min<std::size_t>(reps_cap(*c.core, job.transforms), 1U << 20U));
       }
     }
     for (std::size_t round = 0; round < b.max_rounds; ++round) {
@@ -698,6 +704,7 @@ std::shared_ptr<const plan_core> plan_with_effort(const shape_view& s, const opt
       .build_full = [&](const build_settings& cs) { return build(s, cs); },
       .factors = {},
       .finish = {},
+      .transforms = 1,
   };
   if (edges != nullptr) {
     job.factors = [&] { return std::make_unique<factor_scratch>(timing, *edges); };
@@ -825,6 +832,7 @@ std::shared_ptr<const plan_core> plan_pipeline_with_effort(const pipeline_view& 
                 pipeline_need(timing, d.middle, r2c_first ? half : n, true));
           },
       .finish = {},
+      .transforms = 2,
   };
   return measure(job, settings, std::move(rules), b, limits, wisdom_note, start);
 }

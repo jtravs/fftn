@@ -233,6 +233,13 @@ std::string pipeline_key(const pipeline_view& d, const options& opts) {
     << (d.group == static_cast<std::size_t>(-1) ? std::string("none") : std::to_string(d.group))
     << " prologue-epilogue" << edges_key({.in = d.prologue, .out = d.epilogue}, opts.scale)
     << " middle" << edges_key({.in = d.middle, .out = {}}, 1.0);
+  // The three scales always: edges_key writes nothing for an edge with only a scale, and the
+  // scales change the results (shape_key holds options::scale).
+  std::array<char, 64> scale{};
+  for (const double v : {d.prologue.scale, d.middle.scale, d.epilogue.scale}) {
+    std::snprintf(scale.data(), scale.size(), "%a", v);
+    o << " scale " << scale.data();
+  }
   return o.str();
 }
 

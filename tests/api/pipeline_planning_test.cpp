@@ -10,6 +10,7 @@
 #include "core/pipeline.hpp"
 #include "core/plan_core.hpp"
 #include "core/wisdom_entry.hpp"
+#include "fftn/callback.hpp"
 #include "fftn/detail/core.hpp"
 #include "support/inputs.hpp"
 
@@ -235,6 +236,97 @@ TEST(PipelinePlanning, PublicMeasuredAndWisdom) {
   const double eps = std::numeric_limits<double>::epsilon();
   const double tol = 2 * 20 * eps * (1 + std::log2(static_cast<double>(n)));
   EXPECT_LE(std::sqrt(err / ref), tol) << "measured against the rules";
+}
+
+// The wisdom key holds every scale: two pipelines that differ only in the epilogue's or the
+// middle's scale (no factor, callback or accumulation beside it) have different keys, so an entry
+// of one is never used for the other.
+TEST(PipelinePlanning, KeyHoldsTheScales) {
+  conv<double> a(64, 4);
+  a.desc.middle.mul = {};
+  conv<double> b = a;
+  b.desc.epilogue.scale = 0.5;
+  conv<double> m = a;
+  m.desc.middle.scale = 2.0;
+  conv<double> pre = a;
+  pre.desc.prologue.scale = 2.0;
+  const std::string ka = d::pipeline_key(a.view(), {});
+  EXPECT_NE(ka, d::pipeline_key(b.view(), {}));
+  EXPECT_NE(ka, d::pipeline_key(m.view(), {}));
+  EXPECT_NE(ka, d::pipeline_key(pre.view(), {}));
+  EXPECT_EQ(ka, d::pipeline_key(conv<double>(a).view(), {}));
+}
+
+template <class E> void stand_in_never_called(void*, const fftn::block_info&, E*) noexcept {
+  ADD_FAILURE() << "planning called the application's callback";
+}
+
+// Measured planning on the real clock over descriptions whose scratch factor arrays are not one
+// line of n (the spans of pipeline_need): fan-out with a kernel per copy, the half spectrum of
+// <T, C, T> and <C, T, C>, kernels per line and negative strides, prologue and epilogue factors,
+// stored runs, a middle callback (a stand-in that does nothing) and a group. Run under ASan in CI:
+// every read of the scratch arrays stays inside them.
+TEST(PipelinePlanning, ScratchSpansOfEveryShape) {
+  using C = std::complex<double>;
+  const fftn::options quick{.effort = fftn::planning::quick, .measure_seconds = 0.02};
+  const std::size_t n = 64;
+  {
+    auto dsc = fftn::complex_convolution_rows<double>(n, 3);
+    dsc.fanout = 3;
+    dsc.fanout_out_dist = static_cast<std::ptrdiff_t>(3 * n + 5);
+    dsc.fanout_factor_dist = static_cast<std::ptrdiff_t>(n + 1);
+    dsc.middle.mul.batch_strides = {static_cast<std::ptrdiff_t>(3 * (n + 1))};
+    const fftn::pipeline<C, C, C> p(dsc, quick);
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
+  {
+    auto dsc = fftn::convolution_rows<double>(n, 3);
+    dsc.middle.mul.batch_strides = {static_cast<std::ptrdiff_t>(n / 2 + 1)};
+    dsc.prologue.mul = {.kind = fftn::factor_kind::real, .axis_strides = {-1}};
+    dsc.epilogue.mul = {.kind = fftn::factor_kind::real,
+                        .axis_strides = {1},
+                        .batch_strides = {static_cast<std::ptrdiff_t>(n)}};
+    const fftn::pipeline<double, C, double> p(dsc, quick);
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
+  {
+    fftn::pipeline_desc<C, double, C> dsc;
+    dsc.line = {.n = n};
+    dsc.batches = {{.count = 3}};
+    dsc.middle.mul = {.kind = fftn::factor_kind::real,
+                      .axis_strides = {1},
+                      .batch_strides = {static_cast<std::ptrdiff_t>(n)}};
+    dsc.prologue.mul = {.kind = fftn::factor_kind::complex, .axis_strides = {1}};
+    const fftn::pipeline<C, double, C> p(dsc, quick);
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
+  {
+    const std::vector<fftn::stored_run> runs{
+        {.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = n / 2},
+        {.axis = 0, .where = fftn::side::out, .logical = n / 4, .stored = 0, .count = n / 2}};
+    auto dsc = fftn::complex_convolution_rows<double>(n, 3, runs);
+    dsc.middle.mul.axis_strides = {-1};
+    dsc.middle.call = {.fn = &stand_in_never_called<C>};
+    const fftn::pipeline<C, C, C> p(dsc, quick);
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
+  {
+    auto dsc = fftn::complex_convolution_rows<double>(n, 4);
+    dsc.batches = {{.count = 2}, {.count = 3}};
+    dsc.group = 1;
+    dsc.middle.call = {.fn = &stand_in_never_called<C>};
+    dsc.middle.mul.batch_strides = {0, static_cast<std::ptrdiff_t>(n)};
+    const fftn::pipeline<C, C, C> p(dsc, quick);
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
+  {
+    // In place without a middle factor: an execution multiplies the line by n; the samples stay
+    // finite (reps_cap counts the pipeline's two transforms).
+    auto dsc = fftn::complex_convolution_rows<double>(n, 3);
+    dsc.middle.mul = {};
+    const fftn::pipeline<C, C, C> p(dsc, {.in_place = true, .effort = fftn::planning::quick});
+    EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
+  }
 }
 
 } // namespace
