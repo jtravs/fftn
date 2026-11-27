@@ -959,8 +959,8 @@ Points that matter:
     constrained away, the core refuses `edges`), stored runs (`shape.runs`), measured planning and
     wisdom (by the rules, `describe()` says so), shape helpers (`rows_c2c` and the rest stay
     interleaved: a split shape is written field by field, or copied from an interleaved helper's,
-    since the strides are the same numbers), and split kinds in the C API (5.9 names them but
-    gives no block).
+    since the strides are the same numbers). The C API has split plans since 2026-11-27 (5.9,
+    "Split complex").
 
 ### 5.9 C API
 
@@ -1038,8 +1038,10 @@ Points that matter:
   with strides as a pointer and a count, `fftn_exec_args`, `fftn_plan_create_edges` and execute
   forms with arguments), block callbacks (12.3) and pipelines (12.2), after the maintainer
   accepted 12's C++ APIs as built (2026-11-26). Split-complex kinds: the block below.
-- **Split complex** (*proposed* 2026-11-27, the C form of 5.8's conversion form; provisional,
-  its choices in 18.2 "Phase 6", Q28–Q31):
+- **Split complex** (*proposed* 2026-11-27, the C form of 5.8's conversion form; built on the
+  proposal, provisional, its choices in 18.2 "Phase 6", Q28–Q31; `include/fftn/c_api.h`,
+  `src/c_api/c_api.cpp`, `tests/api/c_split_test.*`, `examples/c_api_split.c`, `docs/c_api.md`
+  "Split complex"):
 
   ```c
   typedef struct fftn_split_ptr { void* re; void* im; } fftn_split_ptr;    /* an output side */
@@ -1078,6 +1080,13 @@ Points that matter:
     planned by the rules whatever `options.effort` and `options.use` say, as in C++.
     `fftn_plan_describe`, `_workspace_bytes`, `_instruction_set` and `fftn_transforms_of` are
     unchanged. Pipelines have no split form (neither has C++).
+  - *As built*: the block as written. The handle keeps the shape's kind and `split`, so a
+    `_split` execution passes each complex side's `im` as the core's factor pointer and the real
+    parts through the slot, as `plan::execute`'s split overloads do (`detail::split_args`), and
+    every plan execution checks its form against the flag (`check_layout`, the core's
+    `contract_failure`); `fftn_execute_on_args` and `fftn_execute_on_split` refuse a NULL
+    executor or workspace before that check, as `fftn_execute_on` does. No core file changed, so
+    plans and their programs are main's.
 - **As built (step 6.8; `include/fftn/c_api.h`, `src/c_api/c_api.cpp`, `docs/c_api.md`).** The
   block above, with Q17–Q22's proposals taken as written, and these choices where it was silent
   (each provisional, for the maintainer's review):
@@ -5328,6 +5337,7 @@ to change before a release.
 | 2026-11-26 | The C API for fusion (step 6.9, section 5.9, "As built (step 6.9)"; provisional, second reader to come): edges and `fftn_exec_args`, block callbacks as C function pointers with a `void*` user argument behind one `noexcept` C++ function per element type, and pipelines of every built kind (fan-out, runs, groups) as an opaque `fftn_pipeline`; default functions for the structs whose zero is not the C++ default; a callback's failure goes through its user pointer | The maintainer accepted 12's C++ APIs as built (2026-11-26); the C interface follows 6.8's conventions so that C, Fortran, Python and Julia callers get fusion too |
 | 2026-11-27 | Block callbacks beside stored runs on planes and volumes (follow-up of 5.3c, section 12.3, "As built (task 5.3c)"): the side's callback in its runs' edge phase, on each run of a row at its logical place, in 12.1's order; the refusal lifted. The DCT and DST kinds I to IV are also checked against an independent direct sum of conventions.md's formulas (test-only `reference::r2r_from_definition`) | The runs' phase already holds each run in cache at its logical place, so the callback costs no sweep; "a block never crosses a gap" and logical coordinates as on rows. The direct sums share no table or kernel with `reference::r2r`, which the r2r suites use |
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
+| 2026-11-27 | Split complex in the C API (section 5.9, "Split complex"; provisional, 18.2 Q28–Q31 for the maintainer): `fftn_split_ptr` and `fftn_split_const_ptr` (`void*` pairs, a real side's array in `re`), `fftn_shape::split`, the four executions with a `_split` suffix; a layout mismatch at execution ends the program; edges, stored runs, in-place r2c and c2r and `fftn_wisdom_add` refused as in C++. 6.9's structs unchanged | The C form of 5.8 under 6.8's and 6.9's conventions: one plan type and `void*` data, a flag that mirrors `shape_view::split`, a suffix as 6.9's `_args`. C++ refuses edges on split plans and has no split pipelines, so the imaginary arrays need no place in `fftn_exec_args` yet |
 
 ---
 

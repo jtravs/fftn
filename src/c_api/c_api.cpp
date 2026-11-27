@@ -8,6 +8,7 @@
 
 #include "fftn/c_api.h"
 
+#include "core/edges.hpp"
 #include "core/wisdom_access.hpp"
 #include "fftn/callback.hpp"
 #include "fftn/detail/core.hpp"
@@ -50,6 +51,11 @@ struct fftn_plan {
   // core holds call_c's instantiations in their place, and each execution hands it a thunk
   // with the C function and the caller's user pointer (c_exec_args).
   std::array<fftn_block_fn, 3> calls{};
+  // The shape's kind and whether its complex sides are split (fftn_shape::split): the _split
+  // executions pass the imaginary arrays of the complex sides only, and every execution checks
+  // that its form matches the plan's layout (DESIGN.md 18.2, Q31).
+  fftn::detail::transform_kind kind = fftn::detail::transform_kind::c2c;
+  bool split = false;
 };
 
 // A pipeline handle: as a plan's, around a pipeline's core.
@@ -261,6 +267,11 @@ struct converted_shape {
     } else if (s->r2r_kinds != nullptr) {
       refuse(where + ".r2r_kinds", "is not NULL; only an FFTN_R2R shape has kinds");
     }
+    if (s->split != 0 && kind == FFTN_R2R) {
+      refuse(where + ".split",
+             "is " + std::to_string(s->split) + "; an FFTN_R2R shape has no complex side to split");
+    }
+    view.split = s->split != 0;
     view.axes = axes;
     view.batches = batches;
     view.runs = runs;
@@ -454,6 +465,40 @@ bool complex_output(detail::transform_kind k) noexcept {
   return k == detail::transform_kind::c2c || k == detail::transform_kind::r2c;
 }
 
+// ---- Split complex ----
+
+// Ends the program when an execution's form does not match the plan's layout (c_api.h,
+// fftn_plan_create; DESIGN.md 18.2, Q31). C cannot refuse it at compile time as C++ does, and an
+// execution cannot return an error: a split plan through an interleaved form would run without
+// its imaginary arrays, an interleaved plan through a _split form would read the real parts as
+// interleaved values.
+void check_layout(const fftn_plan* plan, bool split_form) noexcept {
+  if (plan->split == split_form) {
+    return;
+  }
+  detail::contract_failure(
+      split_form ? "fftn: a plan of interleaved data was executed through a _split form of the C "
+                   "API (fftn_execute_split and the others take split-complex plans only)"
+                 : "fftn: a split-complex plan was executed through a C execution without the "
+                   "_split suffix (use fftn_execute_split and the others)");
+}
+
+// What a split C execution hands the core, as plan::execute's split overloads do in C++
+// (detail::slot_array, detail::split_args): the real parts (or a real side's array) through the
+// slots, and each complex side's imaginary array through its factor pointer. A real side's `im`
+// is never read.
+struct c_split_args {
+  const void* in = nullptr;
+  void* out = nullptr;
+  fftn::exec_args args{};
+
+  c_split_args(const fftn_plan* plan, fftn_split_const_ptr i, fftn_split_ptr o) noexcept
+      : in(i.re), out(o.re) {
+    args.in_factor = complex_input(plan->kind) ? i.im : nullptr;
+    args.out_factor = complex_output(plan->kind) ? o.im : nullptr;
+  }
+};
+
 // A C pipeline description as the core's view, with the arrays it borrows converted.
 struct converted_pipeline {
   std::vector<fftn::batch> batches;
@@ -561,6 +606,8 @@ fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options
     const converted_shape s(shape, "fftn_plan_create");
     auto plan = std::make_unique<fftn_plan>();
     plan->core = detail::make_plan_core(s.view, options_of(options, "fftn_plan_create"));
+    plan->kind = s.view.kind;
+    plan->split = s.view.split;
     set_error(error, FFTN_OK, {});
     return plan.release();
   } catch (...) {
@@ -624,16 +671,19 @@ void fftn_workspace_destroy(fftn_workspace* workspace) noexcept { destroy(worksp
 // NOLINTBEGIN(misc-const-correctness)
 void fftn_execute(const fftn_plan* plan, const void* in, void* out,
                   fftn_workspace* workspace) noexcept {
+  check_layout(plan, false);
   detail::execute_all(*plan->core, in, out, workspace->ws);
 }
 
 void fftn_execute_transforms(const fftn_plan* plan, size_t first, size_t count, const void* in,
                              void* out, fftn_workspace* workspace) noexcept {
+  check_layout(plan, false);
   detail::execute_core(*plan->core, first, count, in, out, workspace->ws);
 }
 
 void fftn_execute_team(const fftn_plan* plan, const void* in, void* out, fftn_team team,
                        fftn_workspace* workspace, fftn_completion done) noexcept {
+  check_layout(plan, false);
   detail::execute_team(*plan->core, in, out, team_of(team), workspace->ws,
                        raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
                                                               : fftn::completion::all);
@@ -650,6 +700,7 @@ int fftn_execute_on(const fftn_plan* plan, const void* in, void* out, const fftn
       workspace == nullptr) {
     return FFTN_ERROR_INVALID_ARGUMENT;
   }
+  check_layout(plan, false);
   try {
     detail::execute_on(*plan->core, in, out, fftn::executor_ref(*executor), workspace->ws);
     return FFTN_OK;
@@ -723,6 +774,10 @@ size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer, size_t size) no
 
 int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan, fftn_error* error) noexcept {
   try {
+    if (plan->split) {
+      refuse("fftn_wisdom_add: plan", "is a split-complex plan, whose programs wisdom does not "
+                                      "record (C++ offers no wisdom::add for it)");
+    }
     detail::wisdom_access::add(wisdom->w, *plan->core);
     set_error(error, FFTN_OK, {});
     return FFTN_OK;
@@ -809,6 +864,8 @@ fftn_plan* fftn_plan_create_edges(const fftn_shape* shape, const fftn_options* o
       };
       plan->core = detail::make_plan_core_with_edges(s.view, o, e);
     }
+    plan->kind = s.view.kind;
+    plan->split = s.view.split;
     set_error(error, FFTN_OK, {});
     return plan.release();
   } catch (...) {
@@ -820,6 +877,7 @@ fftn_plan* fftn_plan_create_edges(const fftn_shape* shape, const fftn_options* o
 // NOLINTBEGIN(misc-const-correctness): as for the executions above
 void fftn_execute_args(const fftn_plan* plan, const void* in, void* out, fftn_workspace* workspace,
                        const fftn_exec_args* args) noexcept {
+  check_layout(plan, false);
   const c_exec_args a(plan->calls, args);
   detail::execute_all(*plan->core, in, out, workspace->ws, a.args);
 }
@@ -827,6 +885,7 @@ void fftn_execute_args(const fftn_plan* plan, const void* in, void* out, fftn_wo
 void fftn_execute_transforms_args(const fftn_plan* plan, size_t first, size_t count, const void* in,
                                   void* out, fftn_workspace* workspace,
                                   const fftn_exec_args* args) noexcept {
+  check_layout(plan, false);
   const c_exec_args a(plan->calls, args);
   detail::execute_core(*plan->core, first, count, in, out, workspace->ws, a.args);
 }
@@ -834,6 +893,7 @@ void fftn_execute_transforms_args(const fftn_plan* plan, size_t first, size_t co
 void fftn_execute_team_args(const fftn_plan* plan, const void* in, void* out, fftn_team team,
                             fftn_workspace* workspace, fftn_completion done,
                             const fftn_exec_args* args) noexcept {
+  check_layout(plan, false);
   const c_exec_args a(plan->calls, args);
   detail::execute_team(*plan->core, in, out, team_of(team), workspace->ws,
                        raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
@@ -844,6 +904,10 @@ void fftn_execute_team_args(const fftn_plan* plan, const void* in, void* out, ff
 int fftn_execute_on_args(const fftn_plan* plan, const void* in, void* out,
                          const fftn_executor* executor, fftn_workspace* workspace,
                          const fftn_exec_args* args) noexcept {
+  if (executor != nullptr && executor->concurrency != nullptr && executor->bulk != nullptr &&
+      workspace != nullptr) { // otherwise refused by execute_on_c without executing
+    check_layout(plan, false);
+  }
   return execute_on_c(plan, in, out, executor, workspace, args);
 }
 
@@ -936,6 +1000,53 @@ int fftn_pipeline_execute_on(const fftn_pipeline* pipeline, const void* in, void
                              const fftn_executor* executor, fftn_workspace* workspace,
                              const fftn_exec_args* args) noexcept {
   return execute_on_c(pipeline, in, out, executor, workspace, args);
+}
+
+// ---- Split complex ----
+
+void fftn_execute_split(const fftn_plan* plan, fftn_split_const_ptr in, fftn_split_ptr out,
+                        fftn_workspace* workspace) noexcept {
+  check_layout(plan, true);
+  const c_split_args a(plan, in, out);
+  detail::execute_all(*plan->core, a.in, a.out, workspace->ws, a.args);
+}
+
+void fftn_execute_transforms_split(const fftn_plan* plan, size_t first, size_t count,
+                                   fftn_split_const_ptr in, fftn_split_ptr out,
+                                   fftn_workspace* workspace) noexcept {
+  check_layout(plan, true);
+  const c_split_args a(plan, in, out);
+  detail::execute_core(*plan->core, first, count, a.in, a.out, workspace->ws, a.args);
+}
+
+void fftn_execute_team_split(const fftn_plan* plan, fftn_split_const_ptr in, fftn_split_ptr out,
+                             fftn_team team, fftn_workspace* workspace,
+                             fftn_completion done) noexcept {
+  check_layout(plan, true);
+  const c_split_args a(plan, in, out);
+  detail::execute_team(*plan->core, a.in, a.out, team_of(team), workspace->ws,
+                       raw_value(done) == FFTN_COMPLETION_OWN ? fftn::completion::own
+                                                              : fftn::completion::all,
+                       a.args);
+}
+
+int fftn_execute_on_split(const fftn_plan* plan, fftn_split_const_ptr in, fftn_split_ptr out,
+                          const fftn_executor* executor, fftn_workspace* workspace) noexcept {
+  if (executor == nullptr || executor->concurrency == nullptr || executor->bulk == nullptr ||
+      workspace == nullptr) {
+    return FFTN_ERROR_INVALID_ARGUMENT;
+  }
+  check_layout(plan, true);
+  try {
+    const c_split_args a(plan, in, out);
+    detail::execute_on(*plan->core, a.in, a.out, fftn::executor_ref(*executor), workspace->ws,
+                       a.args);
+    return FFTN_OK;
+  } catch (const std::bad_alloc&) {
+    return FFTN_ERROR_OUT_OF_MEMORY;
+  } catch (...) {
+    return FFTN_ERROR_EXECUTOR;
+  }
 }
 // NOLINTEND(misc-const-correctness)
 
