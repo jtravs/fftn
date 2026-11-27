@@ -50,6 +50,13 @@ struct edge_side {
   // The side's block callback (core/callbacks.hpp; tasks 5.3a to 5.3c): rows on every strategy,
   // planes and volumes inside their first or last phase (or the side's edge phase).
   side_callback call;
+  // Split-complex data (fftn/split.hpp, DESIGN.md 5.8; task 6.10): the side's separate pass
+  // converts between its two arrays and the interleaved form in the workspace block, with no
+  // vocabulary. The real parts come and go through the side's slot; the imaginary parts through
+  // the side's factor cursor, a real "factor" whose strides are the side's own (kind real,
+  // factor_bytes one real), so that the loops that move factor cursors move them as they move
+  // the slot. build_core sets it up from the resolved layout.
+  bool split = false;
 };
 
 struct edge_plan {

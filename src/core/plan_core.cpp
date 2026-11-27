@@ -1256,6 +1256,10 @@ constexpr std::string_view c2c_fused_input_reason =
     "chain, which takes the factor fused instead";
 constexpr std::string_view batch_one_row_reason =
     "batch leaves, one row at a time between the edge passes";
+// Split-complex rows (task 6.10): build() keeps them on the chain in the workspace block.
+constexpr std::string_view split_rows_reason =
+    "the conversion's passes leave each row in the workspace block, where only the chain is "
+    "built yet";
 // The points of a block of rows in the edge driver's row-block form (task 5.2a): the block's
 // lines in the workspace block, 32 KiB in double, stay in L1 between the edge passes and the
 // rows' transforms; chunk_points' 2048, unmeasured otherwise.
@@ -1864,7 +1868,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     // Stored runs on the output (task 5.1d) leave the output short of the whole transform: it
     // ends in the block, as with accumulation, and the output's phase stores the runs.
     // A consumed output (task 5.3b) likewise: the callback takes the transform there.
-    const bool to_block = edge_ops->out.accumulate || edge_ops->out.runs.any() || consumed;
+    // A split-complex output (task 6.10) likewise: its conversion phase reads the block.
+    const bool to_block =
+        edge_ops->out.accumulate || edge_ops->out.runs.any() || consumed || edge_ops->out.split;
     // An input callback out of place runs on a copy (or the produced row) in the block; in place
     // on the input itself, which an in-place plan may write. On a multi-axis plan (in_inside) a
     // c2c or c2r first phase reads the input to copy it into its destination (in_copy), the
@@ -2413,6 +2419,18 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
     lanes = 0;
     edge_fallback = "a real row's input and consumed output take no lanes together";
   }
+  // Split-complex data (task 6.10, DESIGN.md 5.8): the conversion's passes put each transform's
+  // input in the workspace block and take its result from there, so a row runs in the block on
+  // the chain. The lanes over rows or over adjacent transforms, the grids and the depth-first
+  // chains read or write the caller's arrays, or use the block themselves, and are not built on
+  // the block yet (describe() names the strategy of the plan on interleaved data).
+  const bool split = edge_ops != nullptr && (edge_ops->in.split || edge_ops->out.split);
+  if (split) {
+    lanes = 0;
+    if (r == 1) {
+      edge_fallback = split_rows_reason;
+    }
+  }
   // The axes with more than one point, in the order they run (`order_axes`: the last first).
   std::vector<std::size_t> active;
   for (std::size_t i = r; i > 0; --i) {
@@ -2439,8 +2457,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   const std::size_t adjacent = [&]() -> std::size_t {
     // Where the profile says and the radices agree, a team program runs the chain
     // (machine_profile::adjacent_team_chain).
-    if (lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() || active.empty() ||
-        !settings.lanes_columns || !settings.profile.adjacent_lanes ||
+    if (split || lanes != 0 || s.kind != transform_kind::c2c || s.batches.empty() ||
+        active.empty() || !settings.lanes_columns || !settings.profile.adjacent_lanes ||
         (settings.team_program && team_chain) ||
         (settings.profile.adjacent_team_chain && !chain_radices) ||
         (settings.strategy != strategy_choice::rules &&
@@ -2524,6 +2542,14 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   if (!real_depth_tops.empty()) {
     real_grid = grid_split{};
   }
+  if (split) {
+    // The chain in the workspace block (above).
+    grid_plan = grid_split{};
+    real_grid = grid_split{};
+    depth_tops.clear();
+    bluestein_tops.clear();
+    real_depth_tops.clear();
+  }
   // Only an intermediate the plan keeps in the workspace block anyway is padded: moving a
   // two-phase plan's intermediate out of the output into the block cost 1-9 % (X26b).
   if (!grid_builder<T>::uses_block(grid_plan, in_place_build)) {
@@ -2600,7 +2626,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // include a factor or a callback (so that it runs on the edge driver) takes its rows in blocks
   // of about edge_row_block_points points, each row with a line of its own in the workspace
   // block (c2c_axis), the edge passes, the callbacks and the leaves once per block.
-  if (row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
+  // Not split-complex rows (task 6.10): the form's rows step through the slots by the bytes of an
+  // interleaved element (make_edge_forms), which a split side's reals are not.
+  if (!split && row_edges && !row_strategy && adjacent == 0 && s.kind == transform_kind::c2c &&
       s.batches.size() == 1 && forms_reach != edge_forms_reach::none &&
       (edge_ops->in.kind != factor_kind::none || edge_ops->out.kind != factor_kind::none ||
        calls) &&
@@ -4041,7 +4069,11 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   // row.
   const std::size_t padded = opts.in_place ? 2 * half : s.axes[r - 1].n;
   const auto rb = static_cast<std::ptrdiff_t>(real_bytes);
-  const auto cb = static_cast<std::ptrdiff_t>(2 * real_bytes);
+  // A split-complex side's elements, as its strides count them, are reals (task 6.10).
+  const auto cb = s.split ? rb : static_cast<std::ptrdiff_t>(2 * real_bytes);
+  if (s.split && !with_edges) {
+    throw std::logic_error("fftn: internal: a split-complex shape built without its conversion");
+  }
   side in;
   side out;
   switch (s.kind) {
@@ -4068,6 +4100,34 @@ std::shared_ptr<plan_core> build_core(const shape_view& s, const options& opts,
   }
   std::tie(c->in_lo, c->in_hi) = span_of(s, in);
   std::tie(c->out_lo, c->out_hi) = span_of(s, out);
+  // Split-complex data (task 6.10; core/edges.hpp, edge_side::split): each split side's
+  // imaginary array is its conversion pass's cursor, with the side's own resolved strides and
+  // distances (the shape's order, 0 where an axis or batch dimension never steps), which the
+  // loops that move factor cursors then move exactly as they move the slot of its real parts.
+  edge_plan split_edges;
+  if (s.split) {
+    split_edges = *edges;
+    const auto cursor = [&](edge_side& e, const side& v) {
+      e.split = true;
+      e.separate = true;
+      e.kind = factor_kind::real;
+      e.factor_bytes = real_bytes;
+      e.axis_strides = v.stride;
+      e.axis_stride = r == 1 ? v.stride[0] : 0;
+      e.batch_steps.clear();
+      for (const std::ptrdiff_t d : v.dist) {
+        e.batch_steps.push_back(d * rb);
+      }
+    };
+    if (s.kind != transform_kind::r2c) {
+      cursor(split_edges.in, in);
+    }
+    if (s.kind != transform_kind::c2r) {
+      cursor(split_edges.out, out);
+    }
+    edges = &split_edges;
+    c->split = true;
+  }
   order_axes(s, in, out, *c);
 
   // The scale is applied in the plan's precision: it must be finite there, and a non-zero
@@ -4327,12 +4387,63 @@ std::shared_ptr<const plan_core> build_with_runs(const shape_view& shape, const 
   return c;
 }
 
+// A plan of split-complex data (fftn/split.hpp, DESIGN.md 5.8; task 6.10): the plan on
+// interleaved data with a conversion edge pass (or phase) on each split side, the input's into
+// the workspace block and the output's out of it (build_core fills their cursors), by the rules.
+std::shared_ptr<const plan_core> build_split(const shape_view& shape, const options& opts,
+                                             const build_settings& settings) {
+  check_counts(shape);
+  if (!std::isfinite(opts.measure_seconds) || opts.measure_seconds < 0) {
+    reject("options.measure_seconds", "must be finite and not negative");
+  }
+  if (!shape.runs.empty()) {
+    reject("shape.runs", "is not empty: a split-complex shape takes no stored runs yet (task "
+                         "6.10 built the conversion form without them)");
+  }
+  // In place, each array is the same in and out (DESIGN.md 5.8), which a real transform's
+  // three arrays (one real, two split) cannot all be.
+  if (opts.in_place && shape.kind != transform_kind::c2c) {
+    reject("options.in_place", "is refused for a split-complex r2c or c2r shape: its real array "
+                               "and its two split arrays cannot each be the same in and out; "
+                               "give the plan out of place");
+  }
+  edge_plan conversion;
+  conversion.any = true; // build_core sets the split sides up from the resolved layout
+  const std::shared_ptr<plan_core> c = build_plan_core(shape, opts, settings, &conversion);
+  // The strategy of the plan on interleaved data of the same layout, where it is another
+  // (task 5.1c's line, as plans with edges have it).
+  shape_view interleaved = shape;
+  interleaved.split = false;
+  try {
+    const std::shared_ptr<const plan_core> plain =
+        build_core(interleaved, opts, settings, nullptr, false);
+    if (plain->strategy_name != c->strategy_name) {
+      c->edges_note +=
+          "\n" + forced_text(plain->strategy_name, c->strategy_name,
+                             c->edge_fallback.empty() ? "the conversion's phases go through the "
+                                                        "workspace block"
+                                                      : c->edge_fallback,
+                             "the split arrays");
+    }
+  } catch (const std::invalid_argument&) {
+    // Not a valid interleaved layout (none is known): no plan to compare with.
+  }
+  if (opts.effort != planning::rules || opts.use != nullptr) {
+    c->planning_note = "by the rules: measured planning and wisdom take no split-complex plans "
+                       "yet (task 6.10)";
+  }
+  return c;
+}
+
 } // namespace
 
 std::shared_ptr<const plan_core> make_plan_core(const shape_view& shape, const options& opts,
                                                 const build_settings& settings) {
   if (shape.kind == transform_kind::r2r) {
     return make_r2r_core(shape, opts, nullptr, settings);
+  }
+  if (shape.split) {
+    return build_split(shape, opts, settings);
   }
   if (!shape.runs.empty()) {
     return build_with_runs(shape, opts, nullptr, settings);
@@ -4424,6 +4535,11 @@ std::shared_ptr<const plan_core> make_plan_core_with_edges(const shape_view& sha
                                                            const build_settings& settings) {
   if (shape.kind == transform_kind::r2r) {
     return make_r2r_core(shape, opts, &edges, settings);
+  }
+  // plan<In, Out> offers no edges on split-complex data (task 6.10).
+  if (shape.split) {
+    reject("edges", "are not taken by a split-complex shape yet (task 6.10 built the conversion "
+                    "form without them)");
   }
   if (!shape.runs.empty()) {
     return build_with_runs(shape, opts, &edges, settings);
@@ -4549,6 +4665,9 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   // A plan whose edges have factors runs on the edge driver (core/drive.hpp, edge_drive), with
   // the factor cursors starting at the arrays: execute_core's path above without its shortcuts
   // (programs with factor edges are walked).
+  if (core.split) {
+    check_split_arrays(core, in, out, args);
+  }
   execute_core_cursors(core, first, count, in, out, ws, edge_state_of(args, core.factor_args));
 }
 
@@ -4579,6 +4698,9 @@ std::string describe(const plan_core& core) {
     o << "fftn plan: " << kind_name(core.kind);
     if (core.kind == transform_kind::c2c) {
       o << (core.dir == direction::forward ? " forward" : " backward");
+    }
+    if (core.split) {
+      o << " on split-complex data";
     }
     o << ", " << (core.prec == precision::f64 ? "double" : "float") << ", n = ";
     // The lengths as the shape lists its axes (plan_core::axis_of).

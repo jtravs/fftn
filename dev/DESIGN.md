@@ -886,8 +886,8 @@ Points that matter:
 
 ### 5.8 Split-complex layout
 
-*Proposed* (phase 6, steps 6.10 and 6.13; whether to build it is the maintainer's question in
-18.2, "Phase 6").
+*Proposed* (phase 6, step 6.10; the fused form, 6.13, moved to phase 7 when the maintainer settled
+18.2's Q2 on 2026-11-26); step 6.10 is built on the proposal, provisional ("As built" below).
 
 ```cpp
 namespace fftn {
@@ -921,6 +921,44 @@ Points that matter:
   pass's load and the last pass's store; on `avx2` and `avx512` a split run's last pass would
   store `SP` without its interleave, the one place where split data could be faster than
   interleaved (step 6.13).
+- **As built (step 6.10; `include/fftn/split.hpp`, `core/edges.hpp` `edge_side::split`,
+  `docs/conventions.md` "Split complex").** The block above, provisional, with 18.2's Q2 and Q16
+  as proposed (the maintainer, 2026-11-26: the conversion form only in phase 6, the fused form in
+  phase 7). `shape_view::split` marks the kinds; the split side's elements are reals in the
+  layout checks, and `plan`'s execute overloads for split kinds take `plan::in_data` and
+  `plan::out_data` (member aliases: a `split_ptr` or a pointer), constrained so that each kind has
+  one set.
+  Choices where the block was silent, each for the maintainer's review:
+  - *The conversion.* Each split side is an edge side with a separate pass of its own
+    (`edge_side::split`): c2c rows take 5.1a's separate passes around the row's chain, planes,
+    volumes and real rows 5.1b-1's edge phases, so the block holds one transform in an in-place
+    transform's layout and the transform runs there. The real parts move through the side's
+    slot; the imaginary array is the side's factor cursor, a real "factor" with the side's own
+    strides, which the loops that move cursors move as they move the slot; the output's cursor
+    is written through (it is the caller's `split_ptr<T>::im`). A pass only copies, so the
+    result is the interleaved program's in the block bit for bit. The block, not the output, takes
+    the input in every case: a split output cannot hold interleaved values.
+  - *Rows on the chain.* The lanes over rows and over adjacent transforms, the grids, the
+    depth-first chains and the edge driver's row blocks are not built on the block's row, so a
+    split row is the chain (batch leaves one row at a time where the rules give them), and
+    `describe()` names the strategy of the plan on interleaved data (task 5.1c's line). So the
+    "every strategy works" above holds for planes and volumes, not yet for rows. Follow-up: the
+    lanes over rows on the block, as a consumed output's c2c rows run them (12.3), with the
+    conversion passes over each lanes block's rows (`split_pass` already takes `pass_args::rows`);
+    the grids and depth-first chains, which use the block themselves, with the fused form (6.13).
+  - *In place.* c2c only, each array the same in and out; r2c and c2r are refused in place
+    (`options.in_place`), since one real array and two split ones cannot each be.
+  - *Executions.* A null imaginary array ends the program with a message naming
+    `split_ptr::im` (`check_split_arrays`); debug builds assert the pointers' relations (in place
+    `in.im == out.im`, out of place no output array equal to another array). `split_ptr<T>`
+    converts to `split_ptr<const T>` through a conversion function, which keeps it an aggregate.
+    `wisdom::add` is not offered for split plans (constrained away), which read no wisdom.
+  - *Not built yet, each refused or absent:* edges on split kinds (`plan`'s edges constructor is
+    constrained away, the core refuses `edges`), stored runs (`shape.runs`), measured planning and
+    wisdom (by the rules, `describe()` says so), shape helpers (`rows_c2c` and the rest stay
+    interleaved: a split shape is written field by field, or copied from an interleaved helper's,
+    since the strides are the same numbers), and split kinds in the C API (5.9 names them but
+    gives no block).
 
 ### 5.9 C API
 
@@ -5212,6 +5250,7 @@ to change before a release.
 | 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
 | 2026-11-26 | The C API for fusion (step 6.9, section 5.9, "As built (step 6.9)"; provisional, second reader to come): edges and `fftn_exec_args`, block callbacks as C function pointers with a `void*` user argument behind one `noexcept` C++ function per element type, and pipelines of every built kind (fan-out, runs, groups) as an opaque `fftn_pipeline`; default functions for the structs whose zero is not the C++ default; a callback's failure goes through its user pointer | The maintainer accepted 12's C++ APIs as built (2026-11-26); the C interface follows 6.8's conventions so that C, Fortran, Python and Julia callers get fusion too |
+| 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 
 ---
 

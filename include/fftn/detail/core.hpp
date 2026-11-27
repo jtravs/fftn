@@ -13,6 +13,7 @@
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
+#include "fftn/split.hpp"
 #include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 
@@ -48,10 +49,54 @@ template <> struct kind_of<float, float> {
   static constexpr transform_kind value = transform_kind::r2r;
 };
 
+// The split-complex kinds (fftn/split.hpp, DESIGN.md 5.8; task 6.10): the same kinds, the
+// complex sides split (shape_view::split).
+template <class T> struct kind_of<split_complex<T>, split_complex<T>> {
+  static constexpr transform_kind value = transform_kind::c2c;
+};
+template <class T> struct kind_of<T, split_complex<T>> {
+  static constexpr transform_kind value = transform_kind::r2c;
+};
+template <class T> struct kind_of<split_complex<T>, T> {
+  static constexpr transform_kind value = transform_kind::c2r;
+};
+
+template <class E> inline constexpr bool is_split = false;
+template <class T> inline constexpr bool is_split<split_complex<T>> = true;
+
+// Whether plan<In, Out> or shape<In, Out> is of split-complex data.
+template <class In, class Out> inline constexpr bool split_kind = is_split<In> || is_split<Out>;
+
 template <class In, class Out>
 inline constexpr precision precision_of =
-    std::is_same_v<In, double> || std::is_same_v<In, std::complex<double>> ? precision::f64
-                                                                           : precision::f32;
+    std::is_same_v<In, double> || std::is_same_v<In, std::complex<double>> ||
+            std::is_same_v<In, split_complex<double>>
+        ? precision::f64
+        : precision::f32;
+
+// What one execution passes for a side of element type E (DESIGN.md 5.8, "One class
+// template"): a pointer to E, or for split-complex data the two arrays.
+template <class E> struct data_of {
+  using in = const E*;
+  using out = E*;
+};
+template <class T> struct data_of<split_complex<T>> {
+  using in = split_ptr<const T>;
+  using out = split_ptr<T>;
+};
+template <class E> using in_data = typename data_of<E>::in;
+template <class E> using out_data = typename data_of<E>::out;
+
+// The array a split execution passes through the slots (the real parts, or a real side's own
+// array) and the arrays it passes as the conversion passes' cursors (core/edges.hpp: the
+// imaginary parts, read and written through exec_args' factor pointers; null on a real side).
+template <class T> T* slot_array(T* p) noexcept { return p; }
+template <class T> T* slot_array(split_ptr<T> p) noexcept { return p.re; }
+template <class T> const void* cursor_array(T* /*p*/) noexcept { return nullptr; }
+template <class T> const void* cursor_array(split_ptr<T> p) noexcept { return p.im; }
+template <class In, class Out> exec_args split_args(In in, Out out) noexcept {
+  return {.in_factor = cursor_array(in), .out_factor = cursor_array(out)};
+}
 
 // A shape with its type information as values. The axes and batch dimensions are borrowed
 // from the shape's vectors, which must outlive the view (plan construction uses it within one
@@ -65,6 +110,9 @@ struct shape_view {
   std::span<const batch> batches;
   std::span<const stored_run> runs{};
   std::span<const r2r_kind> kinds{}; // shape::kinds: one per axis for r2r, empty otherwise
+  // The complex sides are split-complex arrays (fftn/split.hpp, task 6.10): their strides and
+  // distances count reals, and the plan converts them through the workspace block.
+  bool split = false;
 };
 
 template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexcept {
@@ -76,6 +124,7 @@ template <class In, class Out> shape_view view_of(const shape<In, Out>& s) noexc
       .batches = s.batches,
       .runs = s.runs,
       .kinds = s.kinds,
+      .split = split_kind<In, Out>,
   };
 }
 
