@@ -81,8 +81,8 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const r2r_kind kind : {r2r_kind::dct1, r2r_kind::dst1}) {
       for (const std::size_t n : lengths) {
-        if (kind == r2r_kind::dct1 && n < 9) {
-          continue; // DCT-I folds from 9 points (core/r2r.cpp, folded_dct1_min)
+        if (kind == r2r_kind::dct1 && n < 33) {
+          continue; // DCT-I folds from 33 points (core/r2r.cpp, folded_dct1_min)
         }
         const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
                                  fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
@@ -143,12 +143,12 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
     double scale;
   };
   const std::vector<layout_case> cases{
-      {"dct1 rows with gaps", r2r_kind::dct1, 0, 17, 3, 2, 3, false, false, 1.0},
+      {"dct1 rows with gaps", r2r_kind::dct1, 0, 33, 3, 2, 3, false, false, 1.0},
       {"dst1 rows reversed", r2r_kind::dst1, 0, 15, 2, -1, -2, false, false, 1.0},
       {"dct1 rows in place", r2r_kind::dct1, 0, 33, 3, 1, 1, true, false, 1.0},
       {"dst1 rows with factors", r2r_kind::dst1, 0, 31, 2, 1, 1, false, true, 1.0},
       {"dct1 rows with factors and a scale", r2r_kind::dct1, 0, 65, 2, 2, 1, false, true, 0.25},
-      {"dct1 planes", r2r_kind::dct1, 9, 17, 2, 1, 1, false, false, 1.0},
+      {"dct1 planes", r2r_kind::dct1, 35, 33, 2, 1, 1, false, false, 1.0},
       {"dst1 planes in place with factors", r2r_kind::dst1, 7, 13, 2, 1, 1, true, true, 1.0},
   };
   fftn::test::outcome o;
@@ -260,7 +260,7 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
 }
 
 // Accumulation keeps the extension (the folded DCT-I parks v_0 in the output), and so do even
-// lengths, DCT-I below 9 points and lengths above the limit; the plans without the switches are
+// lengths, DCT-I below 33 points and lengths above the limit; the plans without the switches are
 // main's.
 TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
   build_settings folded;
@@ -276,8 +276,8 @@ TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
         fftn::detail::view_of(sh), {}, fftn::detail::view_of(e), s));
   };
   EXPECT_NE(text(101, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
-  EXPECT_NE(text(9, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
-  EXPECT_EQ(text(7, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
+  EXPECT_NE(text(33, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
+  EXPECT_EQ(text(31, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
   EXPECT_NE(text(5, r2r_kind::dst1, folded, false).find("folded route"), std::string::npos);
   EXPECT_NE(text(99, r2r_kind::dst1, folded, false).find("folded route"), std::string::npos);
   EXPECT_EQ(text(103, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);

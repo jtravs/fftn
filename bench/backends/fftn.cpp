@@ -109,7 +109,8 @@
 //                    line whatever the strides
 //   CALLBACK_BLOCK_BYTES=B   the profile's callback_block_bytes (X66; its CALLBACK_COPY arm and
 //                    the build setting behind it were deleted by its rule 4)
-//   R2R_FOLDED_MAX=N   the profile's r2r_folded_max: odd DCT-I and DST-I axes up to N points take
+//   R2R_FOLDED_MAX=N   the profile's r2r_folded_max: odd DCT-I (from 33) and DST-I axes up to N
+//   take
 //                    the folded route (X85's arm D; 0: the extensions; at most 65535)
 //   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
 //                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
