@@ -1,9 +1,8 @@
 # X68: the free-space stage as three objects against today's route
 
-- **Status:** planned. The decision rules were drafted with 5.3's design (2026-11-26), before
-  anything was built. The agent who runs X68 claims it here and may adjust the rules only
-  before the first judging run, stating each change and why.
-- **Owner:** unclaimed (task 5.3h)
+- **Status:** running. The decision rules were drafted with 5.3's design (2026-11-26), before
+  anything was built, and amended before the first judging run (below).
+- **Owner:** X68 agent of the lead's night session, 2026-11-27 (task 5.3h)
 - **Phase / task:** 5.3h, on 5.3a–5.3f as built
 
 ## Question
@@ -124,6 +123,91 @@ The callbacks and loops do the same arithmetic in every arm:
      the performance phase.
 
   Near misses are re-run (AGENTS.md section 6).
+
+### Amendments before the first judging run (2026-11-27)
+
+Committed before any judging run, each with its reason. The drafted rules above stand except
+where an item below makes them precise or changes them.
+
+1. **The time lines and sizes come from the client catalogue,** as the Method asks, which the
+   drafted sizes did not all follow:
+   - 384² × 750 and 192² × 384 are envelopes: the client's rows there are c2c of 750 and 384
+     points, every bin stored (n_t = the stored count). Their pencils are therefore `<C, C, C>`
+     spectral pairs, inverse first, in place, with no runs; the "band as runs on the half
+     spectrum" does not arise there.
+   - The client's 128² case (its Cartesian filament) stores 433 bins of a real time line of 1728
+     points (planes of 128² × 433, rows of r2c 1728); the drafted "864" was the length of its
+     coarse rows. The case is 128² × 433, n_t = 1728, its pencils `<C, T, C>` with the band as
+     runs. The catalogue gives no band position: it is bins [1, 434), clear of bin 0 and of the
+     Nyquist bin, whose imaginary parts a c2r transform ignores (so that the stage is still the
+     identity in exact arithmetic).
+   - 256² has no case in the client catalogue. It keeps its place between 192² and 384² with the
+     128² case's time line (256² × 433, n_t = 1728).
+   - Two coupled components (`group`) at 192² and 384², as drafted: the field's components lie
+     one after another, (c, y, x, ω); the coupled term is v_c (a + b Σ |v_k|²).
+2. **The real lines' pencils run out of place** in O and Of: stored runs are refused on an
+   in-place pipeline (5.2d). The pair writes a second field-sized array, and the forward planes
+   read it and write the field (out of place, with the epilogue). Each is still one sweep (read
+   V, write V); the footprint is 2 V, as T's (its scratch volume). In G each member's pencils
+   write a slab buffer of its own, which its forward x plan reads back into the slab.
+3. **T as built** (bench/backends/fftn_stage.cpp, written from the client's route before any
+   run): the stage input crosses the field (y, x, ω) into a scratch volume in plane-major order
+   (ω, y, x) with the propagator; the inverse planes run in place on it; then, a node chunk at a
+   time, the pack (a transposing gather into spectrum rows, the gaps zeroed), the rows to time
+   (c2c, or c2r, out of place), the nonlinear term, the rows back (c2c or r2c, out of place) and
+   the crop (a transposing scatter back into the scratch); the forward planes; the finish,
+   crossing back into the field. The node chunks are the client catalogue's (4469 pixels at
+   384², 7373 at 192², 1261 for the 1728-point line, so also at 256²), with the tails' own plans
+   as the client has. The crossings are tiled (8 pixels by 64 bins); every loop is shared over
+   the executor's lanes, every plan runs on the executor. That is 9 sweeps, the planes counted
+   once each.
+4. **W is not built tonight.** FFTW's arm needs the whole route written again against FFTW's API
+   and threads; it is informative (rule 6), and the Mac leg, where the NEON FFTW matters most,
+   is a daytime follow-up anyway. Rule 6 is not judged; W is left as a follow-up.
+5. **Arm C, informative:** one in-place sweep of the field (each value times one, shared over the
+   lanes). Its time is a sweep's at the bandwidth that width reaches: `bench/x68/model.py` gives
+   every arm's time in sweeps against it (the Mac's bandwidth model, and a check everywhere), and
+   its counted traffic calibrates the counters (it should read about one sweep).
+6. **Traffic as it can be counted on these machines.** Neither shared machine lets a user read
+   the memory controllers: the Xeon runs with `perf_event_paranoid` 1 (no CPU-wide events, so no
+   uncore IMC counters through perf) and VTune's sampling driver is restricted to a group we are
+   not in; DMOG's nodes run with paranoid 2 and have no perf. Changing either is an
+   administrator's decision. So:
+   - **Xeon:** `perf stat` around the harness process (all its threads), enabled only over one
+     counted execute of the stage (the harness's new `--perf-ctl`), counting the core's offcore
+     responses that miss the L3: all data reads (demand and prefetch) and all RFOs. Each is a
+     64-byte line brought from memory.
+   - **EPYC:** the harness's own user-mode counters (`--pmu`) on its thread, so at one thread
+     only: data cache fills from local or remote memory (PMCx044, umask 0x48) plus L2 prefetches
+     that miss the L3 (PMCx072, umask 0xff).
+   - Neither counts writes. Every sweep of these routes writes what it reads, so traffic is
+     reported and judged in **read sweeps**: lines read (or read for ownership) × 64 / V. Rule
+     1's "measured traffic at most 0.70 of T's" is the ratio of read sweeps; rule 3's "6 sweeps"
+     is 6 read sweeps. On the EPYC, rule 1's traffic leg is judged at one thread (full width
+     cannot be counted there).
+7. **Threads and placement.** One thread; 8 threads, the client's width as X66 took it; and full
+   width, one socket: 18 cores on the Xeon (its Slurm binds no CPUs, X59, so `bench/x68/x68.py`
+   confines each run with `taskset` to the socket with the fewest busy cores, idlest cores first,
+   and binds memory to that socket's node), 64 cores on the EPYC (a shared 64-core allocation,
+   block distribution, memory interleaved over its NUMA nodes). Never `--exclusive`; the load is
+   recorded with every round and every traffic count. OpenMP's executor (`fbench-fftn_omp`, the
+   client's runtime), `OMP_PLACES=cores`, `OMP_PROC_BIND=close`.
+8. **Toolchains.** GCC 16 on the EPYC; GCC 14.4 on the Xeon, the newest its fbench profile has
+   (as X65 and X66 ran there). Both are the release toolchain family.
+9. **Sessions.** Per machine and thread count, one fbench run over catalogue `x68`, arms T
+   (baseline), O, Of, G and C, its A/A control T~, three batches per process (a stage takes up to
+   seconds), median statistic, 6 rounds (more where the budget allows).
+10. **Thresholds made precise** (as X66 read its rules):
+    - a ratio "at most x" holds when its median paired ratio (the point) is at most x;
+    - "above 1 beyond the band" (rule 2): the whole 95 % interval above 1 + band;
+    - rule 4's "G/O at most 0.85 beyond the band": the whole interval at most 0.85; "at most
+      1 + band": the point; "between 0.85 and 1 − band": the point;
+    - the band is the run's A/A control (T against its copy); ratios between other arms (O/T,
+      Of/O, G/O) come from `bench/x66/score.py`, which pairs any two arms round by round.
+11. **Rule 4's machines.** Tonight measures two of the three. If G/O passes rule 4's first leg on
+    both, the multi-axis pipeline is proposed whatever the Mac shows; if on neither, it is not
+    proposed whatever the Mac shows; if on one, the verdict on that leg waits for the Mac's
+    daytime run.
 
 ## Results
 
