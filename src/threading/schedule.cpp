@@ -239,8 +239,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // sweep stayed inside half the r2r tests' bound to 257 points, but the tests' largest error of
   // the kind twice failed at 251 on avx2 (tests/api/r2r_test.cpp, DST-I) and from 261 on the
   // baseline targets, so the limit is 129, where that ratio is about three quarters of its 251
-  // value. Over the cases up to 257 the route took 0.784 of the extensions' time, none slower (run
-  // 20261127-075715-2887); up to 129 see X85's last deciding run.
+  // value. Over the 35 cases it moves the route took 0.793 of the extensions' time, none slower
+  // (the deciding run 20261127-083621-be45).
   if (zen3_like && p.vendor == cpu_vendor::amd) {
     p.r2r_folded_max = 129;
   }
