@@ -2273,7 +2273,7 @@ block and output pass a cache level that input and output fit (Xeon 6240 c2r 102
 the packed columns a power of two apart where the block's n/2 + 1 complex values were an odd
 multiple of 16 bytes, which costs inside the caches. So a plane packs only where one
 transform's half spectrum exceeds `machine_profile::c2r_packed_bytes`, on the target it was
-measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`) for Intel's cores only (X64: Zen 4, which the key reaches, lost; section 13.5), half the CCX's L3 on Zen 3's (`avx2`); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
+measured on (`c2r_packed_isa`): the L2 on the Xeon 6240's class (`avx512`) for Intel's cores only (X64: Zen 4, which the key reaches, lost; section 13.5), half the CCX's L3 on Zen 3's (`avx2`, AMD's cores only, section 13.5); the block elsewhere (on Apple wide planes lost at every threshold X60 tried). Volumes keep the block
 (X60: the Xeon 6240's teams, which run them plane at a time, lost 1.05–1.09 at 8 lanes).
 In-place r2c and c2r use FFTW's padded layout: each row of the last axis holds n + 2 reals
 (n/2 + 1 complex), the last two being padding on the real side.
@@ -4156,15 +4156,38 @@ the vendor is AMD; every other vendor, unknown included, keeps the plans `avx2` 
 until it is measured (the maintainer, 2026-11-24). They are X26's copies without prefetch, the
 radix overrides of X30 (512), X42 (500–25000), X54 (768; float 512–4096) and X72 (3072,
 3200, 4608, 5120), and the batch leaves of X53 and X62 (`planner/rules.cpp`, `profile_of`; `core/plan_core.cpp`,
-`copies_prefetch`). Rules keyed by a cache key keep reaching what the key matches (AGENTS.md
-section 6): X57's footprint rule (accepted for other `avx2` cores with a large L3) and the Zen 3
-class's rules (X51's tops of 4, X59's fair runs, X62's Bluestein limit, X63's packed c2r
-intermediate, X72's depth-first half lengths), which an Intel core with a private L2 under 1 MiB and at least 2 MiB of L3 per
-CPU (a four-core client part, a small VM) would also match.
+`copies_prefetch`). Rules keyed by a cache key alone keep reaching what the key matches (AGENTS.md
+section 6), such as X57's footprint rule (accepted for other `avx2` cores with a large L3); the
+Zen 3 class's rules read the vendor (below).
 
 A rule measured on only one vendor's processors is keyed to that vendor (the maintainer,
-2026-11-25). Two cache keys of `set_grid_sizes` were measured on Intel's cores alone and read the
-vendor, since AMD's cores can match them: the Xeon 6240's class (x86-64, a private L2 under
+2026-11-25). Three cache keys of `set_grid_sizes` read the vendor. Zen 3's class (x86-64, a
+private L2 under 1 MiB, at least 2 MiB of L3 per CPU) was measured on AMD's cores alone (the EPYC
+7763; Zen 2 in X64's and X81's screens), and an Intel core with a private L2 under 1 MiB and that
+much L3 per CPU (a four-core client part, a small VM) matches it, so it applies to AMD's cores
+only (the maintainer, 2026-11-27). Every AMD recording (the EPYC 7763, the Zen 2 VM, Zen 5) keeps
+its profile field for field; another vendor's cores with those caches, unknown included, keep the
+large-L3 branch's own fields (X29, X32, X36, X43, X57: below) and the defaults of the class's:
+
+| Key | Fields | Experiments (machines) |
+|---|---|---|
+| Zen 3's class (AMD) | `fair_line_runs` (Apple's half stands) | X59 (EPYC 7763; M5 Max) |
+| | `anchored_runs` (Apple's and the Xeon 6240's halves stand) | X73 (EPYC 7763); X81 (Zen 2 kept) |
+| | `bluestein_pow2_part_bytes` (half the L1; X36's L1 off the class), `bluestein_whole_lanes` | X62 (EPYC 7763); X64 (Zen 2 kept) |
+| | `depth_min_bytes`, `depth_max_bytes`, `depth_part_bytes`, `depth_top`, `depth_pow2_max_bytes` (tops of 4) | X51 arm E (EPYC 7763) |
+| | `depth_real_max_bytes` | X72 arm A (EPYC 7763); X81 (Zen 2 kept) |
+| | `c2r_packed_bytes`, `c2r_packed_isa` (`avx2`, half the CCX's L3) | X60, X63 (EPYC 7763); X64 (Zen 2 kept) |
+| | `edge_batched_forms` (`leaf_rows`; the Xeon 6240's half stands) | X65's P1, narrowed (EPYC 7763) |
+| | `pipeline_lanes_adjacent_max`, `pipeline_lanes_isa` (`avx2`; the Xeon 6240's half stands) | X67 (EPYC 7763) |
+| | `r2r_folded_max`, `r2r_folded_isa` | X85 (EPYC 7763) |
+
+The last three were keyed to AMD when they were adopted. The large-L3 branch around the class
+(a private L2 with at least 2 MiB of L3 per CPU, off the 2 MiB-L2 key: X29's and X32's chains,
+X36's Bluestein limit, and on x86-64 X43's team blocks and X57's footprint rule) does not read
+the vendor: it also reaches the Ice Lake VM, Zen 4 and 5 and the Axion VM, and keying it would
+change those recorded machines' plans.
+
+The other two keys were measured on Intel's cores alone, and AMD's cores can match them: the Xeon 6240's class (x86-64, a private L2 under
 2 MiB, under 2 MiB of L3 per CPU) also matches Zen 4c and Zen 5c (1 MiB of L2 and 1 MiB of L3
 per CPU with SMT) and Zen 4 VMs reporting a small L3 per CPU, and the 2 MiB-L2 key would match
 any future AMD core with that L2. On Intel's cores they hold as measured (every Intel recording,
@@ -5485,6 +5508,7 @@ to change before a release.
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 | 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
+| 2026-11-27 | Zen 3's class (x86-64, a private L2 under 1 MiB, at least 2 MiB of L3 per CPU) applies to AMD's processors only (`set_grid_sizes`, section 13.5): X51's tops of 4, X59's fair runs, X62's Bluestein limit and whole-line stages, X60's and X63's packed c2r intermediate, X72's depth-first half lengths and X73's anchored runs now read `machine_profile::vendor`, as X65's, X67's and X85's rules on the class already did. Another vendor's cores with those caches, unknown included, keep the large-L3 branch's fields (X29, X32, X36, X43, X57) and the defaults of the class's; Apple's and the Xeon 6240's halves of the shared fields stand. Not a performance change: every AMD recording (the EPYC 7763, the Zen 2 VM, now in the tests, and Zen 5) and every other recording keeps its whole profile, field for field | The maintainer's decision, applying the policy of 2026-11-25 ("a rule measured on only one vendor is keyed to that vendor") to the older Zen 3 rules: every one was measured on AMD's cores only (the EPYC 7763; Zen 2 in X64's and X81's screens), and an Intel core with a private L2 under 1 MiB and that much L3 per CPU (a four-core client part, a small VM) matches the cache key. The large-L3 branch stays unkeyed: it also reaches the recorded Ice Lake VM and the Axion VM, so keying it would change measured machines' plans |
 
 ---
 
