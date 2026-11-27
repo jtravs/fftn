@@ -3117,6 +3117,23 @@ in and start from a tile). Teams and executors share the blocks as tasks, as for
 lanes. Pipelines and plans without the forced pair keep their programs and bits (`describe()`,
 `workspace_bytes()` and output bits of 1,824 probes against `main`, the lanes plans among them).
 
+**As built (task 5.2g, planning, 2026-11-27).** `options::effort` and `options::use` reach
+pipelines as they reach plans (`plan_pipeline_with_effort`, `core/measure.cpp`). The candidates are
+the rules' pair and the chain, depth-first and lanes pairs forced, each only where the description
+takes it (a forced pair that builds another pair is not a candidate, and the chain pair forced
+builds the rules' program, so it is timed once). They are timed on scratch data and scratch factor
+arrays (the kernel's among them, its values scaled by 1/n so that repetitions in place stay bounded;
+callbacks as stand-ins), with plans' budgets, rounds and 1 % rule; `measure()` takes its candidates,
+builders and factor arrays from a `measure_job`, so plans and pipelines share the timing and plans'
+measured planning is unchanged. A wisdom entry is keyed by the description (`pipeline_key`: the
+line's shape key, which holds the first direction, line, batches and runs; the fan-out and group;
+the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed, a callback by its
+mode and scratch) and rebuilt only where its program's fingerprint matches. `wisdom::add` takes a
+pipeline (a new overload, provisional; no API block existed, so it is the plan overload's twin).
+fbench's `PIPELINE` arms build through `make_pipeline_core` with the build settings and `PLANNING`,
+so `STRATEGY` forces the pair, and gain the valid halves (`PIPE_RUNS`), fan-out (`PIPE_FANOUT`),
+interleaved lines and FFTW's arm (`fbench-fftw PIPELINE=separate`) for X67.
+
 ### 12.3 Block callbacks
 
 ```cpp
@@ -5150,6 +5167,7 @@ to change before a release.
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
+| 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
 
 ---
 
