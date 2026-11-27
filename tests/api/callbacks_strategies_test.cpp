@@ -683,7 +683,6 @@ struct knobs {
   d::build_settings small_blocks;   // the rules, blocks of 1 KiB: rows of several blocks
   d::build_settings lanes_small;    // the lanes, blocks of 1 KiB: a lanes block in several calls
   d::build_settings adjacent_small; // the adjacent transforms, blocks of 4 KiB
-  d::build_settings copy_out;       // the chain's copy into the output (callback_copy_out)
   // The edge driver's batched forms (5.2a) with callbacks: batch leaves in row blocks, and the
   // flat form of short rows on the chain.
   d::build_settings leaf_blocks;
@@ -708,9 +707,6 @@ struct knobs {
     lanes_small.profile.callback_block_bytes = 1024;
     adjacent_small = adjacent;
     adjacent_small.profile.callback_block_bytes = 4096;
-    copy_out.strategy = d::strategy_choice::chain;
-    copy_out.batch_leaves = d::batch_leaf_choice::never;
-    copy_out.callback_copy_out = true;
     leaf_blocks = leaves;
     leaf_blocks.profile.edge_batched_forms = d::edge_forms_reach::all;
     // The leaf_rows machines' block size (half the EPYC 7763's and Xeon 6240's 32 KiB L1d),
@@ -720,7 +716,6 @@ struct knobs {
     flat.profile.edge_batched_forms = d::edge_forms_reach::all;
     // The walked form, whose blocks are single rows (no row blocks on any profile).
     chain.profile.edge_batched_forms = d::edge_forms_reach::none;
-    copy_out.profile.edge_batched_forms = d::edge_forms_reach::none;
   }
 };
 
@@ -1133,23 +1128,14 @@ std::vector<cb_case> strategy_cases() {
        .accumulate = true,
        .out_runs = {{.logical = 0, .stored = 0, .count = 6},
                     {.logical = 15, .stored = 6, .count = 5}}},
-      // The chain's copy into the output (X66's arm).
-      {.name = "c2c chain, the copy into the output",
-       .n = 60,
-       .count = 3,
-       .in = in_kind::modify,
-       .out = out_kind::modify,
-       .in_factor = real,
-       .settings = &k.copy_out,
-       .strategy = chain},
-      {.name = "c2c chain, produced into the output, strided",
+      {.name = "c2c chain, produced into the block, strided",
        .n = 24,
        .count = 3,
        .in = in_kind::produce,
        .out = out_kind::modify,
        .in_stride = 2,
        .out_stride = 3,
-       .settings = &k.copy_out,
+       .settings = &k.chain,
        .strategy = chain},
       // Small blocks: rows of several blocks (one more sweep), the lanes' rows cut too.
       {.name = "c2c rows of several blocks",
@@ -1306,10 +1292,6 @@ TEST(CallbackStrategies, DescribeNamesWhereAndTheBlocks) {
        k.chain,
        {"the input's (modify) on each row in the workspace block, after a copy of the input, "
         "blocks of one whole row"}},
-      {fftn::rows_c2c<double>(64, 3, fftn::direction::forward),
-       k.copy_out,
-       {"the input's (modify) on each row in the output, which the chain then transforms in "
-        "place, after a copy of the input"}},
       {fftn::rows_c2c<double>(16, 21, fftn::direction::forward),
        k.leaf_blocks,
        {"edge row blocks: the rows in blocks of", "blocks of up to", "rows together"}},

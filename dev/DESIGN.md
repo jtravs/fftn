@@ -624,7 +624,15 @@ Points that matter:
   edges built by hand along one axis, against the quadruple-precision reference over several,
   and for the allocation of no weight array beyond one axis.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
-  `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
+  `rfft` and the rest, 5.5) are built over the same context. *As built (step 6.7;
+  provisional):* the header-only adapter reaches it through one internal entry,
+  `easy::detail::run_shape` (declared in `fftn/easy.hpp`, a friend of `context`): the plan of
+  exactly the Views' `shape_of` with `options::in_place`, keyed by every field of the shape,
+  found or built in `thread_context()` and executed on the caller's Kokkos executor with the
+  context's workspace. The normalisation stays the adapter's separate pass (`view_plan`'s,
+  now a shared helper), so each one-shot is bitwise the `view_plan` of the same Views. The
+  shape's vectors are built on every call, so a one-shot allocates even when it finds its
+  plan.
 
 ### 5.5 Other interfaces
 
@@ -694,8 +702,15 @@ the header and the docs until it happens.
   the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
   application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
-- *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
-  a plan per call and belong with the convenience layer of 5.4, step 6.7); `DynPlan`.
+- *The one-shot functions* (`KokkosFFT::fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, the
+  `2` and `n` forms; step 6.7, provisional) take Kokkos-FFT's signatures and compute what a
+  plan of the same Views computes, keeping the plan in the calling thread's convenience
+  context (5.4, "Kokkos"). As Kokkos-FFT: a real input to `fft`, `fft2` and `fftn` goes through
+  a complex temporary, `hfft` is `irfft` of the conjugate with the normalisation's direction
+  swapped, and `ihfft` is `rfft` so swapped, then conjugated. One deliberate difference: `hfft`
+  conjugates into a temporary and never modifies its input, which Kokkos-FFT does to a
+  non-const one.
+- *Not provided yet:* the helpers (`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -863,7 +878,9 @@ Points that matter:
   The edges note follows the scales times that product, and the strategy note names only the
   chain directions the phases run. Tested at every n ≤ 512 by the kind twice and against the
   quadruple-precision reference at every n ≤ 128 and two residues mod 15 above (the direct sum
-  is O(n²) in 113-bit arithmetic), sampled at longer lengths.
+  is O(n²) in 113-bit arithmetic), sampled at longer lengths; every kind I to IV also against
+  an independent direct sum of conventions.md's formulas (`reference::r2r_from_definition`, no
+  table or kernel shared with the reference) at every n ≤ 64 and primes up to 257.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
   5.1b (multi-axis lines, real factors). The odd `dct4` zero-pads into the scratch line and
   does not use 5.1d's stored runs or 5.1e's pruned codelets (see the as-built note above). Fusing the read stage into the first pass and the store stage into the
@@ -871,8 +888,8 @@ Points that matter:
 
 ### 5.8 Split-complex layout
 
-*Proposed* (phase 6, steps 6.10 and 6.13; whether to build it is the maintainer's question in
-18.2, "Phase 6").
+*Proposed* (phase 6, step 6.10; the fused form, 6.13, moved to phase 7 when the maintainer settled
+18.2's Q2 on 2026-11-26); step 6.10 is built on the proposal, provisional ("As built" below).
 
 ```cpp
 namespace fftn {
@@ -906,6 +923,44 @@ Points that matter:
   pass's load and the last pass's store; on `avx2` and `avx512` a split run's last pass would
   store `SP` without its interleave, the one place where split data could be faster than
   interleaved (step 6.13).
+- **As built (step 6.10; `include/fftn/split.hpp`, `core/edges.hpp` `edge_side::split`,
+  `docs/conventions.md` "Split complex").** The block above, provisional, with 18.2's Q2 and Q16
+  as proposed (the maintainer, 2026-11-26: the conversion form only in phase 6, the fused form in
+  phase 7). `shape_view::split` marks the kinds; the split side's elements are reals in the
+  layout checks, and `plan`'s execute overloads for split kinds take `plan::in_data` and
+  `plan::out_data` (member aliases: a `split_ptr` or a pointer), constrained so that each kind has
+  one set.
+  Choices where the block was silent, each for the maintainer's review:
+  - *The conversion.* Each split side is an edge side with a separate pass of its own
+    (`edge_side::split`): c2c rows take 5.1a's separate passes around the row's chain, planes,
+    volumes and real rows 5.1b-1's edge phases, so the block holds one transform in an in-place
+    transform's layout and the transform runs there. The real parts move through the side's
+    slot; the imaginary array is the side's factor cursor, a real "factor" with the side's own
+    strides, which the loops that move cursors move as they move the slot; the output's cursor
+    is written through (it is the caller's `split_ptr<T>::im`). A pass only copies, so the
+    result is the interleaved program's in the block bit for bit. The block, not the output, takes
+    the input in every case: a split output cannot hold interleaved values.
+  - *Rows on the chain.* The lanes over rows and over adjacent transforms, the grids, the
+    depth-first chains and the edge driver's row blocks are not built on the block's row, so a
+    split row is the chain (batch leaves one row at a time where the rules give them), and
+    `describe()` names the strategy of the plan on interleaved data (task 5.1c's line). So the
+    "every strategy works" above holds for planes and volumes, not yet for rows. Follow-up: the
+    lanes over rows on the block, as a consumed output's c2c rows run them (12.3), with the
+    conversion passes over each lanes block's rows (`split_pass` already takes `pass_args::rows`);
+    the grids and depth-first chains, which use the block themselves, with the fused form (6.13).
+  - *In place.* c2c only, each array the same in and out; r2c and c2r are refused in place
+    (`options.in_place`), since one real array and two split ones cannot each be.
+  - *Executions.* A null imaginary array ends the program with a message naming
+    `split_ptr::im` (`check_split_arrays`); debug builds assert the pointers' relations (in place
+    `in.im == out.im`, out of place no output array equal to another array). `split_ptr<T>`
+    converts to `split_ptr<const T>` through a conversion function, which keeps it an aggregate.
+    `wisdom::add` is not offered for split plans (constrained away), which read no wisdom.
+  - *Not built yet, each refused or absent:* edges on split kinds (`plan`'s edges constructor is
+    constrained away, the core refuses `edges`), stored runs (`shape.runs`), measured planning and
+    wisdom (by the rules, `describe()` says so), shape helpers (`rows_c2c` and the rest stay
+    interleaved: a split shape is written field by field, or copied from an interleaved helper's,
+    since the strides are the same numbers), and split kinds in the C API (5.9 names them but
+    gives no block).
 
 ### 5.9 C API
 
@@ -979,10 +1034,10 @@ Points that matter:
   one core.
 - **Strings** (`describe`, wisdom text) are copied into the caller's buffer and the full length
   is returned, as `snprintf` does.
-- **Later in phase 6.** Edges (`fftn_edge`, `fftn_factor` with strides as a pointer and a count,
-  `fftn_exec_args`, `fftn_plan_create_edges` and execute forms with arguments) once 12.1's API
-  is confirmed; block callbacks (12.3) and pipelines (12.2) once theirs is (step 6.9);
-  split-complex kinds with 5.8.
+- **Fusion** (step 6.9, built: "As built (step 6.9)" below). Edges (`fftn_edge`, `fftn_factor`
+  with strides as a pointer and a count, `fftn_exec_args`, `fftn_plan_create_edges` and execute
+  forms with arguments), block callbacks (12.3) and pipelines (12.2), after the maintainer
+  accepted 12's C++ APIs as built (2026-11-26). Split-complex kinds come with 5.8.
 - **As built (step 6.8; `include/fftn/c_api.h`, `src/c_api/c_api.cpp`, `docs/c_api.md`).** The
   block above, with Q17–Q22's proposals taken as written, and these choices where it was silent
   (each provisional, for the maintainer's review):
@@ -1020,6 +1075,51 @@ Points that matter:
   - *Building*: the tests and examples enable C, with the C++ compiler's sibling when `CC` is
     unset (`cmake/FftnCCompiler.cmake`), so that sanitizer runtimes do not mix; a C program
     links the static library with the C++ driver.
+- **As built (step 6.9; the same files, `tests/api/c_fusion_test.*`, `examples/c_api_fusion.c`).**
+  The C form of 12's C++ APIs, which the block above only names, following 6.8's conventions;
+  each choice provisional, for the maintainer's review:
+  - *Types*: `fftn_factor_kind` (`FFTN_FACTOR_NONE`, `_REAL`, `_COMPLEX`), `fftn_factor`
+    (`axis_stride_count` and `axis_strides`, `batch_stride_count` and `batch_strides`; a batch
+    count of 0 broadcasts, as the empty vector), `fftn_edge` (`int accumulate`),
+    `fftn_plan_edges`, `fftn_exec_args` (the six pointers), `fftn_callback_mode`
+    (`FFTN_CALLBACK_MODIFY`, `_PRODUCE`, `_CONSUME`), `fftn_callback`, `fftn_block_info`
+    (`block_info`'s fields, the origin as `rank` and `origin`, the scratch as `scratch` and
+    `scratch_bytes`), `fftn_pipeline_kind` (`FFTN_PIPELINE_CCC`, `_TCT`, `_CTC`, after the
+    documents' `<C, C, C>` notation), `fftn_middle`, one `fftn_pipeline_desc` for every kind and
+    precision (`kind` and `precision` fields, `first` read for `_CCC` only), and the size
+    constants as macros, `FFTN_ALONG_TRANSFORMS` and `FFTN_NO_GROUP` (a C enumerator is an
+    `int`).
+  - *Defaults*: `fftn_edge_default()` and `fftn_pipeline_desc_default()`, because a zeroed
+    struct is not the C++ default (a scale of 0 is a valid scale, a fan-out of 0 is refused, a
+    group of 0 names batch dimension 0).
+  - *Plans with edges*: `fftn_plan_create_edges(shape, options, edges, error)`, NULL edges for
+    none; the execute forms with arguments are the four executions with an `_args` suffix and a
+    trailing `const fftn_exec_args*`, NULL for a zeroed one (the team form keeps the explicit
+    `fftn_completion`, as `fftn_execute_team` does).
+  - *Callbacks*: `fftn_block_fn` is `void (*)(void* user, const fftn_block_info* info, void*
+    data)`, returning nothing, as `block_fn`. The core holds one `noexcept` C++ function per
+    element type in the callback's place (`call_c`, called through its own type); each C
+    execution passes it, as the user pointer, a thunk of the C function and the caller's pointer
+    on the caller's stack (no allocation; a team member's callbacks read its own call's, and an
+    executor's tasks run within the call). A callback's failure is recorded through its user
+    pointer and checked by the caller after the execution; `longjmp` out of a callback is
+    undefined; a C++ exception from a callback written in C++ ends the program at the boundary
+    (`std::terminate`), tested by a death test.
+  - *Pipelines*: an opaque `fftn_pipeline` of its own, reference counted as `fftn_plan`, rather
+    than pipelines under `fftn_plan` (the C++ types differ, and wisdom does not take pipelines):
+    `fftn_pipeline_create`, `_ref`, `_release`, `_workspace_bytes`, `_describe`,
+    `_instruction_set`, `_transform_count` (groups counted, 5.3f), `_execute`,
+    `_execute_transforms`, `_execute_team`, `_transforms_of`, `_execute_on`, every execution
+    with a `const fftn_exec_args*` (NULL for none). The C++ helpers (`complex_convolution_rows`
+    and the others) are not mirrored.
+  - *Errors*: refusals made in C name the C function and the field
+    (`fftn_pipeline_create: desc.middle.mul.kind is 7, not an fftn_factor_kind`); the C++
+    constructors' refusals come through with their own messages, which name the C++ fields
+    (`edges.in.accumulate`, `desc.group`), as `fftn_plan_create` passes them (6.8).
+  - *No growth room*: `fftn_exec_args`, `fftn_edge` and `fftn_pipeline_desc` are plain structs
+    without size or version fields (Q21), so split complex (5.8, step 6.10) will change them
+    (the second array of a split factor or side, say), as Q21 allows before 1.0; C callers
+    rebuild against the new header.
 
 ---
 
@@ -3449,7 +3549,8 @@ measured planning or a test choose (planes and volumes from 5.3c, below). Where 
 place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
 values):
 - **Chain** (c2c): as 5.3a, the copy into the workspace block by default, into the output with
-  `build_settings::callback_copy_out` (X66's arm), the chain then in place there. The edge
+  `build_settings::callback_copy_out` (X66's arm), the chain then in place there (removed by
+  X66's rule 4, task 5.3g: the copy now always goes to the block; "As measured" below). The edge
   driver's batched forms (5.2a) take callback stages as they take separate edge passes, under the
   same reach (`machine_profile::edge_batched_forms`; `leaf_rows`: rows whose transform is one
   leaf): the flat form runs a callback stage's blocks per transform, the row-block form (batch
@@ -3532,8 +3633,19 @@ volumes of every kind take callbacks, the API unchanged. In `build()` (`core/pla
   for a callback alone.
 - A plan with callbacks takes no c2r intermediate packed in the output (X60; describe() says so),
   and its multi-axis program runs walked (the unrolled calls carry no callback sites).
-- Not built: callbacks beside stored runs on planes and volumes (refused, naming
-  `edges.in.call.fn` or `edges.out.call.fn`), whose edge phases are nests per run (`run_phase`).
+- **Beside stored runs** (a follow-up of 5.3c, 2026-11-27): a side with runs has its runs' edge
+  phase anyway (`run_phase`, nests per combination of the other axes' pieces), and its callback
+  runs there (`run_callback_line`), on each run of each row of a nest that is not a gap, at the
+  run's logical place in the whole logical transform (the workspace block, or the output for a
+  c2c input without output runs): the input's after the runs' read (`produce`: after zeros
+  between the runs, gap lines zeros as before and never passed), then the side's scale in place;
+  the output's after its scale, before the runs' store or accumulation (`consume`: none). The
+  nest's loops move the coordinates one element of their axes an iteration, and a loop of one
+  iteration around a nest that does not start at 0 starts them at its pieces' first logical
+  elements; a produced input's or consumed output's slot is moved by no loop (either may be
+  null). The side without runs keeps 5.3c's places. Plans without callbacks beside runs build
+  exactly as before (the same records). describe() says "in the input's (output's) stored runs'
+  phase, on each run of a row of axis d", the blocks per the longest run.
 
 As built (task 5.3d; provisional with the rest of the API, second reader pending):
 `pipeline_desc::middle.call` (`callback<Mid>`, `modify` only, refused otherwise naming
@@ -3624,6 +3736,21 @@ middle's. `execute_transforms` and `transforms_of` count groups, as many as the 
 dimension, no `middle.call`, `fanout` above 1. The lanes and the depth-first pairs, forced, give way
 to the chain pair with a group, which `describe()` says. 18.2's "Callbacks" proposals 15 and 16 as written. Pipelines without
 a group keep their programs (the probes of 5.2f).
+
+As measured (task 5.3g, experiment [X66](experiments/X66-block-callbacks.md), the EPYC 7763 and
+the Xeon 6240; the Mac to follow):
+- **Block size.** `callback_block_bytes` is a quarter of L2 on the Xeon 6240's class (Intel's
+  cores; per precision over the cases it changes, double 0.952 on the deciding re-run and float
+  0.839, a plane's lanes column block in one call instead of 3–6) and stays half the L1
+  elsewhere (the EPYC 7763: double 0.979, short of the bar). The gain assumes a callback that
+  walks its block in memory order.
+- **The modifying-edge copy** goes to the workspace block on every target: the copy into the
+  output with the chain in place there lost on both machines (1.043, 1.065) and was deleted
+  (`build_settings::callback_copy_out`).
+- The stage costs 1–3 % on rows of 1024 points and more and on planes; against the user's own
+  loop a callback is about even on rows, and slower on short batched rows (the walked form),
+  planes (narrow column blocks), the free-space layout (one column a call) and out-of-place
+  input callbacks (the copy and the stage are two sweeps). X66's verdict lists these as leads.
 
 ### 12.4 Owner-computes
 
@@ -5194,7 +5321,12 @@ to change before a release.
 | 2026-11-26 | Groups on pipelines (task 5.3f, section 12.3, "As built"): `pipeline_desc::group`, provisional; the group's dimension a task, two members loops around one middle callback over the G spectra, which `block_info::group` and `group_stride` describe; `execute_transforms` and `transforms_of` count groups; refused without a middle callback, with fan-out and for no such dimension; 18.2's "Callbacks" proposals 15 and 16. Awaits the maintainer's review of the API | A coupled middle (polarisations) needs every member's spectrum at once, and one task per group keeps the callback whole under teams and executors |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
+| 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
+| 2026-11-26 | The C API for fusion (step 6.9, section 5.9, "As built (step 6.9)"; provisional, second reader to come): edges and `fftn_exec_args`, block callbacks as C function pointers with a `void*` user argument behind one `noexcept` C++ function per element type, and pipelines of every built kind (fan-out, runs, groups) as an opaque `fftn_pipeline`; default functions for the structs whose zero is not the C++ default; a callback's failure goes through its user pointer | The maintainer accepted 12's C++ APIs as built (2026-11-26); the C interface follows 6.8's conventions so that C, Fortran, Python and Julia callers get fusion too |
+| 2026-11-27 | Block callbacks beside stored runs on planes and volumes (follow-up of 5.3c, section 12.3, "As built (task 5.3c)"): the side's callback in its runs' edge phase, on each run of a row at its logical place, in 12.1's order; the refusal lifted. The DCT and DST kinds I to IV are also checked against an independent direct sum of conventions.md's formulas (test-only `reference::r2r_from_definition`) | The runs' phase already holds each run in cache at its logical place, so the callback costs no sweep; "a block never crosses a gap" and logical coordinates as on rows. The direct sums share no table or kernel with `reference::r2r`, which the r2r suites use |
+| 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
+| 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 | 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
 | 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. Keyed by machine class, every target alike, so the two targets of one machine never split (DESIGN 6.2) |
 

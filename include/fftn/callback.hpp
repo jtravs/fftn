@@ -9,8 +9,9 @@
 /// Provisional (tasks 5.3a to 5.3d, 2026-11-26): this API follows dev/DESIGN.md 12.3 with the
 /// proposals of 18.2 ("Callbacks"), which the maintainer has yet to settle, and may change before
 /// the first release. A callback is taken by c2c, r2c and c2r plans of every rank and by row
-/// pipelines (fftn/pipeline.hpp: the prologue, the middle and the epilogue); construction refuses
-/// one on real-to-real plans and on planes and volumes with stored runs, naming the field.
+/// pipelines (fftn/pipeline.hpp: the prologue, the middle and the epilogue), beside stored runs
+/// too (a block never crosses a gap between runs, and its coordinates are logical); construction
+/// refuses one on real-to-real plans, naming the field.
 ///
 /// The contract, for every callback:
 ///

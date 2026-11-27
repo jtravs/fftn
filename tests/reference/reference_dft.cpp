@@ -603,6 +603,104 @@ std::vector<exact_real> r2r(r2r_type kind, std::span<const double> x,
   return out;
 }
 
+std::vector<exact_real> r2r_from_definition(r2r_type kind, std::span<const double> x) {
+  const std::size_t n = x.size();
+  check_length(n);
+  check_type(kind);
+  if (kind == r2r_type::dct1 && n < 2) {
+    throw std::invalid_argument("reference::r2r_from_definition: dct1 needs n >= 2");
+  }
+  // The angles are pi m / d, d the definition's denominator.
+  std::size_t d = 2 * n;
+  switch (kind) {
+  case r2r_type::dct1:
+    d = n - 1;
+    break;
+  case r2r_type::dst1:
+    d = n + 1;
+    break;
+  case r2r_type::dct4:
+  case r2r_type::dst4:
+    d = 4 * n;
+    break;
+  case r2r_type::dht:
+    d = n;
+    break;
+  default:
+    break;
+  }
+  const quad pi = 2 * half_pi();
+  std::vector<quad> cos_of(2 * d);
+  std::vector<quad> sin_of(2 * d);
+  for (std::size_t m = 0; m < 2 * d; ++m) {
+    const quad a = pi * quad(m) / quad(d);
+    cos_of[m] = cosine(a);
+    sin_of[m] = sine(a);
+  }
+  const auto c = [&](std::size_t m) { return cos_of[m % (2 * d)]; };
+  const auto s = [&](std::size_t m) { return sin_of[m % (2 * d)]; };
+  const auto sign = [](std::size_t k) { return k % 2 == 0 ? quad(1) : quad(-1); };
+  std::vector<exact_real> out;
+  out.reserve(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    quad sum = 0;
+    quad outside = 0;
+    switch (kind) {
+    case r2r_type::dct1: // x_0 + (-1)^k x_(n-1) + 2 sum_(j=1..n-2) x_j cos(pi j k / (n - 1))
+      outside = quad(x[0]) + (sign(k) * quad(x[n - 1]));
+      for (std::size_t j = 1; j + 1 < n; ++j) {
+        sum += quad(x[j]) * c(j * k);
+      }
+      break;
+    case r2r_type::dct2: // 2 sum x_j cos(pi (j + 1/2) k / n)
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * c(((2 * j) + 1) * k);
+      }
+      break;
+    case r2r_type::dct3: // x_0 + 2 sum_(j=1..n-1) x_j cos(pi j (k + 1/2) / n)
+      outside = quad(x[0]);
+      for (std::size_t j = 1; j < n; ++j) {
+        sum += quad(x[j]) * c(j * ((2 * k) + 1));
+      }
+      break;
+    case r2r_type::dct4: // 2 sum x_j cos(pi (j + 1/2)(k + 1/2) / n)
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * c(((2 * j) + 1) * ((2 * k) + 1));
+      }
+      break;
+    case r2r_type::dst1: // 2 sum x_j sin(pi (j + 1)(k + 1) / (n + 1))
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * s((j + 1) * (k + 1));
+      }
+      break;
+    case r2r_type::dst2: // 2 sum x_j sin(pi (j + 1/2)(k + 1) / n)
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * s(((2 * j) + 1) * (k + 1));
+      }
+      break;
+    case r2r_type::dst3: // (-1)^k x_(n-1) + 2 sum_(j=0..n-2) x_j sin(pi (j + 1)(k + 1/2) / n)
+      outside = sign(k) * quad(x[n - 1]);
+      for (std::size_t j = 0; j + 1 < n; ++j) {
+        sum += quad(x[j]) * s((j + 1) * ((2 * k) + 1));
+      }
+      break;
+    case r2r_type::dst4: // 2 sum x_j sin(pi (j + 1/2)(k + 1/2) / n)
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * s(((2 * j) + 1) * ((2 * k) + 1));
+      }
+      break;
+    case r2r_type::dht: // sum x_j (cos + sin)(2 pi j k / n), the sum alone (no factor 2)
+      for (std::size_t j = 0; j < n; ++j) {
+        sum += quad(x[j]) * (c(2 * j * k) + s(2 * j * k));
+      }
+      out.push_back(to_exact(sum));
+      continue;
+    }
+    out.push_back(to_exact(outside + (2 * sum)));
+  }
+  return out;
+}
+
 std::vector<exact_real> dht(std::span<const std::size_t> extents, std::span<const double> x) {
   const std::vector<r2r_type> kinds(extents.size(), r2r_type::dht);
   return r2r(kinds, extents, x);

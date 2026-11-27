@@ -486,6 +486,67 @@ struct context::state {
   std::size_t max_plans = default_max_plans;
   std::uint64_t tick = 0;
   workspace ws;
+
+  // The entry whose key `visit` gives, found or, on a miss, built by `make` (which fills the
+  // weights it is given and returns the plan) and kept, the least recently used dropped beyond
+  // max_plans; the workspace grown to the plan's need for `lanes`. A miss builds everything
+  // before changing anything, so that an exception leaves the context as it was.
+  template <class Visit, class Make> entry& find_or_build(Visit visit, Make make, int lanes) {
+    std::uint64_t hash = hash_start;
+    std::size_t words = 0;
+    visit([&](std::uint64_t w) {
+      hash = mix(hash, w);
+      ++words;
+    });
+    entry* found = nullptr;
+    for (entry& e : entries) {
+      if (e.hash != hash || e.key.size() != words) {
+        continue;
+      }
+      std::size_t i = 0;
+      bool same = true;
+      visit([&](std::uint64_t w) { same = same && e.key[i++] == w; });
+      if (same) {
+        found = &e;
+        break;
+      }
+    }
+    if (found == nullptr) {
+      weights factors;
+      any_plan built = make(factors);
+      const std::size_t need =
+          std::visit([&](const auto& q) { return q.workspace_bytes(lanes); }, built);
+      std::optional<workspace> grown;
+      if (need > ws.size()) {
+        grown.emplace(need);
+      }
+      entry fresh{.key = {},
+                  .hash = hash,
+                  .used = 0,
+                  .plan = std::move(built),
+                  .factors = std::move(factors)};
+      fresh.key.reserve(words);
+      visit([&](std::uint64_t w) { fresh.key.push_back(w); });
+      if (entries.size() < max_plans) {
+        entries.push_back(std::move(fresh));
+        found = &entries.back();
+      } else {
+        found = &*std::ranges::min_element(entries, {}, &entry::used);
+        *found = std::move(fresh);
+      }
+      if (grown) {
+        ws = std::move(*grown);
+      }
+    } else {
+      const std::size_t need =
+          std::visit([&](const auto& q) { return q.workspace_bytes(lanes); }, found->plan);
+      if (need > ws.size()) {
+        ws = workspace(need);
+      }
+    }
+    found->used = ++tick;
+    return *found;
+  }
 };
 
 context::context() noexcept = default;
@@ -599,21 +660,56 @@ void execute_with(const entry& held, const void* in, void* out, workspace& ws,
 }
 
 // Calls f.template operator()<In, Out>() for the call's kind and precision.
-template <class F> decltype(auto) dispatch(const detail::easy_call& c, F&& f) {
+template <class F> decltype(auto) dispatch(detail::easy_kind kind, bool single, F&& f) {
   using cd = std::complex<double>;
   using cf = std::complex<float>;
-  switch (c.kind) {
+  switch (kind) {
   case detail::easy_kind::c2c:
-    return c.single ? f.template operator()<cf, cf>() : f.template operator()<cd, cd>();
+    return single ? f.template operator()<cf, cf>() : f.template operator()<cd, cd>();
   case detail::easy_kind::r2c:
-    return c.single ? f.template operator()<float, cf>() : f.template operator()<double, cd>();
+    return single ? f.template operator()<float, cf>() : f.template operator()<double, cd>();
   case detail::easy_kind::r2r:
-    return c.single ? f.template operator()<float, float>()
-                    : f.template operator()<double, double>();
+    return single ? f.template operator()<float, float>() : f.template operator()<double, double>();
   case detail::easy_kind::c2r:
     break;
   }
-  return c.single ? f.template operator()<cf, float>() : f.template operator()<cd, double>();
+  return single ? f.template operator()<cf, float>() : f.template operator()<cd, double>();
+}
+
+// The words that identify a one-shot call's plan (detail::shape_call): a first word no call of
+// the layer's own functions gives (bit 31), then the shape's every field and the placement.
+template <class In, class Out, class F>
+void visit_shape_key(const shape<In, Out>& sh, const detail::shape_call& c, F&& f) {
+  const auto word = [](std::ptrdiff_t v) {
+    return std::bit_cast<std::uint64_t>(static_cast<std::int64_t>(v));
+  };
+  f((std::uint64_t{1} << 31U) | static_cast<std::uint64_t>(c.kind) |
+    (static_cast<std::uint64_t>(c.single) << 8U) |
+    (static_cast<std::uint64_t>(sh.dir == direction::forward) << 9U) |
+    (static_cast<std::uint64_t>(c.in_place) << 10U));
+  f(static_cast<std::uint64_t>(sh.axes.size()));
+  for (const axis& a : sh.axes) {
+    f(static_cast<std::uint64_t>(a.n));
+    f(word(a.in_stride));
+    f(word(a.out_stride));
+  }
+  f(static_cast<std::uint64_t>(sh.batches.size()));
+  for (const batch& b : sh.batches) {
+    f(static_cast<std::uint64_t>(b.count));
+    f(word(b.in_dist));
+    f(word(b.out_dist));
+  }
+  f(static_cast<std::uint64_t>(sh.runs.size()));
+  for (const stored_run& r : sh.runs) {
+    f(static_cast<std::uint64_t>(r.axis) | (static_cast<std::uint64_t>(r.where) << 32U));
+    f(static_cast<std::uint64_t>(r.logical));
+    f(static_cast<std::uint64_t>(r.stored));
+    f(static_cast<std::uint64_t>(r.count));
+  }
+  f(static_cast<std::uint64_t>(sh.kinds.size()));
+  for (const r2r_kind k : sh.kinds) {
+    f(static_cast<std::uint64_t>(k));
+  }
 }
 
 } // namespace
@@ -624,66 +720,18 @@ void context::run(const detail::easy_call& c) {
     return;
   }
   state& s = own();
-  std::uint64_t hash = hash_start;
-  std::size_t words = 0;
-  visit_key(c, p, [&](std::uint64_t w) {
-    hash = mix(hash, w);
-    ++words;
-  });
-  entry* found = nullptr;
-  for (entry& e : s.entries) {
-    if (e.hash != hash || e.key.size() != words) {
-      continue;
-    }
-    std::size_t i = 0;
-    bool same = true;
-    visit_key(c, p, [&](std::uint64_t w) { same = same && e.key[i++] == w; });
-    if (same) {
-      found = &e;
-      break;
-    }
-  }
   const int lanes = executor_ ? executor_->concurrency() : 1;
-  if (found == nullptr) {
-    // A miss: build the plan and its workspace before changing anything, so that an
-    // exception leaves the context as it was.
-    weights factors;
-    any_plan built = dispatch(
-        c, [&]<class In, class Out>() -> any_plan { return build<In, Out>(c, p, factors); });
-    const std::size_t need =
-        std::visit([&](const auto& q) { return q.workspace_bytes(lanes); }, built);
-    std::optional<workspace> grown;
-    if (need > s.ws.size()) {
-      grown.emplace(need);
-    }
-    entry fresh{.key = {},
-                .hash = hash,
-                .used = 0,
-                .plan = std::move(built),
-                .factors = std::move(factors)};
-    fresh.key.reserve(words);
-    visit_key(c, p, [&](std::uint64_t w) { fresh.key.push_back(w); });
-    if (s.entries.size() < s.max_plans) {
-      s.entries.push_back(std::move(fresh));
-      found = &s.entries.back();
-    } else {
-      found = &*std::ranges::min_element(s.entries, {}, &entry::used);
-      *found = std::move(fresh);
-    }
-    if (grown) {
-      s.ws = std::move(*grown);
-    }
-  } else {
-    const std::size_t need =
-        std::visit([&](const auto& q) { return q.workspace_bytes(lanes); }, found->plan);
-    if (need > s.ws.size()) {
-      s.ws = workspace(need);
-    }
-  }
-  found->used = ++s.tick;
+  entry& found =
+      s.find_or_build([&](auto&& f) { visit_key(c, p, f); },
+                      [&](weights& factors) {
+                        return dispatch(c.kind, c.single, [&]<class In, class Out>() -> any_plan {
+                          return build<In, Out>(c, p, factors);
+                        });
+                      },
+                      lanes);
   if (!p.passes) {
-    dispatch(c, [&]<class In, class Out> {
-      execute_with<In, Out>(*found, c.in, c.out, s.ws, executor_);
+    dispatch(c.kind, c.single, [&]<class In, class Out> {
+      execute_with<In, Out>(found, c.in, c.out, s.ws, executor_);
     });
     return;
   }
@@ -707,7 +755,7 @@ void context::run(const detail::easy_call& c) {
       weight_hyperplanes<T>(c, p, out, true);
       in = out;
     }
-    execute_with<T, T>(*found, in, out, s.ws, executor_);
+    execute_with<T, T>(found, in, out, s.ws, executor_);
     if (has_output_weights(p.r2r)) {
       weight_hyperplanes<T>(c, p, out, false);
     }
@@ -717,6 +765,23 @@ void context::run(const detail::easy_call& c) {
   } else {
     weighted.template operator()<double>();
   }
+}
+
+void detail::run_shape(context& ctx, const shape_call& c) {
+  context::state& s = ctx.own();
+  const int lanes = c.ex != nullptr ? c.ex->concurrency() : 1;
+  const std::optional<executor_ref> ex =
+      c.ex != nullptr ? std::optional<executor_ref>(*c.ex) : std::nullopt;
+  dispatch(c.kind, c.single, [&]<class In, class Out> {
+    const auto& sh = *static_cast<const shape<In, Out>*>(c.shape);
+    entry& found = s.find_or_build([&](auto&& f) { visit_shape_key(sh, c, f); },
+                                   [&](weights&) {
+                                     return any_plan(std::in_place_type<plan<In, Out>>, sh,
+                                                     options{.in_place = c.in_place});
+                                   },
+                                   lanes);
+    execute_with<In, Out>(found, c.in, c.out, s.ws, ex);
+  });
 }
 
 context& thread_context() noexcept {

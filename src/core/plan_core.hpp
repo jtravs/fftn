@@ -16,6 +16,7 @@
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -142,12 +143,6 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   const void* out_factor = nullptr;
   // Puts options::scale on the input edge instead of the output edge (c2c only).
   bool scale_on_input = false;
-  // A c2c row's chain with a modifying or producing input callback out of place: the copy (or
-  // the produced row) goes to the output, which the chain then transforms in place, instead of
-  // the workspace block (DESIGN.md 12.3, "The modifying-edge copy"; task 5.3b). Experiment X66
-  // is to decide between the two per target; the other strategies always take the output
-  // (their own use of the block rules it out), the lanes their block's rows.
-  bool callback_copy_out = false;
   // The largest radix of the pass the pairing of an even real line fuses into
   // (strategies/chain.hpp, DESIGN.md 9.1): 0 the rule (plan_core.cpp, fusion_of), 1 never
   // (a separate pass), 16 every codelet pass whatever the line's size.
@@ -287,6 +282,9 @@ public:
   // A pipeline's core (core/pipeline.cpp, DESIGN.md 12.2): describe()'s first line, which names
   // it a pipeline (empty for plans).
   std::string pipeline_title;
+  // A plan of split-complex data (fftn/split.hpp, task 6.10): its edges are the conversion
+  // passes (core/edges.hpp, edge_side::split); describe() names the layout.
+  bool split = false;
 };
 
 // The debug builds' check of an execution's pointers: in place, in == out; out of place,
@@ -300,6 +298,35 @@ public:
 [[nodiscard]] inline bool out_of_place_pointers(const plan_core& c, const void* in,
                                                 const void* out) noexcept {
   return c.in_place || in != out || (in == nullptr && c.in_unread && c.out_unwritten);
+}
+
+// A split-complex execution's arrays (fftn/split.hpp, task 6.10): `in` and `out` are the slots'
+// arrays (the real parts, or a real side's array), the imaginary arrays arrive as the factor
+// pointers of `args`. A null imaginary array ends the program, naming it (rather than
+// edge_state_of's message about factor arrays); the debug builds assert the pointers' relations
+// as in_place_pointers does for the slots: in place, each imaginary array the same in and out;
+// out of place, no output array equal to another output array or to an input one.
+inline void check_split_arrays(const plan_core& c, const void* in, const void* out,
+                               const exec_args& args) noexcept {
+  const bool in_split = (c.factor_args & moving_in_factor) != 0;
+  const bool out_split = (c.factor_args & moving_out_factor) != 0;
+  if ((in_split && args.in_factor == nullptr) || (out_split && args.out_factor == nullptr)) {
+    contract_failure("fftn: a split-complex plan was executed with a null imaginary array "
+                     "(split_ptr::im)");
+  }
+  const void* in_im = in_split ? args.in_factor : nullptr;
+  const void* out_im = out_split ? args.out_factor : nullptr;
+  assert((!c.in_place || in_im == out_im) &&
+         "fftn: in-place split-complex plan executed with in.im != out.im");
+  assert(
+      (out_im == nullptr || (out_im != out && out_im != in && (c.in_place || out_im != in_im))) &&
+      "fftn: a split-complex output's imaginary array is another of the execution's arrays");
+  assert((in_im == nullptr || c.in_place || in_im != out) &&
+         "fftn: out-of-place split-complex plan executed with in.im == out.re");
+  static_cast<void>(in_im);
+  static_cast<void>(out_im);
+  static_cast<void>(in);
+  static_cast<void>(out);
 }
 
 // The core a team of two or more members runs: the team program where there is one.

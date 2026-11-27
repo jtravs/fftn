@@ -592,6 +592,66 @@ TYPED_TEST(R2r, KindsFourAndOneOfEveryLengthUpTo512OnEveryInstructionSet) {
   EXPECT_TRUE(o.passed()) << o.detail();
 }
 
+// --- Every kind against the direct sums of its definition ----------------------------------------
+
+// An input of n reals and its transform by r2r_from_definition (the formulas of
+// docs/conventions.md summed directly in 113-bit arithmetic, independently of reference::r2r's
+// tables and kernel, which the suites above use), once per kind and n for every target and
+// precision.
+struct definition_reference {
+  std::vector<double> x;
+  std::vector<fftn::test::exact_real> want;
+};
+
+const definition_reference& definition_reference_of(r2r_kind kind, std::size_t n) {
+  static std::map<std::pair<r2r_kind, std::size_t>, definition_reference> cache;
+  if (const auto it = cache.find({kind, n}); it != cache.end()) {
+    return it->second;
+  }
+  fftn::test::input_source src(0xDEF1ULL + n);
+  definition_reference r{.x = src.reals<double>(n), .want = {}};
+  r.want = fftn::test::reference::r2r_from_definition(ref_type(kind), r.x);
+  return cache.emplace(std::pair{kind, n}, std::move(r)).first->second;
+}
+
+// The kinds I to IV (DCT-I and DST-I above all, whose extensions' routes the suites above check
+// against reference::r2r only) at every n up to 64 and at larger primes (n - 1 and n + 1 then
+// even; the odd DCT-IV's 2n twice a prime), on every instruction set.
+TYPED_TEST(R2r, EveryKindAgainstTheDirectSumsOfItsDefinition) {
+  using T = TypeParam;
+  constexpr std::array<r2r_kind, 8> kinds{r2r_kind::dct1, r2r_kind::dst1, r2r_kind::dct2,
+                                          r2r_kind::dst2, r2r_kind::dct3, r2r_kind::dst3,
+                                          r2r_kind::dct4, r2r_kind::dst4};
+  std::vector<std::size_t> lengths;
+  for (std::size_t n = 1; n <= 64; ++n) {
+    lengths.push_back(n);
+  }
+  for (const std::size_t n : {67U, 97U, 127U, 131U, 257U}) {
+    lengths.push_back(n);
+  }
+  fftn::test::outcome o;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const r2r_kind kind : kinds) {
+      for (const std::size_t n : lengths) {
+        if (kind == r2r_kind::dct1 && n < 2) {
+          continue;
+        }
+        const definition_reference& ref = definition_reference_of(kind, n);
+        const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
+                                 fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
+        const fftn::r2r_plan<T> p(fftn::rows_r2r<T>(n, 1, kind), {.force_isa = t});
+        fftn::workspace ws(p);
+        const std::vector<T> x(ref.x.begin(), ref.x.end());
+        std::vector<T> y(n);
+        p.execute(x.data(), y.data(), ws);
+        o.within(fftn::test::compare<T>(std::span<const T>(y), ref.want),
+                 dht_tolerance<T>(route_points(kind, n), 1, 1.0, 1.0, dct_ops), what);
+      }
+    }
+  }
+  EXPECT_TRUE(o.passed()) << o.detail();
+}
+
 // Longer lines: sampled outputs against the direct evaluation, and whole by the kind twice. The
 // lengths give the odd DCT-IV's transforms of 2n (Bluestein or Rader at 4099 and 10007) and the
 // extensions' transforms of n - 1 and n + 1 (powers of two at 1025, 16383 and 16385; a prime at

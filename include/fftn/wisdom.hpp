@@ -79,7 +79,14 @@ public:
   /// replacing an entry for the same shape, options, library version, processor model and
   /// instruction set. A plan built with `options::use = &w` from the result rebuilds the
   /// same program on this machine, with bitwise identical results.
-  template <class In, class Out> void add(const plan<In, Out>& p) { add_entry(entry_of(*p.core_)); }
+  ///
+  /// Not offered for split-complex plans (fftn/split.hpp, provisional, task 6.10), which are
+  /// planned by the rules and read no wisdom.
+  template <class In, class Out>
+    requires(!detail::split_kind<In, Out>)
+  void add(const plan<In, Out>& p) {
+    add_entry(entry_of(*p.core_));
+  }
 
   /// Records the program of the pipeline `p` (fftn/pipeline.hpp), as `add` does for a plan: the
   /// entry applies to the same description and options (the vocabulary's strides and scales,

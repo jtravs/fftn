@@ -341,8 +341,11 @@ its own, and a side with a factor or accumulation runs its callback in that side
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
 chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
-workspace block too), which then runs as the chain, as `plan::describe()` says. Real-to-real
-plans, and planes and volumes with stored runs, refuse callbacks at construction.
+workspace block too), which then runs as the chain, as `plan::describe()` says. Beside stored
+runs (rows, planes and volumes) a side's callback runs in that side's pass of the runs, on each
+run of a row: a block never crosses a gap, its coordinates are logical, `produce` writes only
+the runs and `consume` receives only the output's runs. Real-to-real plans refuse callbacks at
+construction.
 
 ## Stored runs
 
@@ -671,6 +674,65 @@ is the identity for `dht`, `dct3` and `dst3`, doubles for `dct2`, `dst2` and `ds
 scales times them must lie within the precision's range. The results are within the underlying
 transform's error bound plus a rounding per stage operation; the guarantees of "Determinism"
 below hold.
+
+## Split complex
+
+Provisional (task 6.10, `fftn/split.hpp`). Complex data may be kept as two arrays of reals, one
+of real parts and one of imaginary parts, as FFTW's split interface takes them. The element tag
+`split_complex<T>` takes the place of `std::complex<T>` in the shape and the plan:
+`shape<split_complex<T>, split_complex<T>>` (c2c), `shape<T, split_complex<T>>` (r2c, the
+output split) and `shape<split_complex<T>, T>` (c2r, the input split), in rows, planes, volumes
+and chosen axes alike. On a split side the strides and distances count reals and hold for both
+arrays; the defaults are those of the interleaved shape, counted in reals. An execution passes a
+split side as `split_ptr<const T>` (input) or `split_ptr<T>` (output), `{re, im}`, in every
+form: serial, `execute_transforms`, teams and executors (`plan::in_data` and `plan::out_data`
+name the types); a `split_ptr<T>` converts to `split_ptr<const T>`. A null imaginary array ends
+the program with a message naming `split_ptr::im`. Mixed forms (interleaved in, split out) are
+not offered.
+
+```cpp file=examples/split.cpp region=rows
+using split = fftn::split_complex<double>;
+// The shape of rows_c2c, its strides and distances counting doubles in each array.
+fftn::shape<split, split> s;
+s.dir = fftn::direction::forward;
+s.axes = {{.n = n}};
+s.batches = {{.count = count}};
+const fftn::plan<split, split> p(s);
+fftn::workspace ws(p);
+
+std::vector<double> out_re(n * count);
+std::vector<double> out_im(n * count);
+p.execute({re.data(), im.data()}, {out_re.data(), out_im.data()}, ws);
+```
+
+```cpp file=examples/split.cpp region=r2c
+// A real plane into split arrays of ny rows of nx/2 + 1 bins each.
+fftn::shape<double, fftn::split_complex<double>> s;
+s.axes = {{.n = ny}, {.n = nx}};
+const fftn::plan<double, fftn::split_complex<double>> p(s);
+fftn::workspace ws(p);
+
+std::vector<double> re(ny * h);
+std::vector<double> im(ny * h);
+p.execute(x.data(), {re.data(), im.data()}, ws);
+```
+
+The two arrays of a side may lie anywhere relative to each other, interleaved in one buffer
+included; an output's arrays must overlap neither each other nor the input's, which is a
+precondition and not checked, since the pointers arrive with each execution. In place (c2c
+only) each input array is the output array of its part (`in.re == out.re`, `in.im == out.im`);
+r2c and c2r are refused in place, since their real array and two split arrays cannot each be
+the same in and out.
+
+The plan converts: a pass reads each transform's input from its two arrays into the
+interleaved form in the workspace block, the transform runs there in place, and a pass writes
+the result into the output's two arrays (`plan::describe()` names both passes; r2c and c2r have
+one each). The values are those of the interleaved plan of the transform in the block, bit for
+bit, so the accuracy and "Determinism" below are the interleaved kinds'. The workspace holds one
+transform more. Not built yet: rows on other strategies than the chain (the lanes, the grid and
+the depth-first chains; `describe()` names the strategy the plan on interleaved data takes),
+edges, stored runs, measured planning and wisdom (split plans are planned by the rules, and
+`describe()` says so; `wisdom::add` takes none), and split data in the C API.
 
 ## In place
 
