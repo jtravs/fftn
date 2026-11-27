@@ -117,12 +117,6 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output, const st
       reject(call + ".fn", "is a callback on a real-to-real plan, which takes none yet (tasks "
                            "5.3a to 5.3c built them for c2c, r2c and c2r plans)");
     }
-    // Stored runs on a multi-axis plan cut its edge phases into nests per run (run_phase,
-    // plan_core.cpp), which do not carry callbacks yet.
-    if (s.axes.size() != 1 && !s.runs.empty()) {
-      reject(call + ".fn", "is a callback on a multi-axis plan with stored runs, which takes none "
-                           "yet (task 5.3c built callbacks on planes and volumes without runs)");
-    }
     side.call = {.fn = e.call, .mode = e.call_mode, .scratch_bytes = e.call_scratch};
   }
   if (e.kind != factor_kind::none && e.kind != factor_kind::real &&
