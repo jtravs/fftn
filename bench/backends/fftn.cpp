@@ -308,7 +308,8 @@ struct session {
   pipe_arm pipeline = pipe_arm::none;               // PIPELINE
   std::optional<fbench::stage::arm_kind> stage;     // STAGE
   std::vector<fbench::stage::time_line> stage_time; // STAGE_TIME
-  bool stage_selfcheck = false;                     // STAGE_SELFCHECK
+  bool stage_selfcheck = false;
+  bool stage_profile = false; // STAGE_PROFILE                     // STAGE_SELFCHECK
   std::string stage_text, stage_time_text;
   std::string description;
 };
@@ -1880,6 +1881,12 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.stage_text = value;
+    } else if (key == "STAGE_PROFILE") {
+      if (value != "0" && value != "1") {
+        say(message, message_size, "STAGE_PROFILE is 0 or 1");
+        return fbench_error;
+      }
+      s.stage_profile = value == "1";
     } else if (key == "STAGE_SELFCHECK") {
       if (value != "0" && value != "1") {
         say(message, message_size, "STAGE_SELFCHECK is 0 or 1");
@@ -2084,8 +2091,8 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         "CALL_LOOP");
     return fbench_error;
   }
-  if (!s.stage && (!s.stage_time.empty() || s.stage_selfcheck)) {
-    say(message, message_size, "STAGE_TIME and STAGE_SELFCHECK need STAGE");
+  if (!s.stage && (!s.stage_time.empty() || s.stage_selfcheck || s.stage_profile)) {
+    say(message, message_size, "STAGE_TIME, STAGE_SELFCHECK and STAGE_PROFILE need STAGE");
     return fbench_error;
   }
   if (s.stage && (s.edge_in.any() || s.edge_out.any() || calls || s.pipeline != pipe_arm::none ||
@@ -2258,6 +2265,7 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
         cfg.exec.emplace(*s.exec);
       }
       cfg.selfcheck = s.stage_selfcheck;
+      cfg.profile = s.stage_profile;
       std::string why;
       record->stage = fbench::stage::make(*c, cfg, why);
       if (!record->stage) {

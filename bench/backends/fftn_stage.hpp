@@ -65,6 +65,8 @@ struct config {
   // not the identity (coordinates and order matter) on one field, and must agree to 1e-12.
   bool selfcheck = false;
   bool nonlinear = false; // that work (internal)
+  // STAGE_PROFILE (a diagnosis): the case's note starts with each step's time, from three runs.
+  bool profile = false;
 };
 
 class arm {

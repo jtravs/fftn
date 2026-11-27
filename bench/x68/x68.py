@@ -7,6 +7,7 @@ arms timed by fbench at each thread count, and their DRAM traffic counted.
     x68.py --out-dir DIR --build BUILD [--threads 1,8,18] [--place xeon|slurm|none]
            [--rounds N] [--budget S] [--filter REGEX] [--arms T,O,Of,G,C]
            [--traffic perf|pmu|none] [--traffic-threads 1,18] [--timing/--no-timing]
+           [--profile-threads 1,8]
 
 It is a campaign driver for scripts/remote/fbench_remote.py (`submit PROFILE fftn:SHA --campaign
 bench/x68/x68.py -- ...`), and runs anywhere fbench runs.
@@ -36,6 +37,9 @@ one execute of the stage after a warm one:
 Writes are not counted by either: every sweep of these arms writes what it reads, so the report
 gives the lines read (and read for ownership) in sweeps, bytes / V with V the stored field's
 bytes, and the total estimated as twice that.
+
+Profile (--profile-threads, a diagnosis): each arm and case checked once by the harness with
+STAGE_PROFILE=1, whose note starts with the mean time of each of the arm's steps over three runs.
 
 Results: the fbench runs in DIR/runs, and DIR/campaigns/x68/<stamp>.json with the run IDs, the
 placement and load of each run, and the traffic per arm and case.
@@ -362,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--traffic", choices=("perf", "pmu", "none"), default="none")
     p.add_argument("--traffic-threads", default="1")
     p.add_argument("--timing", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--profile-threads", default="")
     args = p.parse_args(argv)
     args.arms = args.arms.split(",")
     args.build = str(Path(args.build).resolve())
@@ -417,6 +422,46 @@ def main(argv: list[str] | None = None) -> int:
                             flush=True,
                         )
                         record["traffic"].append(r)
+                        save()
+    if args.profile_threads:
+        record["profile"] = []
+        cases = catalogue.load("x68").select(None, args.filter)
+        with tempfile.TemporaryDirectory() as t:
+            case_file = Path(t) / "case.txt"
+            for threads in [int(x) for x in args.profile_threads.split(",")]:
+                prefix, chosen = placement(args.place, threads)
+                env = dict(os.environ)
+                if threads > 1:
+                    env.update(OMP_PLACES="cores", OMP_PROC_BIND="close")
+                for case in cases:
+                    case_file.write_text(case.line() + "\n")
+                    for arm in args.arms:
+                        cmd = [
+                            *prefix,
+                            str(harness(args.build)),
+                            "run",
+                            "--cases",
+                            str(case_file),
+                            "--options",
+                            stage_options(arm, threads) + " STAGE_PROFILE=1",
+                            "--check-only",
+                        ]
+                        done = subprocess.run(
+                            cmd, env=env, capture_output=True, text=True, check=False
+                        )
+                        note = parse_case_result(done.stdout).get("note", "")
+                        head = note.split(" " + arm + " (")[0] if note else done.stderr[-300:]
+                        print(f"profile {case.id} {arm} threads {threads}: {head}", flush=True)
+                        record["profile"].append(
+                            {
+                                "case": case.id,
+                                "arm": arm,
+                                "threads": threads,
+                                "profile": head,
+                                "placement": chosen,
+                                "load": load_average(),
+                            }
+                        )
                         save()
     save()
     print(f"x68: campaign record {path}")

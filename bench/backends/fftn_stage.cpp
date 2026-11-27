@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -454,6 +455,32 @@ FBENCH_STAGE_CLONES void sweep(const constants& k, double* F, std::size_t first,
   }
 }
 
+// ---- STAGE_PROFILE: the time of each step --------------------------------------------------
+
+// While a profile is taken (one thread runs the arm's steps; their lanes are inside them), each
+// step's end adds the time since the previous step's end to the step's name.
+struct step_times {
+  std::vector<std::pair<std::string, double>> steps;
+  std::chrono::steady_clock::time_point last;
+};
+step_times* profiling = nullptr;
+
+void stamp(const char* name) {
+  if (profiling == nullptr) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  const double s = std::chrono::duration<double>(now - profiling->last).count();
+  profiling->last = now;
+  for (auto& [n, t] : profiling->steps) {
+    if (n == name) {
+      t += s;
+      return;
+    }
+  }
+  profiling->steps.emplace_back(name, s);
+}
+
 // ---- Shared pieces ------------------------------------------------------------------------
 
 // Memory of n complex values on a 64-byte boundary, zeroed.
@@ -663,8 +690,10 @@ public:
     // 1. The stage input: the propagator, crossing into the scratch's plane-major order.
     share(cfg_, g_.groups * tiles(P, TP),
           [&](std::size_t first, std::size_t count) { cross_in(g_, k_, Fd, Sd, first, count); });
+    stamp("T input crossing");
     // 2. The inverse planes, in place on the scratch.
     run_on(cfg_, planes_inv_, S, S, ws_, {});
+    stamp("T inverse planes");
     // 3. The rows, a node chunk at a time: pack, to time, the response, to frequency, crop.
     for (std::size_t p0 = 0; p0 < P; p0 += chunk_) {
       const std::size_t cnt = std::min(chunk_, P - p0);
@@ -672,20 +701,27 @@ public:
       share(cfg_, g_.groups * tiles(cnt, TP), [&](std::size_t first, std::size_t count) {
         pack(g_, Sd, specd, p0, cnt, first, count);
       });
+      stamp("T pack");
       run_on(cfg_, whole ? inv_ : *inv_tail_, spec, tbuf, ws_, {});
+      stamp("T rows to time");
       share(cfg_, cnt, [&](std::size_t first, std::size_t count) {
         response(g_, k_, timed, cnt, first, count);
       });
+      stamp("T response");
       run_on(cfg_, whole ? fwd_ : *fwd_tail_, tbuf, spec, ws_, {});
+      stamp("T rows to frequency");
       share(cfg_, g_.groups * tiles(cnt, TP), [&](std::size_t first, std::size_t count) {
         crop(g_, specd, Sd, p0, cnt, first, count);
       });
+      stamp("T crop");
     }
     // 4. The forward planes, in place on the scratch.
     run_on(cfg_, planes_fwd_, S, S, ws_, {});
+    stamp("T forward planes");
     // 5. The finish, crossing back into the field's order.
     share(cfg_, g_.groups * tiles(P, TP),
           [&](std::size_t first, std::size_t count) { cross_out(g_, k_, Sd, Fd, first, count); });
+    stamp("T finish crossing");
   }
 
   [[nodiscard]] std::string note() const override {
@@ -770,16 +806,20 @@ public:
       first.in_user = &user_;
     }
     run_on(cfg_, planes_inv_, F, F, ws_, first);
+    stamp("O inverse planes and prologue");
     const fftn::exec_args middle{.mid_user = const_cast<constants*>(&k_)};
     const fftn::exec_args last{.out_user = &user_};
     if constexpr (Real) {
       cd* B = second_.data();
       run_on(cfg_, pair_, F, B, ws_, middle);
+      stamp("O pencils");
       run_on(cfg_, planes_fwd_, B, F, ws_, last);
     } else {
       run_on(cfg_, pair_, F, F, ws_, middle);
+      stamp("O pencils");
       run_on(cfg_, planes_fwd_, F, F, ws_, last);
     }
+    stamp("O forward planes and epilogue");
   }
 
   [[nodiscard]] std::string note() const override {
@@ -857,6 +897,7 @@ public:
   void run(void* field) const override {
     auto* F = static_cast<cd*>(field);
     run_on(cfg_, y_inv_, F, F, ws_, fftn::exec_args{.in_user = &y_user_});
+    stamp("G inverse y and prologue");
     // Each member runs whole slabs, its share dealt as transforms_of deals (contiguous ranges in
     // rank order differing by at most one).
     const auto members = static_cast<std::size_t>(cfg_.exec ? cfg_.threads : 1);
@@ -882,7 +923,9 @@ public:
           },
           &j);
     }
+    stamp("G slabs");
     run_on(cfg_, y_fwd_, F, F, ws_, fftn::exec_args{.out_user = &y_user_});
+    stamp("G forward y and epilogue");
   }
 
   [[nodiscard]] std::string note() const override {
@@ -1138,6 +1181,36 @@ double selfcheck(const geometry& g, const config& cfg) {
 }
 } // namespace
 
+namespace {
+// STAGE_PROFILE: the arm, its note led by the mean time of each step over three runs (after a
+// warm one) on a field of ones.
+class profiled final : public arm {
+public:
+  profiled(std::unique_ptr<arm> inner, std::size_t elements) : inner_(std::move(inner)) {
+    std::vector<cd> x(elements, cd(1.0, 0.0));
+    inner_->run(x.data());
+    step_times t;
+    constexpr int reps = 3;
+    profiling = &t;
+    for (int r = 0; r < reps; ++r) {
+      t.last = std::chrono::steady_clock::now();
+      inner_->run(x.data());
+    }
+    profiling = nullptr;
+    text_ = "profile (ms per run):";
+    for (const auto& [n, s] : t.steps) {
+      text_ += " " + n + " " + std::to_string(s * 1e3 / reps) + ";";
+    }
+  }
+  void run(void* field) const override { inner_->run(field); }
+  [[nodiscard]] std::string note() const override { return text_ + " " + inner_->note(); }
+
+private:
+  std::unique_ptr<arm> inner_;
+  std::string text_;
+};
+} // namespace
+
 std::unique_ptr<arm> make(const fbench_case& c, const config& cfg, std::string& why) {
   if (c.kind != fbench_c2c || c.rank != 3 || c.in_place == 0 || c.precision != fbench_f64 ||
       c.interleave != 1 || c.outer != 1 || c.batch < 1 || c.batch > 2) {
@@ -1165,6 +1238,9 @@ std::unique_ptr<arm> make(const fbench_case& c, const config& cfg, std::string& 
             " (relative rms) with the nonlinear work";
       throw std::runtime_error(why);
     }
+  }
+  if (cfg.profile) {
+    return std::make_unique<profiled>(make_arm(g, cfg), g.groups * g.comp());
   }
   return make_arm(g, cfg);
 }
