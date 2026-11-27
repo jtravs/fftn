@@ -209,6 +209,19 @@ and DST-I of 5–257 points, rows, batches of 256, planes, float rows) 0.784 of 
 none slower beyond the band; the excluded DCT-I rows of 5–17 points on their old plans (notes
 identical, 1.000–1.002); the other 297 cases on their plans (1.002, none slower). **It passes.**
 
+**Tests' clause of D1 (after the adoption at 257):** DMOG's full ctest of the adopted code (Slurm
+521012, GCC 16, `avx2` host, whose own profile now folds) failed tests/api/r2r_test.cpp's kind-twice
+check at DST-I of 251 points (largest error 1.72e-14 against the unchanged tolerance 1.68e-14), and
+the folded test at every odd n fails from 261 on `scalar` and `x86_v2` (largest error of the kind
+twice). D1's rms sweep with its margin of two did not bound the largest error of a round trip.
+**Third narrowing (commit 44363fa6):** the limit on Zen 3's class becomes 129 (the largest error
+about three quarters of its 251 value); the excluded DCT-I and DST-I of 131–257 points return to
+the extensions. **Deciding run, EPYC (declared before it starts):** code 44363fa6, arms A =
+`R2R_FOLDED_MAX=0` (main's plans) and D = the code's own profile (129), catalogue `x85`: the
+excluded cases (odd DCT-I and DST-I of 131–257 points) on their old plans, no case D moves slower
+than A beyond the band, the geometric mean over the moved cases against D2's 0.90; and the full
+ctest on DMOG passes.
+
 **Xeon 6240:** judging run Slurm 17561 on a997ebb8 (arms A, B, D = `R2R_FOLDED_MAX=65535`,
 FFTW, pocketfft), rule D1's sweep (Slurm 17562, `avx512` and `avx2` forced) and the `r2r`
 standing (17563) queue in the `fbench-serial` chain behind other tasks' jobs; not finished when
