@@ -170,7 +170,25 @@ re-run here and this run decides it); every case the setting does not move (abov
 volumes of other kinds) on its old plan and not slower beyond the band; rule C on every case
 (B ÷ A).
 
-(Xeon 6240 pending: judging run Slurm 17554 behind X68's jobs in the `fbench-serial` chain.)
+**Deciding run, EPYC** (20261127-072527-8c75, stopped after 6 rounds; node17 shared, loaded,
+load average 34; band ±1.60 %; final code 363ed5aa): D = `R2R_FOLDED_MAX=257` over the 46 target
+cases 0.793, but DCT-I of 5 points 1.078 [1.076, 1.108] of A: the near miss is confirmed and rule
+D2's second clause fails on that one case (DCT-I of 9: 0.977 [0.949, 0.985]; DST-I of 5 0.918). No
+case outside the targets moved (D ÷ A 0.998 over the other 294, none slower beyond the band). Rule
+C (B = c2a6f672 ÷ A): 15 cases where the base was faster beyond the band (0.92–0.98: DCT-I rows of
+33–129 points on the extension, which A runs with the same plans) and 15 where it was slower
+(1.03–1.25: DST-II planes of 16–128 points), with the same plans (describe identical) in both
+directions: the TU's code moved (the folded kernels added to src/core/r2r.cpp), not the stages.
+
+**Narrowing (AGENTS.md section 6, commit a997ebb8):** DCT-I takes the folded route from 9 points
+only (its extension of 5 points is one leaf of 4, which the folded route's extra stage outweighs).
+**Narrowed deciding run, EPYC (declared before it starts):** code a997ebb8, arms A, D =
+`R2R_FOLDED_MAX=257`, catalogue `x85`: every excluded case (DCT-I of 5) on its old plan (notes
+identical to A's), and no case D moves (odd DCT-I from 9 and odd DST-I up to 257) slower than A
+beyond the band; the geometric mean over the moved cases is reported against D2's 0.90.
+
+(Xeon 6240 pending: judging run Slurm 17556 on 363ed5aa behind other tasks' jobs in the
+`fbench-serial` chain; the narrowing applies there too.)
 
 ## Verdict
 
