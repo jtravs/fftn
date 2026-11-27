@@ -196,6 +196,16 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if ((zen3_like && p.vendor == cpu_vendor::amd) || xeon6240_like) {
     p.edge_batched_forms = edge_forms_reach::leaf_rows;
   }
+  // X66's rule 3 (machine_profile::callback_block_bytes): on the Xeon 6240's class (Intel's cores
+  // only) blocks of a quarter of L2 took 0.933 of the time of half the L1 over the 27 cubic
+  // callback cases whose blocks they change, none slower: a plane's lanes column block (16
+  // columns of 192-384 points) reaches the callback in one call instead of 3-6 (0.61-0.77 on
+  // the planes). On the EPYC 7763 the same blocks took 0.972, short of the rule's bar, so Zen 3's
+  // class and every other machine keep half the L1.
+  if (xeon6240_like && c.l2.size != 0) {
+    p.callback_block_bytes = static_cast<std::uint32_t>(
+        std::min<std::size_t>(c.l2.size / 4, std::numeric_limits<std::uint32_t>::max()));
+  }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3
