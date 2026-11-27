@@ -104,13 +104,44 @@ plan.execute(x.data(), y.data(), ws, {.out_user = &kerr});
 ```
 
 Your code never runs inside FFTN's instruction-set regions, so compile it as you like. The
-plan chooses the blocks: a row whole up to half the L1 data cache (per machine), longer rows
-in element ranges, several short rows together where the plan holds them so. A callback that
+plan chooses the blocks: a row whole up to a size set per machine (half the L1 data cache; a
+quarter of L2 on Intel cores of the Xeon Gold 6240's class), longer rows in element ranges,
+several short rows together where the plan holds them so. A callback that
 is pure per element keeps every determinism guarantee. Callbacks are taken by c2c, r2c and
 c2r plans of every rank; on planes and volumes inside the line bodies of the first and last
 phases, so they cost no pass of their own. Only a consumed output changes a strategy (some
 strategies use the output as their working memory), and `describe()` then says so.
 Real-to-real plans, and planes and volumes with stored runs, refuse callbacks.
+
+**What a callback costs, and how to write one** (measured by experiment
+[X66](../dev/experiments/X66-block-callbacks.md) on an AMD EPYC 7763 and an Intel Xeon Gold 6240,
+one thread unless stated):
+
+- **The stage itself is cheap.** A callback that returns at once costs 1–3 % over the plain plan
+  on rows of 1024 points and more and on planes; short rows in batches (256 points) pay 12–37 %,
+  because a plan with a callback walks them row by row.
+- **Against your own loop after the plan:** about even on rows (a cubic term per element: 0.90–
+  1.09 of the time of the plain plan plus a separate loop), a win on many short rows (16 points:
+  0.55–0.94). Planes, and the free-space layout of a stride-1 batch of planes, pay more (1.1–1.6
+  on the EPYC; 1.08–1.66 on the Xeon, its planes 0.61–0.77 of that since its blocks were widened):
+  there the blocks are columns, a few at a time. Fusing a pointwise term into a callback is worth
+  it for the code it saves you, not yet for speed on planes.
+- **Walk the block in memory order.** On planes and volumes the output's blocks are columns:
+  `element_stride` is the row's length and `line_stride` is 1. Put the lines in the inner loop
+  there; walking each column in turn cost 1.06–5.1 times as much on these machines.
+- **Precompute a factor that does not change.** A complex factor array (the vocabulary,
+  `edge::mul`) took 0.07–0.40 of the time of the same `exp(i φ)` computed per element in a
+  callback with the C library's `cos` and `sin` (0.11–0.70 at eight threads on the EPYC):
+  computing a transcendental per element costs several times the transform itself. Compute in a
+  callback what changes between executions or depends on the data.
+- **Build arithmetic callbacks for the machine.** The same cubic callback compiled with AVX2 and
+  FMA (`[[gnu::target("avx2,fma")]]`, or `target_clones`) took 0.90 of its baseline x86-64
+  build's time over the catalogue on both machines (0.70–0.94 on most cases); a callback bound
+  by scalar `cos` and `sin` gains nothing without a vectorised math library.
+- **An input `modify` callback out of place copies your input first**, because the plan must
+  not change it: up to 1.33 (EPYC) and 1.42 (Xeon) times the time of modifying your own array
+  in place before the plan. If you may overwrite the input, run the plan in place (no copy: even
+  with your own loop).
 
 ## Pipelines
 

@@ -3527,6 +3527,19 @@ As built (task 5.3e; provisional, second reader pending): spectral pairs inverse
 Forward-first pipelines keep their programs and bits: `describe()`, `workspace_bytes()` and output
 bits of the 1,560 probes above, against `main`, unchanged by 5.3e too.
 
+As measured (task 5.3g, experiment [X66](experiments/X66-block-callbacks.md), the EPYC 7763 and
+the Xeon 6240; the Mac to follow):
+- **Block size.** `callback_block_bytes` is a quarter of L2 on the Xeon 6240's class (Intel's
+  cores; 0.933 over the cases it changes, a plane's lanes column block in one call instead of
+  3–6) and stays half the L1 elsewhere (the EPYC 7763: 0.972, short of the bar).
+- **The modifying-edge copy** goes to the workspace block on every target: the copy into the
+  output with the chain in place there lost on both machines (1.043, 1.065) and was deleted
+  (`build_settings::callback_copy_out`).
+- The stage costs 1–3 % on rows of 1024 points and more and on planes; against the user's own
+  loop a callback is about even on rows, and slower on short batched rows (the walked form),
+  planes (narrow column blocks), the free-space layout (one column a call) and out-of-place
+  input callbacks (the copy and the stage are two sweeps). X66's verdict lists these as leads.
+
 ### 12.4 Owner-computes
 
 With `completion::own` and `plan::transforms_of(team)`, an application's own pointwise
@@ -5071,6 +5084,7 @@ to change before a release.
 | 2026-11-26 | Block callbacks on pipelines (task 5.3d, section 12.3, "As built"): `middle.call` (modify only) and the prologue's and epilogue's callbacks on every pair, with 18.2's "Callbacks" proposals 6 and 7 as written (the middle callback first, then its vocabulary in the inverse's first pass; two scale products around it); the middle callback passed the whole line in one call; the epilogue's per copy with the copy in `block_info::copy`; a consumed fan-out's `fanout_out_dist` not checked; the plans' row callback helpers shared. Awaits the maintainer's review of the API | A middle callback may be pure per line, which a block of part of a line cannot serve; a nested pipeline in a middle needs the whole line. Nothing is stored for a consumed output, so the overlap refusal (18.2, "Pipelines" 5) has nothing to protect |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
+| 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4 took 0.933 on the Xeon and 0.972 on the EPYC against a bar of 0.95; the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 
 ---
 

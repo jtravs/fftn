@@ -1,8 +1,8 @@
 # X66: block callbacks outside the kernels against the user's loop and the vocabulary
 
-- **Status:** running (claimed 2026-11-26 evening). The decision rules were drafted with 5.3's design (2026-11-26), before
-  anything was built. The agent who runs X66 claims it here and may adjust the rules only
-  before the first judging run, stating each change and why.
+- **Status:** done 2026-11-27 on the Xeon 6240 and the EPYC 7763; the Mac leg is a daytime
+  follow-up. The decision rules were drafted with 5.3's design (2026-11-26), before anything was
+  built, and amended before the first judging run (below).
 - **Owner:** X66 agent of the lead's evening session, 2026-11-26 (task 5.3g)
 - **Phase / task:** 5.3g, on 5.3a–5.3c as built
 
@@ -216,8 +216,140 @@ where an item below makes them precise or narrows them.
 
 ## Results
 
-Not run.
+fbench options and library at 77672c3f (this branch; the library is `main`'s, acb7b5ae). Hot
+mode, median statistic, one thread unless stated, 16–20 valid rounds per run; ratios from
+`bench/x66/score.py` (any two arms paired round by round), bands from each run's A/A control.
+
+- **EPYC 7763** (DMOG, GCC 16.2, `avx2`, shared allocations of 8 cores on idle nodes node20 and
+  node21, load 1–3): out 20261126-235126-b498 (band ±1.44 %), exp 20261126-235126-5bf6 (±1.27 %),
+  in 20261126-235126-67b4 (±1.00 %), exp at 8 threads (tier quick) 20261126-235126-aab9
+  (±1.21 %).
+- **Xeon 6240** (GCC 14.4, `avx512`, `--serial`, shared with other users' jobs: load 9–22, 19 of
+  20 rounds above the quiet thresholds): out 20261126-235212-31ed (±2.59 %), exp 20261127-001612-2554 (±2.21 %, 10 rounds, 7 of them loaded),
+  in 20261127-002403-2238 (±2.11 %, 10 rounds, quiet).
+- Stopped before the loop-order fix (amendment 10), kept as recorded and not analysed:
+  20261126-233149-5693 (Xeon), 20261126-233227-b1ed and its two siblings (EPYC, loaded node).
+
+**Rule 1 (K/U, cubic and exp).** Defects are cases whose whole interval lies above
+1.05 × (1 + band).
+
+| Machine | Cubic K/U: geomean (beyond L2) | Cubic defects | Exp Ke/Ue: geomean (beyond L2) | Exp defects |
+|---|---|---|---|---|
+| EPYC | 1.066 (1.093, 23 cases) | 256 × 256 c2c 1.090; r2c and c2r 256 × 64 1.135, 1.118; planes 192², 384² 1.155, 1.320; free-space planes 1.607, 1.399; c2c 64³ 1.097; f32 384² 1.348 | 1.040 (1.048) | planes 1.144, 1.221; c2c and r2c 64³ 1.108, 1.070; f32 rows 1024 × 64 and 65536 1.116, 1.110, f32 384² 1.208, f32 r2c 6144 × 66 1.116 |
+| Xeon | 1.035 (1.062, 15 cases) | r2c and c2r 256 × 64 1.162, 1.223; planes 1.330, 1.580; free-space 384² 1.126; f32 384² 1.664 | 1.032 (1.064) | planes 192², 384² 1.096, 1.248; free-space 384² 1.188; f32 384² 1.084 |
+
+The callback wins where the user's loop is a large share of a small transform (16 × 1024: 0.94
+EPYC, 0.55 Xeon; Xeon 64 × 1024 0.90) and is within a few per cent on most rows. The
+hypothesis (0.75–0.90 beyond L2) failed: the user's sweep from L3 costs little next to the
+cubic's arithmetic, and the cases beyond L2 are dominated by the planes. Causes of the defects
+(identity callbacks Ki/P on the same cases, and the plans' notes):
+
+1. **Short rows in batches** (256 points; Ki/P 1.12–1.37): a plan with a callback runs rows of
+   a chain row by row in the edge driver's walked form (`edge_batched_forms` reaches rows on one
+   leaf only, X65's P1), where the plain plan takes its batched forms; the callback adds one
+   call per row.
+2. **Planes and volumes** (Ki/P 1.00–1.07 on the planes, so the stage is cheap): the output's blocks are a
+   lanes column block's columns, cut at `callback_block_bytes` into 3–6 calls of 3–5 columns of
+   192–384 points at the default 16 KiB, and the callback's inner run along the lines is that
+   short. Rule 3's L2/4 removes most of it on the Xeon (0.61–0.77) and on the EPYC (0.78–0.95);
+   see rule 3.
+3. **The free-space layout** (a stride-1 batch of 8 planes): the last phase transforms each
+   column alone (a chain, not the lanes), so its callback is called once per column of 192–384
+   elements 8 × 192–8 × 384 elements apart, where the user's loop runs along the batch.
+4. **Exp in float on rows** (EPYC; blocks are whole rows, Ki/P 0.99–1.05): fbench's callback
+   and its loop both call `sincosf` per element; the callback's loop carries more state across
+   that call. A property of the callback's code, not of FFTN's stage.
+
+None is fixed in 5.3g; each is a lead for the maintainer (Verdict).
+
+**Rule 2 (stage overhead, identity Ki/P over rows of 1024 points and more and the planes, 28
+cases).** EPYC 1.011 [1.006, 1.017], Xeon 1.025 [1.017, 1.041]: both at most 1.03 × (1 + band).
+**Passed**; rule 3 is judged.
+
+**Rule 3 (block size, cubic, target set by the notes).** Geometric mean of Ki/K over the cases
+each candidate changes; the bar is 0.97 × (1 − band) with no case slower beyond the band.
+
+| Machine | K1 (8 KiB) | K3 (32 KiB) | K4 (L2/4) | Bar | Verdict |
+|---|---|---|---|---|---|
+| EPYC | 1.039 (29 cases; 3 slower) | 0.984 (27) | 0.972 (27; none slower; planes 0.78–0.90, c2c 64³ 0.954) | 0.956 | L1/2 stays (missed by 1.7 %, more than the band: no re-run) |
+| Xeon | 1.034 (30; 5 slower) | 0.965 (27) | **0.933** (27; none slower; planes 0.61–0.77, r2c 32768 0.965) | 0.945 | **L2/4 adopted** (256 KiB) |
+
+Adopted on the Xeon 6240's class only (Intel's cores, X61's key: a private L2 below 2 MiB
+without a large L3 per CPU), in `set_grid_sizes` (commit 94fec438); the EPYC's class and every
+other machine keep L1/2. Only callback stages read the field.
+
+**Rule 4 (the copy's destination, c2c out of place, the 13 cases whose note differs between O
+and S).** EPYC O/S 1.043 [1.032, 1.060], seven cases slower beyond the band (1.035–1.147); Xeon
+1.065 [1.047, 1.082] over its 8 cases, five slower beyond the band (1.068–1.139). S stays on both; per the rule, O's build setting and code are deleted (commit
+e9f5c959). **S/U_in** (the input callback with its copy against the user modifying their own
+input in place): EPYC 1.037–1.327 on every out-of-place row (geomean over the 19 c2c cases
+1.109), 0.97–1.02 on the in-place planes (no copy); Xeon 0.79–1.42 (geomean 1.084): rows of 16384 points and more 1.27–1.42, 3072 1.25, float rows 1.21–1.26, batched rows of 64–4096 points 1.01–1.04, 16 × 1024 0.79, in place 0.86–1.02. Every out-of-place row is a
+rule-1 defect by rule 4's letter. Cause: the user's loop destroys its input, while the callback
+must not, so the plan copies the input (one more sweep), and then runs the callback as a stage of
+its own over the copy (a second sweep where the row exceeds the cache: the 2^20-point row's 1.33).
+
+**Rule 5 (V/K, informative).** The precomputed factor won everywhere: EPYC 0.084–0.399 at one
+thread (geomean 0.163), 0.111–0.695 at 8 threads (0.297, the long row at 8 threads 0.695); Xeon
+0.071–0.354 (geomean 0.159). The `exp` per element with scalar libm cost 2.5–38 times the plain plan (EPYC).
+
+**Rule 6 (Ka/Kb, informative).** Cubic: EPYC 0.901 (0.71–1.07 per case), Xeon 0.898
+(0.70–0.94). Exp: EPYC 0.989 (float 0.94), Xeon 0.988 (0.94–1.03 per case).
+
+**Kn/K (the line-by-line walk, informative).** Equal on rows; planes and volumes 1.3–5.1 (EPYC),
+1.06–1.65 (Xeon).
+
+**Threads (informative).** At 8 threads on the EPYC the library's exp callback took 0.18–0.26 of
+the user's loop on single long rows (the loop cannot split one row; the callback stage's
+chunks can), 0.89–0.94 on batches, 1.10–1.16 on the planes.
+
+**Rule 7.** Plans without callbacks never read `callback_block_bytes` or
+`callback_copy_out` (`src/`), so the adoption and the deletion leave their programs as they were.
 
 ## Verdict
 
-Not run.
+Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytime follow-up
+(amendment 1), so Apple's key keeps its defaults.
+
+- **Rule 1: defects found, none fixed in 5.3g.** By the rule's letter the cases listed above
+  (both callbacks, and every out-of-place c2c row through rule 4's S/U_in) are defects. Each is
+  recorded here as a lead with its cause; the rule wants the maintainer's agreement to leave them
+  as leads, which this verdict asks for. Most of the slow cases are the planes, whose cause rule
+  3 addressed on the Xeon.
+- **Rule 2: passed** on both machines (1.011, 1.025).
+- **Rule 3: L2/4 adopted on the Xeon 6240's class** (Intel's cores; commit 94fec438): 0.933 over
+  its 27 cases, none slower. **Half the L1 stays** on the EPYC 7763's class (L2/4 0.972 against a
+  bar of 0.956) and on every other machine.
+- **Rule 4: S stays** (the copy into the workspace block) on both machines (O/S 1.043 and
+  1.065), and O's build setting, code, tests and fbench option were deleted (commit e9f5c959).
+- **Rules 5 and 6** (informative) went into `docs/fusion.md`'s callbacks section: precompute a
+  factor that does not change (V/K 0.07–0.40 at one thread, 0.11–0.70 at eight); build
+  arithmetic callbacks with AVX2 and FMA (0.90 on both machines), which gains nothing for a
+  callback bound by scalar `cos` and `sin`; walk blocks in memory order (the line-by-line walk
+  1.06–5.1 on planes and volumes); run in place when the input may be overwritten.
+- **Rule 7:** plans without callbacks keep their programs: neither change is read by them.
+
+**Leads for the maintainer** (each would be its own experiment or design step):
+
+1. **Batched forms for plans with callbacks.** Rows of 256 points pay 12–37 % for a callback that
+   does nothing, because `edge_batched_forms` gives the flat and row-block forms only to rows on
+   one leaf (X65's P1, narrowed); the flat form already runs callback stages. A measured reach
+   for chains with callbacks would remove most of it (and of the 256-point K/U defects).
+2. **A lanes column block passed whole.** On the EPYC the planes took 0.78–0.90 with L2/4's blocks
+   (c2c 64³ 0.954), but the whole-catalogue block size missed the rule. A narrower rule, a column
+   block of a multi-axis phase never cut by lines whatever `callback_block_bytes` says, names
+   exactly those cases (an X66b on both machines).
+3. **The free-space layout** (a stride-1 batch of planes): its last phase transforms each column
+   alone, so its callback gets one column a call at a stride of 8 × 192–384 elements (K/U
+   1.08–1.61). Holding the batch's adjacent transforms together there (the lanes over adjacent
+   transforms) would give the callback runs along the batch; a design step for 12.5's stage.
+4. **The input copy.** An out-of-place `modify` input callback copies the input, then runs as a
+   stage of its own over the copy: two sweeps where the row exceeds the cache (Xeon rows of
+   16384 points and more 1.27–1.42; EPYC 2^20 1.33). Fusing the copy into the callback stage
+   (copy a block, call the callback on it while it is in L1) would leave one; letting the
+   callback change the caller's input (a mode, an API decision) would leave none.
+5. Not FFTN's: fbench's exp callback in float on whole-row blocks (EPYC 1.11, Ki/P 0.99–1.05
+   there) is the callback's code around `sincosf`, which its loop carries less state across.
+
+**Follow-up:** the Mac M5 Max leg of the three sessions, daytime, on AC with `pmset -g batt`
+before and after, one fbench at a time; it judges Apple's key for rules 1–4. The lesson is in
+[LESSONS](../LESSONS.md) 4.30.
