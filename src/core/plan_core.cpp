@@ -1360,13 +1360,27 @@ template chain_builder<float> plan_chain<float>(plan_core& c, const target_profi
 template <class T>
 std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_settings& settings,
                                                 const chain_builder<T>& chain, target isa) {
-  // Forced only: when the rules take the pair is experiment X67's to decide (task 5.2g; AGENTS.md
-  // section 6), so a pipeline by the rules keeps the chain pair.
-  if (settings.strategy != strategy_choice::depth ||
-      (!settings.radices.empty() && checked_product(settings.radices) == n)) {
+  if (!settings.radices.empty() && checked_product(settings.radices) == n) {
     return {};
   }
-  return depth_tops_for<T>(n, settings, chain, isa, true);
+  if (settings.strategy == strategy_choice::depth) {
+    return depth_tops_for<T>(n, settings, chain, isa, true);
+  }
+  // By the rules (experiment X67, task 5.2g): where the profile measured the pair winning, the
+  // tops the forced pair takes (the program X67 timed), on the target it was measured on.
+  const machine_profile& m = settings.profile;
+  const fftn::isa measured = m.pipeline_depth_isa;
+  const std::size_t bytes = n * 2 * sizeof(T);
+  if (settings.strategy != strategy_choice::rules || m.pipeline_depth_min_kib == 0 ||
+      (measured != fftn::isa::best &&
+       static_cast<unsigned char>(measured) != static_cast<unsigned char>(isa)) ||
+      bytes < std::size_t{m.pipeline_depth_min_kib} * 1024 ||
+      bytes > std::size_t{m.pipeline_depth_max_kib} * 1024) {
+    return {};
+  }
+  build_settings forced = settings;
+  forced.strategy = strategy_choice::depth;
+  return depth_tops_for<T>(n, forced, chain, isa, true);
 }
 
 template std::vector<std::size_t> convolution_depth_tops<double>(std::size_t n,
@@ -1384,8 +1398,12 @@ lanes_pair_block convolution_lanes_block(std::size_t n, std::size_t rows, std::p
                                          std::ptrdiff_t out_dist, const build_settings& settings,
                                          const target_profile& profile,
                                          const chain_builder<T>& chain, std::size_t c) {
-  // Forced only, as the depth-first pair: when the rules take it is experiment X67's to decide.
-  if (settings.strategy != strategy_choice::lanes || rows < 2 || !chain.lanes_fit(n, false)) {
+  // Forced, or by the rules (experiment X67, task 5.2g) for adjacent lines up to the profile's
+  // pipeline_lanes_adjacent_max points, with a lanes column phase's block only.
+  const bool by_rules = settings.strategy == strategy_choice::rules && in_dist == 1 &&
+                        out_dist == 1 && n <= settings.profile.pipeline_lanes_adjacent_max;
+  if ((settings.strategy != strategy_choice::lanes && !by_rules) || rows < 2 ||
+      !chain.lanes_fit(n, false)) {
     return {};
   }
   if (in_dist == 1 && out_dist == 1) {
@@ -1400,6 +1418,9 @@ lanes_pair_block convolution_lanes_block(std::size_t n, std::size_t rows, std::p
         block != 0) {
       return {.block = block, .columns = true};
     }
+  }
+  if (by_rules) {
+    return {};
   }
   const axis line{.n = n};
   const batch inner{.count = rows};

@@ -53,6 +53,8 @@ double fake_time(const std::string& choice, void* context) {
 build_settings fixed_settings() {
   build_settings s;
   s.profile.depth_convolution_max_bytes = 0;
+  s.profile.pipeline_depth_min_kib = 0; // X67's rules off
+  s.profile.pipeline_lanes_adjacent_max = 0;
   return s;
 }
 
@@ -235,6 +237,42 @@ TEST(PipelinePlanning, PublicMeasuredAndWisdom) {
   const double eps = std::numeric_limits<double>::epsilon();
   const double tol = 2 * 20 * eps * (1 + std::log2(static_cast<double>(n)));
   EXPECT_LE(std::sqrt(err / ref), tol) << "measured against the rules";
+}
+
+// X67's lanes rule (machine_profile::pipeline_lanes_adjacent_max): a plane's strided lines (one
+// element apart, the line's stride their count) take the lanes pair by the rules up to the
+// profile's length, the forced pair's program and bits; above it, with the field off or with a
+// real kernel they keep the chain pair; a batch of rows never takes it by the rules.
+TEST(PipelinePlanning, LanesRuleForAdjacentLines) {
+  const std::size_t n = 64;
+  const std::size_t lines = 64;
+  conv<double> c(n, lines);
+  c.desc.line.in_stride = c.desc.line.out_stride = static_cast<std::ptrdiff_t>(lines);
+  c.desc.batches[0].in_dist = c.desc.batches[0].out_dist = 1;
+  build_settings rules = fixed_settings();
+  rules.profile.pipeline_lanes_adjacent_max = 512;
+  const auto by_rules = d::make_pipeline_core(c.view(), {}, rules);
+  EXPECT_EQ(by_rules->built, strategy_choice::lanes) << d::describe(*by_rules);
+  EXPECT_NE(d::describe(*by_rules).find("by the rules for a plane's strided lines"),
+            std::string::npos);
+  build_settings forced = rules;
+  forced.strategy = strategy_choice::lanes;
+  const auto by_force = d::make_pipeline_core(c.view(), {}, forced);
+  EXPECT_EQ(d::program_fingerprint(*by_rules), d::program_fingerprint(*by_force));
+  EXPECT_TRUE(same_bits(run<double>(*by_rules, n, lines), run<double>(*by_force, n, lines)));
+
+  build_settings shorter = rules;
+  shorter.profile.pipeline_lanes_adjacent_max = 32;
+  build_settings off = rules;
+  off.profile.pipeline_lanes_adjacent_max = 0;
+  for (const build_settings* s : {&shorter, &off}) {
+    EXPECT_EQ(d::make_pipeline_core(c.view(), {}, *s)->built, strategy_choice::chain);
+  }
+  conv<double> real_kernel = c;
+  real_kernel.desc.middle.mul = {.kind = fftn::factor_kind::real, .axis_strides = {1}};
+  EXPECT_EQ(d::make_pipeline_core(real_kernel.view(), {}, rules)->built, strategy_choice::chain);
+  const conv<double> rows(n, lines);
+  EXPECT_EQ(d::make_pipeline_core(rows.view(), {}, rules)->built, strategy_choice::chain);
 }
 
 } // namespace

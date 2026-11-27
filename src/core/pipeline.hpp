@@ -78,10 +78,10 @@ template <class T>
                                           const build_settings& settings);
 
 // The top factors of the depth-first pair (DESIGN.md 12.2, task 5.2d) for a line of n, or none:
-// forced only (build_settings::strategy depth), wherever a convolution's split fits
-// (depth_tops_for: C divides the tops' product, so that the first pass's blocks are whole);
-// never by the rules until experiment X67 (task 5.2g) gives them a rule, nor with forced radices
-// for n.
+// forced (build_settings::strategy depth), wherever a convolution's split fits (depth_tops_for:
+// C divides the tops' product, so that the first pass's blocks are whole); by the rules where the
+// profile's pipeline_depth fields put the line's bytes and the target (experiment X67, task
+// 5.2g), with the forced pair's tops; never with forced radices for n.
 template <class T>
 [[nodiscard]] std::vector<std::size_t>
 convolution_depth_tops(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
