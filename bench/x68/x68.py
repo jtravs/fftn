@@ -187,6 +187,8 @@ def run_timing(args, threads: int, prefix: list[str], env: dict) -> dict:
         *arm_specs(args.build, args.arms, threads),
         "--catalogue",
         "x68",
+        "--tier",
+        "full",
         "--batches",
         "3",
         "--warmup",
