@@ -90,6 +90,61 @@ class Standard(unittest.TestCase):
         self.assertEqual({c.kind for c in smoke if c.precision == "f32"}, {"c2c", "r2c", "c2r"})
 
 
+class RealToReal(unittest.TestCase):
+    """The r2r catalogue (task 6.12): every kind on rows, planes, volumes and strided axes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cat = catalogue.load("r2r")
+
+    def test_case_id_and_line(self):
+        c = catalogue.Case("r2r", (64, 48), 4, "in", -1, precision="f32", r2r="dct2")
+        self.assertEqual(c.id, "r2r-dct2-64x48-b4-ip-f32")
+        self.assertEqual(
+            c.line(),
+            "id=r2r-dct2-64x48-b4-ip-f32 kind=r2r dims=64x48 batch=4 place=in sign=-1 prec=f32 "
+            "r2r=dct2",
+        )
+
+    def test_covers_every_kind_rank_layout_and_precision(self):
+        cases = self.cat.cases
+        self.assertEqual({c.kind for c in cases}, {"r2r"})
+        self.assertTrue(set(catalogue.R2R_KINDS) <= {c.r2r for c in cases})
+        for tier in ("smoke", "full"):
+            chosen = self.cat.select(tier)
+            for kind in catalogue.R2R_KINDS:
+                combos = {
+                    (len(c.dims), c.layout, c.precision, c.place) for c in chosen if c.r2r == kind
+                }
+                self.assertTrue({1, 2, 3} <= {r for r, _, _, _ in combos}, kind)
+                self.assertIn("interleaved", {lay for _, lay, _, _ in combos}, kind)
+                self.assertIn("f32", {p for _, _, p, _ in combos}, kind)
+                self.assertIn("in", {p for _, _, _, p in combos}, kind)
+        quick = {c.id for c in self.cat.select("quick")}
+        self.assertTrue(quick <= {c.id for c in self.cat.select("tracking")})
+
+    def test_mixed_kinds(self):
+        c = catalogue.Case("r2r", (64, 48), 1, "out", -1, r2r="dct2.dst3")
+        self.assertEqual(c.id, "r2r-dct2.dst3-64x48-b1-op")
+        self.assertTrue(c.line().endswith(" r2r=dct2.dst3"))
+        self.assertTrue(any("." in c.r2r for c in self.cat.cases))
+
+    def test_r2r_key_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for group in (
+                'kind = "r2r"\ndims = 8',
+                'kind = "c2c"\nr2r = "dct2"\ndims = 8',
+                'kind = "r2r"\nr2r = "dct5"\ndims = 8',
+                'kind = "r2r"\nr2r = "dct1"\ndims = 1',
+                'kind = "r2r"\nr2r = "dct2.dst3"\ndims = 8',
+                'kind = "r2r"\nr2r = "dct2.dct1"\ndims = "8x1"',
+            ):
+                path = Path(tmp) / "bad.toml"
+                path.write_text(f'[[group]]\nname = "g"\n{group}\n')
+                with self.assertRaises(ValueError):
+                    catalogue.load(str(path))
+
+
 class Threads(unittest.TestCase):
     """The threads catalogue: a group per scheduling rule (DESIGN.md 13.4)."""
 

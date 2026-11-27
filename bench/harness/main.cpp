@@ -50,6 +50,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef __linux__
@@ -216,8 +217,21 @@ struct case_spec {
   fbench::layout layout;
 };
 
-// One line of `key=value` tokens: id, kind (c2c, r2c, c2r), dims (e.g. 64x48), batch,
-// place (in, out), for c2c sign (-1, +1), prec (f64, the default, or f32), and for the
+// FFTW's r2r kinds by FFTN's names (backend.hpp).
+std::int32_t r2r_kind_of(std::string_view name) {
+  constexpr std::array<std::string_view, 9> names{"dct1", "dct2", "dct3", "dct4", "dst1",
+                                                  "dst2", "dst3", "dst4", "dht"};
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (names[i] == name) {
+      return static_cast<std::int32_t>(i);
+    }
+  }
+  throw std::invalid_argument("unknown r2r kind " + std::string(name));
+}
+
+// One line of `key=value` tokens: id, kind (c2c, r2c, c2r, r2r), dims (e.g. 64x48), batch,
+// place (in, out), for c2c sign (-1, +1), for r2r the kinds (r2r=dct2 for every axis, or one
+// per axis, slowest first: r2r=dct2.dst3), prec (f64, the default, or f32), and for the
 // interleaved layout layout=interleaved and outer (blocks; 1 by default).
 case_spec parse_case(const std::string& line) {
   case_spec c;
@@ -230,6 +244,7 @@ case_spec parse_case(const std::string& line) {
   std::int32_t precision = fbench_f64;
   bool interleaved = false;
   std::int64_t outer = 1;
+  std::vector<std::int32_t> r2r_kinds;
   std::size_t at = 0;
   while (at < line.size()) {
     const std::size_t end = std::min(line.find(' ', at), line.size());
@@ -253,6 +268,8 @@ case_spec parse_case(const std::string& line) {
         kind = fbench_r2c;
       } else if (val == "c2r") {
         kind = fbench_c2r;
+      } else if (val == "r2r") {
+        kind = fbench_r2r;
       } else {
         throw std::invalid_argument("unknown kind " + std::string(val));
       }
@@ -288,6 +305,13 @@ case_spec parse_case(const std::string& line) {
       interleaved = val == "interleaved";
     } else if (key == "outer") {
       outer = parse_number<std::int64_t>(val, key);
+    } else if (key == "r2r") {
+      std::size_t from = 0;
+      while (from <= val.size()) {
+        const std::size_t dot = std::min(val.find('.', from), val.size());
+        r2r_kinds.push_back(r2r_kind_of(val.substr(from, dot - from)));
+        from = dot + 1;
+      }
     } else {
       throw std::invalid_argument("unknown case key " + std::string(key));
     }
@@ -295,8 +319,20 @@ case_spec parse_case(const std::string& line) {
   if (c.id.empty() || rank == 0) {
     throw std::invalid_argument("a case needs id and dims");
   }
-  c.layout =
-      fbench::make_layout(kind, rank, dims, batch, sign, in_place, precision, interleaved, outer);
+  std::array<std::int32_t, 3> kinds{};
+  if (kind == fbench_r2r) {
+    if (r2r_kinds.size() == 1) {
+      r2r_kinds.resize(static_cast<std::size_t>(rank), r2r_kinds.front());
+    }
+    if (std::cmp_not_equal(r2r_kinds.size(), rank)) {
+      throw std::invalid_argument("an r2r case needs r2r= with one kind, or one per axis");
+    }
+    std::copy(r2r_kinds.begin(), r2r_kinds.end(), kinds.begin());
+  } else if (!r2r_kinds.empty()) {
+    throw std::invalid_argument("r2r= is for kind=r2r only");
+  }
+  c.layout = fbench::make_layout(kind, rank, dims, batch, sign, in_place, precision, interleaved,
+                                 outer, kinds);
   return c;
 }
 

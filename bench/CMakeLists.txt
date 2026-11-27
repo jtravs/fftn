@@ -428,6 +428,13 @@ if(FFTN_BUILD_TESTS)
                      --out-dir ${CMAKE_BINARY_DIR}/bench-out smoke --build ${CMAKE_BINARY_DIR}
                      --strict
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    # The real-to-real kinds (task 6.12) of every backend that declares them, against the
+    # harness's direct sums of their definitions: the r2r catalogue's smoke tier.
+    add_test(NAME bench.r2r_smoke
+             COMMAND ${FFTN_UV} run --frozen --quiet python bench/fbench.py
+                     --out-dir ${CMAKE_BINARY_DIR}/bench-out-r2r smoke --build ${CMAKE_BINARY_DIR}
+                     --catalogue r2r --tier smoke --strict
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     # The T1 harness end to end in its short mode (every probe reports; no timing claims),
     # and the scheduler's view of the threads catalogue's smoke cases.
     add_test(NAME bench.t1_smoke
@@ -443,7 +450,7 @@ if(FFTN_BUILD_TESTS)
     # The OpenMP binaries these run can meet libomp's own leaks under LeakSanitizer,
     # suppressed as for the OpenMP tests (tests/support/lsan.supp says why).
     if(_fbench_fftn_omp)
-      set_tests_properties(bench.smoke bench.t1_smoke PROPERTIES ENVIRONMENT
+      set_tests_properties(bench.smoke bench.r2r_smoke bench.t1_smoke PROPERTIES ENVIRONMENT
         "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/support/lsan.supp")
     endif()
     # The FFTN backend's RADICES option end to end (experiment X2, bench/x2/search.py).

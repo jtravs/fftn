@@ -216,6 +216,236 @@ double energy(const layout& l, const side& s, const double* data, std::int64_t b
   return sum.hi;
 }
 
+// ---- Real-to-real (task 6.12) ---------------------------------------------------------------
+
+// One axis of a real-to-real case: its kind's kernel K(k, j), the weight of x_j in output k,
+// from FFTW's definitions (DESIGN.md 5.7):
+//   dct1  w_j cos(2 pi j k / 2(n-1)),             w = 1 at j = 0 and n-1, else 2
+//   dct2  2 cos(2 pi (2j+1) k / 4n)
+//   dct3  w_j cos(2 pi j (2k+1) / 4n),            w = 1 at j = 0, else 2
+//   dct4  2 cos(2 pi (2j+1)(2k+1) / 8n)
+//   dst1  2 sin(2 pi (j+1)(k+1) / 2(n+1))
+//   dst2  2 sin(2 pi (2j+1)(k+1) / 4n)
+//   dst3  w_j sin(2 pi (j+1)(2k+1) / 4n),         w = 1 at j = n-1, else 2
+//   dst4  2 sin(2 pi (2j+1)(2k+1) / 8n)
+//   dht   cos + sin(2 pi j k / n)
+// The angle's numerator is reduced modulo its denominator M exactly (two residues below
+// M <= 8n, n <= 2^27, so their product fits 64 bits), and the root comes from a double-double
+// table, so no rounding of the angle enters.
+class r2r_axis {
+public:
+  r2r_axis(std::int32_t kind, std::int64_t n)
+      : kind_(kind), n_(n), m_(period(kind, n)), roots_(m_, 1) {}
+
+  [[nodiscard]] dd kernel(std::int64_t k, std::int64_t j) const {
+    std::int64_t p = j;
+    std::int64_t q = k;
+    double w = 2.0;
+    switch (kind_) {
+    case fbench_dct1:
+      w = (j == 0 || j == n_ - 1) ? 1.0 : 2.0;
+      break;
+    case fbench_dct2:
+      p = 2 * j + 1;
+      break;
+    case fbench_dct3:
+      q = 2 * k + 1;
+      w = j == 0 ? 1.0 : 2.0;
+      break;
+    case fbench_dct4:
+    case fbench_dst4:
+      p = 2 * j + 1;
+      q = 2 * k + 1;
+      break;
+    case fbench_dst1:
+      p = j + 1;
+      q = k + 1;
+      break;
+    case fbench_dst2:
+      p = 2 * j + 1;
+      q = k + 1;
+      break;
+    case fbench_dst3:
+      p = j + 1;
+      q = 2 * k + 1;
+      w = j == n_ - 1 ? 1.0 : 2.0;
+      break;
+    default: // dht
+      w = 1.0;
+      break;
+    }
+    const ddc root = roots_(((p % m_) * (q % m_)) % m_);
+    dd v = root.re;
+    if (kind_ == fbench_dht) {
+      v = root.re + root.im;
+    } else if (kind_ >= fbench_dst1) {
+      v = root.im;
+    }
+    return v * w;
+  }
+
+  // The weight of index i in the energy identity sum_k u_k Y_k^2 = N sum_j v_j x_j^2 (`output`:
+  // u, else v): 1/2 where the orthonormal form scales an end by sqrt 2, else 1.
+  [[nodiscard]] double energy_weight(std::int64_t i, bool output) const {
+    switch (kind_) {
+    case fbench_dct1:
+      return (i == 0 || i == n_ - 1) ? 0.5 : 1.0;
+    case fbench_dct2:
+      return output && i == 0 ? 0.5 : 1.0;
+    case fbench_dct3:
+      return !output && i == 0 ? 0.5 : 1.0;
+    case fbench_dst2:
+      return output && i == n_ - 1 ? 0.5 : 1.0;
+    case fbench_dst3:
+      return !output && i == n_ - 1 ? 0.5 : 1.0;
+    default:
+      return 1.0;
+    }
+  }
+
+  // N: the kind's logical length, by which a transform and its inverse multiply.
+  [[nodiscard]] std::int64_t logical() const {
+    switch (kind_) {
+    case fbench_dct1:
+      return 2 * (n_ - 1);
+    case fbench_dst1:
+      return 2 * (n_ + 1);
+    case fbench_dht:
+      return n_;
+    default:
+      return 2 * n_;
+    }
+  }
+
+private:
+  static std::int64_t period(std::int32_t kind, std::int64_t n) {
+    switch (kind) {
+    case fbench_dct1:
+      return 2 * (n - 1);
+    case fbench_dst1:
+      return 2 * (n + 1);
+    case fbench_dct4:
+    case fbench_dst4:
+      return 8 * n;
+    case fbench_dht:
+      return n;
+    default:
+      return 4 * n;
+    }
+  }
+
+  std::int32_t kind_;
+  std::int64_t n_;
+  std::int64_t m_;
+  root_table roots_;
+};
+
+// The multi-index (slowest first) of row-major flat index `flat` in the case's shape.
+std::array<std::int64_t, 3> unflatten(const layout& l, std::int64_t flat) {
+  std::array<std::int64_t, 3> at{};
+  for (int d = l.rank - 1; d >= 0; --d) {
+    at.at(idx(d)) = flat % l.dims.at(idx(d));
+    flat /= l.dims.at(idx(d));
+  }
+  return at;
+}
+
+// sum_i u(i) v_i^2 of transform b over the side, u the product of the axes' energy weights.
+double r2r_energy(const layout& l, const std::vector<r2r_axis>& axes, const side& s,
+                  const double* data, std::int64_t b, bool output) {
+  dd sum{};
+  for (std::int64_t i = 0; i < s.count; ++i) {
+    const std::array<std::int64_t, 3> at = unflatten(l, i);
+    double u = 1.0;
+    for (int d = 0; d < l.rank; ++d) {
+      u *= axes[idx(d)].energy_weight(at.at(idx(d)), output);
+    }
+    const double v = data[idx(s.offset(b, i))];
+    sum = sum + two_prod(u * v, v);
+  }
+  return sum.hi;
+}
+
+check_result check_r2r(const layout& l, const double* x, const double* y, std::int64_t budget,
+                       std::uint64_t seed) {
+  check_result r;
+  const double eps = l.precision == fbench_f32 ? std::numeric_limits<float>::epsilon()
+                                               : std::numeric_limits<double>::epsilon();
+  std::vector<r2r_axis> axes;
+  axes.reserve(idx(l.rank));
+  double logical = 1.0;
+  for (int d = 0; d < l.rank; ++d) {
+    axes.emplace_back(l.r2r_kinds.at(idx(d)), l.dims.at(idx(d)));
+    logical *= static_cast<double>(axes.back().logical());
+  }
+  r.tol = 10.0 * eps * (1.0 + std::log2(std::max(2.0, logical)));
+  std::vector<std::int64_t> rows{0};
+  if (l.batch > 1) {
+    rows.push_back(l.batch - 1);
+  }
+  r.rows = static_cast<std::int64_t>(rows.size());
+  const std::int64_t count = l.out.count;
+  const std::int64_t wanted =
+      std::clamp<std::int64_t>(budget / (std::max<std::int64_t>(1, count) * r.rows),
+                               std::min<std::int64_t>(4, count), count);
+  std::uint64_t rng = seed ^ 0x5eedULL;
+  const int last = l.rank - 1;
+  const std::int64_t n_last = l.dims.at(idx(last));
+  const std::int64_t outer = count / n_last;
+  double diff2 = 0.0;
+  double ref2 = 0.0;
+  double diff_max = 0.0;
+  std::int64_t compared = 0;
+  std::array<std::vector<dd>, 3> kernel;
+  for (const std::int64_t b : rows) {
+    const std::vector<std::int64_t> samples = pick_samples(count, wanted, rng);
+    r.samples = static_cast<std::int64_t>(samples.size());
+    for (const std::int64_t j : samples) {
+      // The kernel of each axis at this output's index, then the separable sum.
+      const std::array<std::int64_t, 3> k = unflatten(l, j);
+      for (int d = 0; d < l.rank; ++d) {
+        std::vector<dd>& row = kernel.at(idx(d));
+        row.resize(idx(l.dims.at(idx(d))));
+        for (std::int64_t i = 0; i < l.dims.at(idx(d)); ++i) {
+          row[idx(i)] = axes[idx(d)].kernel(k.at(idx(d)), i);
+        }
+      }
+      dd sum{};
+      for (std::int64_t o = 0; o < outer; ++o) {
+        dd outer_weight{1.0, 0.0};
+        std::int64_t rest = o;
+        for (int d = last - 1; d >= 0; --d) {
+          const std::int64_t i = rest % l.dims.at(idx(d));
+          rest /= l.dims.at(idx(d));
+          outer_weight = outer_weight * kernel.at(idx(d))[idx(i)];
+        }
+        dd line{};
+        const std::vector<dd>& row = kernel.at(idx(last));
+        for (std::int64_t i = 0; i < n_last; ++i) {
+          line = line + row[idx(i)] * x[idx(l.in.offset(b, o * n_last + i))];
+        }
+        sum = sum + (last > 0 ? line * outer_weight : line);
+      }
+      const double got = y[idx(l.out.offset(b, j))];
+      const double d = (got - sum.hi) - sum.lo;
+      diff2 += d * d;
+      ref2 += sum.hi * sum.hi;
+      diff_max =
+          std::isnan(d) ? std::numeric_limits<double>::infinity() : std::max(diff_max, std::abs(d));
+      ++compared;
+    }
+    const double e_in = r2r_energy(l, axes, l.in, x, b, false);
+    const double e_out = r2r_energy(l, axes, l.out, y, b, true);
+    const double expected = logical * e_in;
+    const double p = std::abs(e_out - expected) / expected;
+    r.parseval = std::isnan(p) ? std::numeric_limits<double>::infinity() : std::max(r.parseval, p);
+  }
+  r.err_rms = std::sqrt(diff2 / ref2);
+  r.err_max = diff_max / std::sqrt(ref2 / static_cast<double>(compared));
+  r.pass = r.err_rms <= r.tol && r.err_max <= 8.0 * r.tol && r.parseval <= r.tol;
+  return r;
+}
+
 } // namespace
 
 fbench_case layout::to_case() const {
@@ -235,12 +465,14 @@ fbench_case layout::to_case() const {
       .outer = outer,
       .outer_in_dist = in.block_dist,
       .outer_out_dist = out.block_dist,
+      .r2r_kinds = kind == fbench_r2r ? r2r_kinds.data() : nullptr,
   };
 }
 
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
                    std::int64_t batch, int sign, bool in_place, std::int32_t precision,
-                   bool interleaved, std::int64_t outer) {
+                   bool interleaved, std::int64_t outer,
+                   const std::array<std::int32_t, 3>& r2r_kinds) {
   if (rank < 1 || rank > 3) {
     throw std::invalid_argument("rank must be 1, 2 or 3");
   }
@@ -250,8 +482,9 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
   if (outer < 1 || (!interleaved && outer != 1)) {
     throw std::invalid_argument("outer needs the interleaved layout and must be at least 1");
   }
-  if (interleaved && (batch < 2 || (in_place && kind != fbench_c2c))) {
-    throw std::invalid_argument("the interleaved layout needs batch >= 2 and not in-place real");
+  if (interleaved && (batch < 2 || (in_place && kind != fbench_c2c && kind != fbench_r2r))) {
+    throw std::invalid_argument("the interleaved layout needs batch >= 2 and not in-place r2c "
+                                "or c2r");
   }
   if (precision != fbench_f64 && precision != fbench_f32) {
     throw std::invalid_argument("unknown precision");
@@ -293,6 +526,21 @@ layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3
     l.sign = 1;
     l.in = make_side(true, rank, l.dims, half, half, batch, l.real_bytes, interleave, outer);
     l.out = make_side(false, rank, l.dims, n_last, padded, batch, l.real_bytes, interleave, outer);
+  } else if (kind == fbench_r2r) {
+    for (int d = 0; d < rank; ++d) {
+      const std::int32_t k = r2r_kinds.at(idx(d));
+      // The reference reduces its angles with products of two residues below 8n: n <= 2^27
+      // keeps them in 64 bits.
+      if (k < fbench_dct1 || k > fbench_dht || l.dims.at(idx(d)) > (std::int64_t{1} << 27) ||
+          (k == fbench_dct1 && l.dims.at(idx(d)) < 2)) {
+        throw std::invalid_argument("r2r needs a kind per axis, lengths up to 2^27 and dct1 "
+                                    "from n = 2");
+      }
+      l.r2r_kinds.at(idx(d)) = k;
+    }
+    l.sign = -1;
+    l.in = make_side(false, rank, l.dims, n_last, n_last, batch, l.real_bytes, interleave, outer);
+    l.out = l.in;
   } else {
     throw std::invalid_argument("unknown kind");
   }
@@ -378,6 +626,10 @@ void perturb_output(const layout& l, void* out, double eps, std::uint64_t seed) 
 
 check_result check_output(const layout& l, const void* in, const void* out, std::int64_t budget,
                           std::uint64_t seed) {
+  if (l.kind == fbench_r2r) {
+    return check_r2r(l, static_cast<const double*>(in), static_cast<const double*>(out), budget,
+                     seed);
+  }
   const auto* x = static_cast<const double*>(in);
   const auto* y = static_cast<const double*>(out);
   check_result r;
@@ -714,6 +966,103 @@ std::string check_delays() {
   return {};
 }
 
+// Y_k of an impulse at j on one axis of n, written from FFTW's definitions as DESIGN.md 5.7
+// tabulates them (in double, with std::cos and std::sin), independently of r2r_axis's reduced
+// integer angles.
+double r2r_impulse(std::int32_t kind, std::int64_t n, std::int64_t j, std::int64_t k) {
+  const double pi = std::numbers::pi;
+  const auto dj = static_cast<double>(j);
+  const auto dk = static_cast<double>(k);
+  const auto dn = static_cast<double>(n);
+  switch (kind) {
+  case fbench_dct1:
+    if (j == 0) {
+      return 1.0;
+    }
+    if (j == n - 1) {
+      return k % 2 == 0 ? 1.0 : -1.0;
+    }
+    return 2.0 * std::cos(pi * dj * dk / (dn - 1.0));
+  case fbench_dct2:
+    return 2.0 * std::cos(pi * (dj + 0.5) * dk / dn);
+  case fbench_dct3:
+    return j == 0 ? 1.0 : 2.0 * std::cos(pi * dj * (dk + 0.5) / dn);
+  case fbench_dct4:
+    return 2.0 * std::cos(pi * (dj + 0.5) * (dk + 0.5) / dn);
+  case fbench_dst1:
+    return 2.0 * std::sin(pi * (dj + 1.0) * (dk + 1.0) / (dn + 1.0));
+  case fbench_dst2:
+    return 2.0 * std::sin(pi * (dj + 0.5) * (dk + 1.0) / dn);
+  case fbench_dst3:
+    if (j == n - 1) {
+      return k % 2 == 0 ? 1.0 : -1.0;
+    }
+    return 2.0 * std::sin(pi * (dj + 1.0) * (dk + 0.5) / dn);
+  case fbench_dst4:
+    return 2.0 * std::sin(pi * (dj + 0.5) * (dk + 0.5) / dn);
+  default: {
+    const double a = 2.0 * pi * dj * dk / dn;
+    return std::cos(a) + std::sin(a);
+  }
+  }
+}
+
+// The real-to-real check: an impulse's exact transform passes for every kind (rows of odd and
+// even length, a plane of mixed kinds, the interleaved layout in place), and one wrong value in
+// the last transform fails.
+std::string check_r2r_impulses() {
+  struct shape {
+    int rank;
+    std::array<std::int64_t, 3> dims;
+    std::array<std::int32_t, 3> kinds;
+    std::array<std::int64_t, 3> at;
+    bool interleaved;
+  };
+  std::vector<shape> shapes;
+  for (std::int32_t k = fbench_dct1; k <= fbench_dht; ++k) {
+    shapes.push_back({1, {7, 1, 1}, {k, 0, 0}, {3, 0, 0}, false});
+    shapes.push_back({1, {6, 1, 1}, {k, 0, 0}, {0, 0, 0}, false}); // j = 0: the weights' ends
+    shapes.push_back({1, {8, 1, 1}, {k, 0, 0}, {6, 0, 0}, k % 2 == 0});
+  }
+  shapes.push_back({2, {5, 6, 1}, {fbench_dct2, fbench_dst3, 0}, {1, 5, 0}, false});
+  shapes.push_back({3, {3, 4, 5}, {fbench_dct1, fbench_dht, fbench_dst4}, {2, 1, 3}, true});
+  constexpr std::int64_t big_budget = std::int64_t{1024} * 1024;
+  for (const shape& s : shapes) {
+    const layout l = make_layout(fbench_r2r, s.rank, s.dims, 3, -1, s.interleaved, fbench_f64,
+                                 s.interleaved, 1, s.kinds);
+    std::vector<double> x(l.reals_in(), 0.0);
+    std::vector<double> y(l.reals_out(), 0.0);
+    std::int64_t p_flat = 0;
+    for (int d = 0; d < s.rank; ++d) {
+      p_flat = p_flat * s.dims.at(idx(d)) + s.at.at(idx(d));
+    }
+    for (std::int64_t b = 0; b < l.batch; ++b) {
+      x[idx(l.in.offset(b, p_flat))] = 1.0;
+      for (std::int64_t i = 0; i < l.out.count; ++i) {
+        double v = 1.0;
+        std::int64_t rest = i;
+        for (int d = s.rank - 1; d >= 0; --d) {
+          const std::int64_t n = s.dims.at(idx(d));
+          v *= r2r_impulse(s.kinds.at(idx(d)), n, s.at.at(idx(d)), rest % n);
+          rest /= n;
+        }
+        y[idx(l.out.offset(b, i))] = v;
+      }
+    }
+    const std::string what = "r2r kind " + std::to_string(s.kinds[0]) + ", rank " +
+                             std::to_string(s.rank) + ", n " + std::to_string(s.dims[0]);
+    const check_result good = check_output(l, x.data(), y.data(), big_budget, 1);
+    if (!good.pass || good.samples != l.out.count) {
+      return "the check rejects an exact transform (" + what + ")";
+    }
+    y[idx(l.out.offset(2, 1))] += 1e-9;
+    if (check_output(l, x.data(), y.data(), big_budget, 1).pass) {
+      return "the check accepts a wrong transform (" + what + ")";
+    }
+  }
+  return {};
+}
+
 } // namespace
 
 std::string selftest() {
@@ -767,7 +1116,7 @@ std::string selftest() {
       return "the identity check accepts a wrong output";
     }
   }
-  return {};
+  return check_r2r_impulses();
 }
 
 } // namespace fbench

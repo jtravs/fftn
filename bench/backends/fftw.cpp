@@ -137,9 +137,12 @@ template <> struct api<double> {
   static constexpr auto plan_guru64_dft = &fftw_plan_guru64_dft;
   static constexpr auto plan_guru64_dft_r2c = &fftw_plan_guru64_dft_r2c;
   static constexpr auto plan_guru64_dft_c2r = &fftw_plan_guru64_dft_c2r;
+  static constexpr auto plan_many_r2r = &fftw_plan_many_r2r;
+  static constexpr auto plan_guru64_r2r = &fftw_plan_guru64_r2r;
   static constexpr auto execute_dft = &fftw_execute_dft;
   static constexpr auto execute_dft_r2c = &fftw_execute_dft_r2c;
   static constexpr auto execute_dft_c2r = &fftw_execute_dft_c2r;
+  static constexpr auto execute_r2r = &fftw_execute_r2r;
   static constexpr auto destroy_plan = &fftw_destroy_plan;
   static constexpr auto sprint_plan = &fftw_sprint_plan;
   static constexpr auto forget_wisdom = &fftw_forget_wisdom;
@@ -161,9 +164,12 @@ template <> struct api<float> {
   static constexpr auto plan_guru64_dft = &fftwf_plan_guru64_dft;
   static constexpr auto plan_guru64_dft_r2c = &fftwf_plan_guru64_dft_r2c;
   static constexpr auto plan_guru64_dft_c2r = &fftwf_plan_guru64_dft_c2r;
+  static constexpr auto plan_many_r2r = &fftwf_plan_many_r2r;
+  static constexpr auto plan_guru64_r2r = &fftwf_plan_guru64_r2r;
   static constexpr auto execute_dft = &fftwf_execute_dft;
   static constexpr auto execute_dft_r2c = &fftwf_execute_dft_r2c;
   static constexpr auto execute_dft_c2r = &fftwf_execute_dft_c2r;
+  static constexpr auto execute_r2r = &fftwf_execute_r2r;
   static constexpr auto destroy_plan = &fftwf_destroy_plan;
   static constexpr auto sprint_plan = &fftwf_sprint_plan;
   static constexpr auto forget_wisdom = &fftwf_forget_wisdom;
@@ -243,6 +249,18 @@ typename api<R>::plan make_plan(const fbench_case* c, void* in, void* out, unsig
   const auto batch = static_cast<int>(c->batch);
   const auto in_dist = static_cast<int>(c->in_dist);
   const auto out_dist = static_cast<int>(c->out_dist);
+  // Real-to-real: FFTW's kind of each axis, in the order of fbench's kinds (harness/backend.hpp).
+  std::array<fftw_r2r_kind, 3> kinds{};
+  if (c->kind == fbench_r2r) {
+    constexpr std::array<fftw_r2r_kind, 9> fftw_kinds{
+        FFTW_REDFT00, FFTW_REDFT10, FFTW_REDFT01, FFTW_REDFT11, FFTW_RODFT00,
+        FFTW_RODFT10, FFTW_RODFT01, FFTW_RODFT11, FFTW_DHT,
+    };
+    for (int d = 0; d < c->rank; ++d) {
+      kinds.at(static_cast<std::size_t>(d)) =
+          fftw_kinds.at(static_cast<std::size_t>(c->r2r_kinds[d]));
+    }
+  }
   // No FFTW_UNALIGNED: the harness plans on buffers with the alignment of every later
   // execute, and FFTW_UNALIGNED silently drops FFTW's aligned SIMD codelets (finding E10).
   if (c->interleave > 1) {
@@ -271,6 +289,10 @@ typename api<R>::plan make_plan(const fbench_case* c, void* in, void* out, unsig
         .os = c->out_dist,
     };
     ++loop_rank;
+    if (c->kind == fbench_r2r) {
+      return A::plan_guru64_r2r(c->rank, axes.data(), loop_rank, loops.data(), static_cast<R*>(in),
+                                static_cast<R*>(out), kinds.data(), flags);
+    }
     if (c->kind == fbench_c2c) {
       return A::plan_guru64_dft(c->rank, axes.data(), loop_rank, loops.data(), static_cast<C*>(in),
                                 static_cast<C*>(out), c->sign, flags);
@@ -281,6 +303,11 @@ typename api<R>::plan make_plan(const fbench_case* c, void* in, void* out, unsig
     }
     return A::plan_guru64_dft_c2r(c->rank, axes.data(), loop_rank, loops.data(),
                                   static_cast<C*>(in), static_cast<R*>(out), flags);
+  }
+  if (c->kind == fbench_r2r) {
+    return A::plan_many_r2r(c->rank, n.data(), batch, static_cast<R*>(in), in_embed.data(), 1,
+                            in_dist, static_cast<R*>(out), out_embed.data(), 1, out_dist,
+                            kinds.data(), flags);
   }
   if (c->kind == fbench_c2c) {
     return A::plan_many_dft(c->rank, n.data(), batch, static_cast<C*>(in), in_embed.data(), 1,
@@ -617,6 +644,8 @@ template <class R> void execute(const plan_record& r, void* in, void* out) {
   const auto p = static_cast<typename A::plan>(r.plan);
   if (r.kind == fbench_c2c) {
     A::execute_dft(p, static_cast<C*>(in), static_cast<C*>(out));
+  } else if (r.kind == fbench_r2r) {
+    A::execute_r2r(p, static_cast<R*>(in), static_cast<R*>(out));
   } else if (r.kind == fbench_r2c) {
     A::execute_dft_r2c(p, static_cast<R*>(in), static_cast<C*>(out));
   } else {
@@ -735,7 +764,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
   description.str("library", "fftw")
       .str("version", version)
       .str("isa", simd_of(version))
-      .raw("supports", s.pipeline ? "[]" : R"(["c2c","r2c","c2r"])");
+      .raw("supports", s.pipeline ? "[]" : R"(["c2c","r2c","c2r","r2r"])");
   if (s.pipeline) {
     // As FFTN's PIPELINE arms: the harness checks the delayed rows (backend.hpp).
     description.raw("partial", R"(["c2c","r2c"])")
