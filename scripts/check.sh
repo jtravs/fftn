@@ -19,7 +19,7 @@
 #   gen       generated codelets are reproducible: regenerate and compare with the tree;
 #             the generator's own tests (gen/tests)
 #   apidoc    every public declaration is documented (Doxygen as a linter; no output kept)
-#             and the code snippets in docs/ match the compiled files in examples/
+#             and the code snippets in docs/ and README.md match the files in examples/
 #   build     Release, warnings as errors, tests under every kernel variant the CPU has
 #   tidy      clang-tidy (pinned), warnings as errors
 #   sanitize  ASan + UBSan (leak detection on), tests under every kernel variant

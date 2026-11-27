@@ -175,13 +175,26 @@ description can take, and recorded with `wisdom::add` ([planning](planning.md), 
   `direction::backward`); `pipeline<T, C, T>`, r2c then c2r, a real convolution over the
   n/2 + 1 bins (`convolution_rows`); `pipeline<C, T, C>`, c2r then r2c, half spectra in and
   out around a real middle.
-- **Pairs.** By default each line runs as the chain pair (for the real kinds, the real chain pair): the
-  two transforms' chains on a line held in the workspace, a `<C, C, C>` pipeline's complex
-  factors of stride 1 fused into the neighbouring pass, every other operation a pass over the
-  line in cache. A depth-first pair for long `<C, C, C>` lines and a lanes pair for batches of
-  short `<C, C, C>` lines or a plane's strided lines are built too: the rules take the first for
-  long contiguous lines and the second for strided lines on the processors where experiment X67
-  measured them faster, and measured planning times them wherever they apply.
+- **Pairs.** By default each line runs as the chain pair (for the real kinds, the real chain
+  pair): the two transforms' chains on a line held in the workspace, a `<C, C, C>` pipeline's
+  complex factors of stride 1 fused into the neighbouring pass, every other operation a pass over
+  the line in cache. A depth-first pair for long `<C, C, C>` lines and a lanes pair for batches of
+  short `<C, C, C>` lines or a plane's strided lines are built too. Forced, each takes almost any
+  description (the depth-first pair refuses only groups). The rules take them only where
+  experiment [X67](../dev/experiments/X67-row-pipelines.md) measured them faster, and only for
+  what it measured:
+  - the depth-first pair for contiguous lines from 288 KiB (18432 points in double, 36864 in
+    float) up to 131072 points, on Intel processors of the Xeon Gold 6240's class, for plans
+    whose instruction set is `avx512`; and only with a middle factor of stride 1 or none, no
+    prologue or epilogue factor, no accumulation, no callback in any place, at most one stored
+    run per side, and no group or fan-out;
+  - the lanes pair for a plane's strided lines of 64 to 512 points on that class and on AMD's
+    Zen 3 class, chosen by the processor's best instruction set (`avx512` on the Xeon, `avx2` on
+    Zen 3), not the plan's, so that a machine's two x86 targets agree; and only with a middle
+    factor of stride 1 or none, no middle callback, and nothing the lanes pair refuses.
+
+  Every other pipeline keeps the chain pair. Measured planning (`options::effort`) times every
+  pair a description can take.
 - **Stored runs** on the line, both sides (the valid half of a zero-padded convolution, a
   band of bins of a `<C, T, C>` half spectrum).
 - **Fan-out:** several inverses per forward transform, each with its own middle factor and
@@ -194,6 +207,37 @@ description can take, and recorded with `wisdom::add` ([planning](planning.md), 
 `describe()` says which pair a pipeline runs, its program form (flat, unrolled or walked) and
 where each operation goes. What is refused until built is listed in
 [conventions](conventions.md#pipelines).
+
+**What a pipeline saves, and when to keep separate plans** (measured by experiment
+[X67](../dev/experiments/X67-row-pipelines.md) against the same work as two plans and a
+pointwise loop of your own, on an AMD EPYC 7763 and an Intel Xeon Gold 6240, one thread unless
+stated):
+
+- **Inside the L2 cache the saving depends on the machine.** Zero-padded convolutions took
+  1.00–1.01 of the separate calls' time on the EPYC (no saving) and 0.77 in double and 0.84 in
+  float on the Xeon. Neither met step 5.2's aim of 0.8 with no case above 0.9: on the Xeon the
+  real pipelines (`<T, C, T>`) took 0.94–1.01.
+- **A plane's strided lines gain most.** On the lanes pair they took 0.25–0.51 (EPYC) and
+  0.31–0.44 (Xeon) of the separate calls' time, except 64 × 512 lines in float on the Xeon,
+  which the rule moves to the lanes pair although they took 1.96.
+- **Many lines on a team gain.** At eight threads, batches of 32 lines took 0.47–0.96 of the
+  separate calls' time on both machines, with a few long real lines on the EPYC excepted
+  (1.09–1.12).
+- **Whole long lines and batches of short rows may be faster as separate plans.** A plan of rows
+  has strategies a pipeline's pairs lack (batch leaves, the depth-first and fused routes of real
+  rows, the long-row chains measured per machine). On the EPYC such cases took 1.01–1.24 of the
+  separate calls' time. On the Xeon whole lines took 1.09–1.42, and batches of short rows
+  1.03–1.42 for `<T, C, T>` but 0.71–0.89 for `<C, C, C>` (64 × 16: 1.33).
+- **Real pipelines** (`<T, C, T>`) pay for their middle, a pass compiled for the baseline
+  instruction set where your loop may use the machine's: up to 1.10 of the separate calls' time
+  on the EPYC.
+- **Fan-out** saves less than one would hope: several copies per line took 1.08–1.29 of the
+  separate calls' time for real pipelines on the EPYC, and one line with four copies on a team
+  runs its copies one after another (up to 3.56 times the separate calls' time at eight
+  threads). Give a team many lines, or use separate plans for a few long lines with many
+  kernels.
+- When unsure, build the pipeline with `options::effort = planning::measure`, which picks its
+  fastest pair, and compare it with your separate plans on your own shapes.
 
 ## Owner-computes
 

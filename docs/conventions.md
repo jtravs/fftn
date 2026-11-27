@@ -373,7 +373,7 @@ edge's factor (accumulation and scales are taken).
 
 ## Pipelines
 
-Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
+Provisional (tasks 5.2b to 5.2g and 5.3d to 5.3f, `fftn/pipeline.hpp`). A row pipeline takes each line of one axis
 through a transform, a pointwise middle and the inverse transform, reading the line once and
 storing it once: the spectrum stays in the workspace, so the work is one sweep of memory
 instead of three. A `pipeline_desc<In, Mid, Out>` describes it: the `line` (its length and the
@@ -572,7 +572,8 @@ them), except that runs within the line's first half are read or written by the 
 last pass where its passes allow, as for a plan. A pipeline is built as the chain pair, except
 where the rules take another pair of transforms measured faster on the machine (experiment X67):
 on some processors long contiguous `<C, C, C>` lines take a depth-first pair, and a plane's strided
-`<C, C, C>` lines a lanes pair; `pipeline::describe()` names the pair. Results equal the transform, the multiplications and
+`<C, C, C>` lines a lanes pair ([fusion](fusion.md#pipelines) names the processors and limits);
+`pipeline::describe()` names the pair. Results equal the transform, the multiplications and
 the inverse done separately within two transforms' error bound plus one rounding per multiplication
 and addition, not bit for bit; the guarantees of "Determinism" below hold for pipelines too.
 `pipeline::transforms_of` deals lines among a team's members as `plan::transforms_of` deals
@@ -604,6 +605,15 @@ A transform followed by its inverse multiplies by N (the product of the axes' N 
 axes). The transform of several axes is the separable product, axis by axis, so the DHT of a
 plane is the product of the rows' and the columns' DHTs, as FFTW's, not the transform whose
 kernel is cas of the summed phases.
+
+Nothing is normalised unless asked, as for the other kinds: `options::scale` multiplies every
+output by one factor, so a plan of the inverse kind with `scale` 1/N undoes the transform, and
+1/√N on both makes the DHT, `dst1`, `dct4` and `dst4` orthonormal. The orthonormal `dct1`,
+`dct2`, `dct3`, `dst2` and `dst3` need weights on the first or last points besides 1/√N (scipy's
+`norm="ortho"`). A plan does not apply them itself. Along one axis they are real factors on its
+edges, which is how the convenience layer's `norm::ortho` gives scipy's results there; over
+several axes the convenience layer weights the first and last hyperplanes of each axis in a pass
+of its own ([easy](easy.md#real-to-real-transforms), which lists the weights).
 
 ```cpp file=examples/r2r.cpp region=dht
 // H_k = sum_j x_j (cos + sin)(2 pi jk / n) of every row.
@@ -683,7 +693,11 @@ of real parts and one of imaginary parts, as FFTW's split interface takes them. 
 `shape<split_complex<T>, split_complex<T>>` (c2c), `shape<T, split_complex<T>>` (r2c, the
 output split) and `shape<split_complex<T>, T>` (c2r, the input split), in rows, planes, volumes
 and chosen axes alike. On a split side the strides and distances count reals and hold for both
-arrays; the defaults are those of the interleaved shape, counted in reals. An execution passes a
+arrays; the defaults are those of the interleaved shape, counted in reals. The element of a
+side at offset o (the sum of its indices times their strides and distances, as for interleaved
+data) has its real part at `re[o]` and its imaginary part at `im[o]`: the split r2c output of a
+row of n reals is n/2 + 1 values in each array, and the two arrays of a tight batch of rows
+each hold count × (n/2 + 1). An execution passes a
 split side as `split_ptr<const T>` (input) or `split_ptr<T>` (output), `{re, im}`, in every
 form: serial, `execute_transforms`, teams and executors (`plan::in_data` and `plan::out_data`
 name the types); a `split_ptr<T>` converts to `split_ptr<const T>`. A null imaginary array ends
