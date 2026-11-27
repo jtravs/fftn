@@ -503,6 +503,16 @@ struct machine_profile {
   // fits the struct's tail padding: the profile's size, which the plain drivers' code copies
   // (schedule::profile), stays what it was.
   std::uint32_t callback_block_bytes = std::uint32_t{16} * 1024;
+  // The longest odd DCT-I or DST-I axis that takes the folded route (core/r2r.cpp: a real DFT
+  // of n -+ 1 points instead of the extension's 2(n -+ 1), its odd outputs running sums of the
+  // spectrum, so less accurate as n grows); 0: none, the extensions everywhere. Experiment X85's
+  // arm D. 16 bits (the route's accuracy ends far below 65535 points; X85), after
+  // callback_block_bytes in the struct's tail padding, so its size is unchanged.
+  // r2r_folded_isa: the processor's best target the limit was measured with (best: any), a
+  // property of the machine, not of the plan's target, so that every target of a machine takes the
+  // route alike (as pipeline_lanes_isa); a Zen 3 VM that hides AVX2 does not reach it unmeasured.
+  std::uint16_t r2r_folded_max = 0;
+  fftn::isa r2r_folded_isa = fftn::isa::best;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

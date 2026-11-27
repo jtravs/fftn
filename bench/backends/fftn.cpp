@@ -109,6 +109,9 @@
 //                    line whatever the strides
 //   CALLBACK_BLOCK_BYTES=B   the profile's callback_block_bytes (X66; its CALLBACK_COPY arm and
 //                    the build setting behind it were deleted by its rule 4)
+//   R2R_FOLDED_MAX=N   the profile's r2r_folded_max: odd DCT-I (from 33) and DST-I axes up to N
+//                    points take the folded route (X85's arm D; 0: the extensions; at most
+//                    65535), on any processor (the option sets r2r_folded_isa to best)
 //   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
 //                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
 //                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
@@ -1990,6 +1993,15 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.profile.callback_block_bytes = static_cast<std::uint32_t>(*v);
+      overrides.str(key, value);
+    } else if (key == "R2R_FOLDED_MAX") {
+      const std::optional<std::size_t> v = fbench::fftn_tuning::parse_size(value, 0, false);
+      if (!v || *v > std::numeric_limits<std::uint16_t>::max()) {
+        say(message, message_size, "R2R_FOLDED_MAX is a whole number of points from 0 to 65535");
+        return fbench_error;
+      }
+      s.settings.profile.r2r_folded_max = static_cast<std::uint16_t>(*v);
+      s.settings.profile.r2r_folded_isa = fftn::isa::best; // the arm folds on any processor
       overrides.str(key, value);
     } else if (key == "PIPELINE") {
       if (value != "fused" && value != "separate") {

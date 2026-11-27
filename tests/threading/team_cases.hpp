@@ -527,6 +527,16 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   team.profile.column_near_tile_bytes = 0;
   out.push_back(make_case("c2c_planes_team_chain_256x20x1" + suffix,
                           fftn::planes_c2c<T>(256, 20, 1, bwd), 5120, 5120, false, team, target));
+  // Experiment X85 (core/r2r.cpp): DCT-I and DST-I of odd lengths on the folded route
+  // (machine_profile::r2r_folded_max), whose store stage is one unit, rows and a plane.
+  fftn::detail::build_settings r2r = settings;
+  r2r.profile.r2r_folded_max = 1025;
+  out.push_back(make_case("r2r_dct1_folded_65x3" + suffix,
+                          fftn::rows_r2r<T>(65, 3, fftn::r2r_kind::dct1), 195, 195, false, r2r,
+                          target));
+  out.push_back(make_case("r2r_dst1_folded_planes_33x9x2" + suffix,
+                          fftn::planes_r2r<T>(33, 9, 2, fftn::r2r_kind::dst1), 594, 594, false, r2r,
+                          target));
 }
 
 inline std::vector<team_case> standard_cases(const fftn::detail::build_settings& settings) {

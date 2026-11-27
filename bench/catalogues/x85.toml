@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X85 (dev/experiments/X85-r2r-speed.md, task 6.12): real-to-real speed. Groups d-*
+# are arm D's targets (DCT-I and DST-I of odd lengths, the folded route: fbench option
+# R2R_FOLDED_MAX), groups l-* arm L's (planes and volumes, whose strided axes ran as lanes over
+# blocks of adjacent lines under the option R2R_LANES_COLUMNS=1; arm L was rejected and deleted,
+# 363ed5aa, so the groups now serve as collateral cases). Format in bench/README.md; weights are equal.
+
+[catalogue]
+name = "x85"
+
+# ---- arm D: the folded DCT-I and DST-I ----------------------------------------------------
+
+[[group]]
+name = "d-rows"
+kind = "r2r"
+r2r = ["dct1", "dst1"]
+dims = [5, 9, 15, 17, 33, 45, 65, 97, 129, 243, 257, 513, 1001, 1025, 2049, 2187, 4097, 8193,
+        16385, 65535]
+
+[[group]]
+name = "d-batches"
+kind = "r2r"
+r2r = ["dct1", "dst1"]
+dims = [17, 33, 65, 129]
+batch = 256
+
+[[group]]
+name = "d-planes"
+kind = "r2r"
+r2r = ["dct1", "dst1"]
+dims = ["17x17", "33x33", "65x65", "129x129", "257x257"]
+
+[[group]]
+name = "d-single"
+kind = "r2r"
+r2r = ["dct1", "dst1"]
+dims = [17, 65, 257, 1025, 4097, 16385]
+precision = "f32"
+
+# ---- arm L: lanes over adjacent lines on the strided axes ---------------------------------
+
+[[group]]
+name = "l-planes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["16x16", "32x32", "64x64", "128x128", "192x192", "256x256", "384x384", "512x512",
+        "1024x1024", "60x40", "100x100", "96x97"]
+place = ["out", "in"]
+
+[[group]]
+name = "l-volumes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["16x16x16", "32x32x32", "64x64x64"]
+
+[[group]]
+name = "l-single"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["64x64", "256x256", "1024x1024"]
+precision = "f32"
