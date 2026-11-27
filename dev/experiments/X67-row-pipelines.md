@@ -1,8 +1,10 @@
 # X67: row convolution pipelines against three separate calls and FFTW with a loop
 
-- **Status:** running. The decision rules were drafted with 5.2's design (2026-11-25), before
-  anything was built, and adjusted before the first judging run (2026-11-26, "Amendments before
-  the first judging run" below, each with its reason).
+- **Status:** done (2026-11-27). Step 5.2's acceptance is not met on either machine. Adopted: the
+  depth-first pair on the Xeon 6240's class and the lanes pair for a plane's strided lines on Zen
+  3's and the Xeon 6240's classes, each narrowed to what was measured. Rule 2's losses are leads
+  for the maintainer. The rules were drafted with 5.2's design (2026-11-25) and amended before the
+  first judging run ("Amendments before the first judging run" below, each with its reason).
 - **Owner:** task AF (5.2g), 2026-11-26 (overnight)
 - **Phase / task:** 5.2g, on 5.2a–5.2f as built
 
@@ -215,8 +217,173 @@ x67 case are the final code's: the later commits only exclude adjacent lines und
 
 ## Results
 
-Not run.
+Ratios are arm ÷ the run's first arm (fbench's medians, 95 % intervals in brackets); P/S is the
+inverse of fbench's S/P (or S/C in R1, where C is today's P). Every band below is the A/A control's,
+1.0 % (its floor) in every R1 run. GCC 16.2 (EPYC) and GCC 14.4 (Xeon), Release, one thread; FFTW
+3.3.11 at MEASURE with fresh wisdom per run.
+
+### R1, the pairs (commit f246ac76, the code as merged before any rule)
+
+**EPYC 7763** (DMOG node20, shared Slurm, `-c 8`, never `--exclusive`; avx2; no round loaded). A
+first attempt on node16 (load 91 from other users' builds, band ±23.5 %) was cancelled after 5
+rounds and is not used. Runs: valid halves 20261127-001033-14f4, fan-out 4 20261127-005940-2ae5,
+fan-out 16 20261127-010514-2eee, whole lines and collateral 20261127-011234-9a31 (80 rounds each).
+
+- **D/C** (rule 3): faster beyond the band only at 98304 (0.84–0.87 on two of its four cases), with
+  131072 slower again (1.45–3.14); elsewhere no evidence or slower (valid halves up to 3.14, fan-out
+  1.04–3.06, whole lines 1.30–2.58). No length qualifies at it and every longer one: no rule.
+- **L/C** (rule 4): a plane's strided lines 0.46–0.96 (64 × 512: 0.959 double, 0.605 float; 512 ×
+  512: 0.903, 0.457); batches of short rows 1.31–1.79 (slower).
+- **P/S with P the chain pair** (rule 1 informative, before the rules): over the L2-resident cases
+  1.000 in double (4 `<T, C, T>` cases; no `<C, C, C>` double case is L2-resident on 512 KiB) and
+  0.987 in float (14); 0.959 over all 56 valid-half cases. Above 1 beyond the band (rule 2): `<T, C,
+  T>` 18432 (1.021–1.027 double, 1.086–1.101 float), 24576 float (1.033–1.048), 32768 float one line
+  (1.018). Fan-out: P/S 1.00–1.05 (`<C, C, C>`) and 1.07–1.21 (`<T, C, T>`) at F = 4, 0.93–1.10 and
+  1.07–1.17 at F = 16. Whole lines: 1.02–1.16 (`<C, C, C>`), 1.12–1.14 (`<T, C, T>`); batches of
+  short rows 1.02–1.25 but `<C, C, C>` 4096 × 1024 (0.95); a plane's strided lines 0.48–0.57 (the
+  pipeline faster).
+- **P/W** above 1.05 (1 + band) (rule 6): `<T, C, T>` valid halves at 18432–49152, 98304 and 131072
+  (1.08–1.29), `<C, C, C>` 98304 (1.19); FFTW's real rows on Zen 3 are the client catalogue's known
+  gap (PLAN "Status").
+
+**Xeon 6240** (`--serial`, one at a time behind task AC's X66; Slurm binds no CPUs; 17–36 of 80
+rounds marked loaded by other users' jobs, 1 started overloaded). Runs: valid halves
+20261127-003028-89a2, fan-out 4 20261127-013554-ff89, fan-out 16 20261127-014130-bbd2, whole lines
+and collateral 20261127-015052-528a.
+
+- **D/C** (rule 3): `<C, C, C>` double 0.63–0.81 at every length from 18432 (the shortest measured)
+  to 131072, one and 32 lines; float 0.91–0.92 at 32768 and 0.64–0.75 from 49152, no evidence at
+  18432–24576 (0.98–1.00) but one line of 18432 slower (1.03). Fan-out 4 and 16: 0.62–0.83. Whole
+  lines: 0.72–0.81.
+- **L/C** (rule 4): a plane's strided lines 0.58–0.72; batches of short rows 1.37–2.08.
+- **P/S with P the chain pair**: L2-resident geomean 0.909 in double (14 cases) and 0.892 in float
+  (22); 0.889 over all 56; no valid-half case above 1 beyond the band. Fan-out: `<C, C, C>`
+  0.88–1.22 (131072 loses: 1.11 at F = 4, 1.22 at F = 16), `<T, C, T>` 0.97–1.02. Whole lines:
+  1.37–1.71 (`<C, C, C>`) and 1.24–1.43 (`<T, C, T>`): the separate plans take the Xeon's
+  depth-first chains (X46, X75), the pipeline's chain pair does not. Short rows: `<C, C, C>`
+  0.72–0.90 except 64 × 16 (1.34), `<T, C, T>` 1.04–1.44 except 4096 × 1024 (0.75). Strided lines
+  0.54–0.62, except 64 × 512 in float (2.73: the separate plans' lanes columns and loop beat the
+  chain pair's lines there).
+- **P/W** above 1.05 (1 + band): `<C, C, C>` one line from 24576 (1.14–1.29) and `<T, C, T>` one
+  line at every length (1.07–1.38).
+
+**Diagnosis of the `<T, C, T>` losses** (EPYC, one thread, a timing loop outside fbench, job 520839;
+not a judging run): at 18432 points in float the pipeline took 38.8 µs, the same pipeline without a
+middle factor 32.9 µs, the r2c and c2r plans with runs 17.1 and 15.8 µs. The middle pass over the
+n/2 + 1 bins costs 6 µs: it is the baseline edge pass (vectorised for SSE2 only, outside every ISA
+region), where the separate arm's loop is cloned for AVX2 (about 2.5 µs by the difference of
+fbench's medians). A unit-stride form of that pass, which GCC vectorised the same, changed nothing
+(job 520840) and was dropped. Nothing else in the real pair is fused: the input run's read and the
+output run's store are separate passes, as in the plans with runs.
+
+### R2, deciding (one thread, the rules as adopted), and R3 (eight threads)
+
+**EPYC 7763** (node20, as R1; commit d8fc1250, whose programs for the x67 cases are the final
+code's). Runs: valid halves 20261127-014336-157d, fan-out 4 20261127-023040-0fa5, fan-out 16
+20261127-023553-c727, whole lines and collateral 20261127-024257-fb89 (80 rounds each, band 1.0 %,
+no round loaded); R3 20261127-025706-ea00 (32 lines, 80 rounds, band 1.31 %) and
+20261127-030907-41ac (fan-out 4, 6 rounds, band 14.6 %: every case resolved at once).
+
+- **The rules' moves:** only the strided lines move (to the lanes pair): C/P 1.03–2.16, so P is
+  faster than the chain pair on all four. Every other case is on its chain pair: C/P no evidence in
+  all 56 valid-half, 16 fan-out and 24 other cases.
+- **Rule 1 (acceptance):** P/S over the L2-resident cases 1.009 in double (4) and 1.001 in float
+  (14); not met. 0.97 over all 56 valid-half cases.
+- **Rule 2:** above 1 beyond the band at one thread: `<T, C, T>` valid halves 18432 (1.03–1.10),
+  24576 and 32768 in float (1.02–1.06), 65536 and 131072 one line in double (1.08–1.11, wide
+  intervals); fan-out 1.02–1.29 on most cases; whole lines 1.01–1.16; short-row batches 1.02–1.24
+  except `<C, C, C>` 4096 × 1024 (0.95). At eight threads (R3): the 32-line cases mostly gain (P/S
+  0.51–0.96) but `<T, C, T>` 65536 in double (1.12) and 131072 in float (1.09) lose, and one line of
+  four copies loses heavily (P/S 1.56–3.56): its copies run one after another in a team (they work
+  in the workspace block's second region, task 5.2e), where the separate calls share each transform.
+- **Rule 6 (P/W):** as R1 (`<T, C, T>` 1.10–1.25, `<C, C, C>` 49152 and 98304 1.20–1.37).
+- **Rule 7 (fan-out):** over the lengths fan-out was measured at, P/S's geometric mean is 1.03 at F
+  = 1, 1.09 at F = 4 and 1.08 at F = 16: the copies' layout is a lead.
+- Strided lines on the lanes pair: P/S 0.25–0.51.
+
+**Xeon 6240** (`--serial`, commit a2378229; Slurm binds no CPUs; 39 of 80 rounds of the valid halves
+marked loaded by other users' jobs). Runs: valid halves 20261127-025103-3880, fan-out 4
+20261127-035459-926a, fan-out 16 20261127-040044-68e1, whole lines and collateral
+20261127-041011-15cb; R3 20261127-042650-bbce (32 lines, 6 rounds, band 5.3 %) and
+20261127-042803-2184 (fan-out 4, 9 rounds, band 4.8 %).
+
+- **The rules' moves:** the `<C, C, C>` lines from 18432 points in double and from 49152 in float
+  take the depth-first pair: C/P 1.24–1.58 (P faster on every moved valid-half case); the lines the
+  rule leaves (float up to 32768, every `<T, C, T>`) stay on the chain pair (C/P no evidence). With
+  fan-out the moved lines take 0.62–0.85 of C's time (C/P 1.18–1.64), whole lines 0.71–0.80 (C/P
+  1.25–1.41); the strided lines take the lanes pair (C/P 1.39–1.75). No moved case is slower than C;
+  every case the rules leave is on its chain pair (C/P no evidence, and one unmoved case, `<C, C,
+  C>` 1024 × 16, with C 1.016 of P's time).
+- **Rule 1 (acceptance):** P/S over the L2-resident cases 0.765 in double (14), with `<T, C, T>`
+  cases at 0.94–1.01 (above 0.90 beyond the band), and 0.840 in float (22); not met. 0.769 over all
+  56 valid-half cases.
+- **Rule 2:** no valid-half case above 1 beyond the band at one thread. Fan-out: `<C, C, C>`
+  0.69–0.77, `<T, C, T>` 0.97–1.02, where 131072 × 16 copies lies above 1 beyond the band (1.02) and
+  65536 × 4 just inside it (1.02; both on the chain pair). Whole lines: `<C, C, C>` 1.09–1.23 even
+  on the depth-first pair (the separate plans' X46 chains with their measured tops are faster
+  still), `<T, C, T>` 1.24–1.42; short rows `<C, C, C>` 0.71–0.89 except 64 × 16 (1.33), `<T, C, T>`
+  1.03–1.42 except 4096 × 1024 (0.75); strided lines 0.31–0.44 except 64 × 512 in float (1.96).
+- **Rule 6 (P/W):** `<T, C, T>` one line at every length (1.07–1.39); `<C, C, C>` no longer (the
+  depth-first pair). Fan-out `<T, C, T>` 1.15–1.36 and whole `<T, C, T>` lines 1.21–1.38; no
+  short-row batch (P/W 0.54–1.01).
+- **R3 (eight threads):** 32 lines 0.47–0.80 of the separate calls' time, every case; one line of
+  four copies 0.67–0.74 at 18432 but 1.15–2.24 from 32768 (the copies one after another in a team,
+  as on the EPYC).
+- **Rule 7 (fan-out):** on the same lengths, P/S's mean is 0.77 at F = 1, 0.85 at F = 4 and 0.86 at
+  F = 16 (EPYC: 1.03, 1.09 and 1.08): above F = 1's on both machines, so the copies' layout is a
+  lead.
 
 ## Verdict
 
-Not run.
+**Step 5.2's acceptance is not met on either machine.** The rules as adopted give P/S over the
+L2-resident cases of 1.009 (double) and 1.001 (float) on the EPYC 7763, and 0.765 and 0.840 on the
+Xeon 6240, against 0.80 with no case above 0.90 beyond the band. The fused pipeline saves the
+spectrum's round trip, which inside L2 is worth a few per cent; it loses more where it gives up what
+the separate calls have (lead 1–4 below).
+
+**Adopted (rules 3 and 4, narrowed to what R1 measured; R2 deciding):**
+- the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB of the line on the
+  Xeon 6240's class, avx512 (`machine_profile::pipeline_depth_min_kib`, `_max_kib`, `_isa`), for a
+  kernel of stride 1 or none, at most one run per side, no prologue or epilogue factor, accumulation
+  or callback. R2: C/P 1.24–1.58 on the moved valid halves, 1.18–1.64 with fan-out, 1.25–1.41 on
+  whole lines. The EPYC keeps the chain pair (D/C up to 3.4).
+- the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class (AMD)
+  and the Xeon 6240's (`machine_profile::pipeline_lanes_adjacent_max`), for a kernel of stride 1 or
+  none and none of what the lanes pair refuses: C/P 1.03–2.16 on the EPYC (P/S 0.25–0.51), C/P
+  1.39–1.75 on the Xeon (P/S 0.31–0.44, 64 × 512 in float excepted). Batches of short rows keep the
+  chain pair (L/C 1.3–2.1).
+- Bit agreement (DESIGN 6.2, 5.2f's review): both rules are keyed by machine class and hold for
+  every target of the machine alike, so the two x86 targets of one machine never split on them.
+- Every case the rules exclude is on its chain pair in R2 (C/P no evidence), plans keep their
+  programs and bits (2,244 of 2,256 probes against `main` unchanged on the EPYC; the 12 that move
+  are adjacent lines of 64–512 points), and the plain driver's object disassembles the same
+  (rule 8).
+
+**Not adopted:** no fused middle (rule 5): neither M1 nor a fused tile pass is built. The near
+misses of rule 2 (the Xeon's `<T, C, T>` 65536 × 4 copies) were not re-run: clear losses on
+both machines decide rule 2 whatever their re-run shows. Rule 2's
+losses are not fixed in 5.2g; they are recorded as leads below, which need the maintainer's
+agreement (rule 2).
+
+**Leads for the performance phase** (each with its evidence above):
+1. **The real pair's middle** is the baseline edge pass (SSE2 vectorisation) where the user's loop
+   is AVX2: 6 µs of a 39 µs line at 18432 floats on the EPYC, the whole of `<T, C, T>`'s loss
+   against S (1.02–1.10). M1 (the middle fused into the c2r pairing pass) or a vocabulary pass in
+   the ISA regions would remove it.
+2. **Fan-out's copies** lose on the EPYC (P/S 1.08 to 1.29 for `<T, C, T>`, rule 7: the mean at
+   F = 4 and 16 is above F = 1's; on the Xeon too, though there P is faster than S) and at eight threads
+   (one line of four copies 1.56–3.56 on the EPYC, 1.15–2.24 from 32768 on the Xeon), where copies
+   in the block's second region run one after another.
+3. **Whole lines and short-row batches against the plans' own strategies:** the separate plans keep
+   batch leaves, real rows' depth-first and fused routes (X72, X75, X78) and the Xeon's depth-first
+   chains with their measured tops (X46); the pipeline's pairs do not (EPYC whole lines 1.01–1.16,
+   short rows up to 1.24; Xeon `<C, C, C>` 1.09–1.23 on the depth-first pair, `<T, C, T>`
+   1.24–1.42).
+4. **The lanes pair on 64 × 512 float lines on the Xeon** stays slower than the separate plans (P/S
+   1.96 in R2).
+5. **Against FFTW with a loop** (rule 6, not blocking): `<T, C, T>` lines on both machines
+   (1.07–1.39, fan-out included) and the EPYC's `<C, C, C>` 49152 and 98304 (1.20–1.37). The Xeon's
+   long `<C, C, C>` lines, 1.14–1.29 of FFTW's time on the chain pair in R1, beat FFTW on the
+   depth-first pair (P/W 0.80–0.94 whole, 0.84–0.94 with fan-out).
+
+**Mac leg:** a daytime follow-up (amendment 1).

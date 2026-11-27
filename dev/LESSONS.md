@@ -1149,7 +1149,8 @@ and batches of short rows, where the plans keep strategies (batch leaves, the re
 that the fused pair does not; on the Xeon 6240 it took 0.89–0.91 inside L2 but 1.24–1.71 on whole
 long lines, where the separate plans ran the Xeon's depth-first chains. Giving the fused pair the
 same depth-first strategy (0.62–0.83 of the chain pair's time on the Xeon) mattered more than
-the fusion. A fused pipeline must carry every strategy and vectorised kernel its separate parts
+the fusion: it took the L2-resident lines to 0.77 (double) and 0.84 (float) of the three calls,
+yet whole lines stayed at 1.09–1.23, the plans' own chains having measured top factors. A fused pipeline must carry every strategy and vectorised kernel its separate parts
 reach before its saved sweep can show. [X67](experiments/X67-row-pipelines.md).
 
 ## 5. Threading
