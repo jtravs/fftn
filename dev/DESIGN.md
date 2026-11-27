@@ -1037,7 +1037,47 @@ Points that matter:
 - **Fusion** (step 6.9, built: "As built (step 6.9)" below). Edges (`fftn_edge`, `fftn_factor`
   with strides as a pointer and a count, `fftn_exec_args`, `fftn_plan_create_edges` and execute
   forms with arguments), block callbacks (12.3) and pipelines (12.2), after the maintainer
-  accepted 12's C++ APIs as built (2026-11-26). Split-complex kinds come with 5.8.
+  accepted 12's C++ APIs as built (2026-11-26). Split-complex kinds: the block below.
+- **Split complex** (*proposed* 2026-11-27, the C form of 5.8's conversion form; provisional,
+  its choices in 18.2 "Phase 6", Q28–Q31):
+
+  ```c
+  typedef struct fftn_split_ptr { void* re; void* im; } fftn_split_ptr;    /* an output side */
+  typedef struct fftn_split_const_ptr {                                   /* an input side */
+    const void* re; const void* im;
+  } fftn_split_const_ptr;
+  /* fftn_shape gains a last field, so that a zeroed shape stays interleaved: */
+  /*   int split;   nonzero: the complex sides are split arrays (FFTN_C2C, _R2C, _C2R only) */
+  void fftn_execute_split(const fftn_plan*, fftn_split_const_ptr in, fftn_split_ptr out,
+                          fftn_workspace*);
+  void fftn_execute_transforms_split(const fftn_plan*, size_t first, size_t count,
+                                     fftn_split_const_ptr in, fftn_split_ptr out, fftn_workspace*);
+  void fftn_execute_team_split(const fftn_plan*, fftn_split_const_ptr in, fftn_split_ptr out,
+                               fftn_team, fftn_workspace*, fftn_completion);
+  int fftn_execute_on_split(const fftn_plan*, fftn_split_const_ptr in, fftn_split_ptr out,
+                            const fftn_executor*, fftn_workspace*);
+  ```
+
+  - *The pointers.* `void*` as 6.8's data pointers, so one pair of structs serves both
+    precisions, and a const struct for the input as 6.8's `const void* in`, since C has no
+    `split_ptr<const T>` conversion. A real side (r2c's input, c2r's output) passes its array as
+    `re`; its `im` is not read (NULL by convention), so every kind has one signature.
+  - *The plan.* A flag on the shape, `fftn_shape::split`, mirroring the core's
+    `shape_view::split` that C++'s element types set: one plan type, one `fftn_plan_create`, the
+    kind and precision fields unchanged, strides and distances counting reals on a split side as
+    in C++. `split` with `FFTN_R2R` is refused in C. Alternative: three kinds
+    (`FFTN_C2C_SPLIT`, …), which every switch on `fftn_kind` would then have to know.
+  - *The executions.* The four forms with a `_split` suffix, as 6.9 added `_args`; no form takes
+    both, since split plans take no edges. A split plan through the other forms, or a plan on
+    interleaved data through the `_split` forms, ends the program with a message, as a plan with
+    factors executed without its arrays does (C cannot refuse it at compile time as C++ does); a
+    NULL `im` on a split side ends it naming `split_ptr::im`, as in C++.
+  - *What is refused, as in C++.* Edges (`fftn_plan_create_edges` with non-NULL edges), stored
+    runs, in-place r2c and c2r: the C++ messages pass through. `fftn_wisdom_add` refuses a split
+    plan with `FFTN_ERROR_INVALID_ARGUMENT` (C++ constrains `wisdom::add` away); a split plan is
+    planned by the rules whatever `options.effort` and `options.use` say, as in C++.
+    `fftn_plan_describe`, `_workspace_bytes`, `_instruction_set` and `fftn_transforms_of` are
+    unchanged. Pipelines have no split form (neither has C++).
 - **As built (step 6.8; `include/fftn/c_api.h`, `src/c_api/c_api.cpp`, `docs/c_api.md`).** The
   block above, with Q17–Q22's proposals taken as written, and these choices where it was silent
   (each provisional, for the maintainer's review):
@@ -1117,9 +1157,12 @@ Points that matter:
     constructors' refusals come through with their own messages, which name the C++ fields
     (`edges.in.accumulate`, `desc.group`), as `fftn_plan_create` passes them (6.8).
   - *No growth room*: `fftn_exec_args`, `fftn_edge` and `fftn_pipeline_desc` are plain structs
-    without size or version fields (Q21), so split complex (5.8, step 6.10) will change them
-    (the second array of a split factor or side, say), as Q21 allows before 1.0; C callers
-    rebuild against the new header.
+    without size or version fields (Q21). Split complex in C (the block above) leaves them as
+    they are, because C++ refuses edges on split plans (5.8, "Not built yet") and has no split
+    pipelines: a split plan's imaginary arrays travel in `fftn_split_ptr`, not in
+    `fftn_exec_args`. Edges on split data, when C++ builds them, will change these structs (the
+    second array of a split factor, say), as Q21 allows before 1.0; C callers then rebuild
+    against the new header. The split block itself adds a field to `fftn_shape`.
 
 ---
 
@@ -4858,6 +4901,26 @@ table are built on the proposal, provisional and with a second reader, until it 
     workflows included; every provisional API either confirmed or listed as provisional in the
     release notes; the release report published with whatever it shows, the 1.3 targets not
     required. Versions stay 0.x until the API is frozen at 1.0.
+
+*Split complex in the C API (5.9, "Split complex"; 2026-11-27)*
+
+28. **The pointers.** Proposal: `fftn_split_ptr { void* re; void* im; }` for an output and
+    `fftn_split_const_ptr { const void* re; const void* im; }` for an input, passed by value; a
+    real side's array in `re`. Alternatives: one struct of `void*` for both sides (no const on
+    the input, as C++ has), or four pointers per call as FFTW's guru split functions take them
+    (no structs, but a signature per kind).
+29. **How a split plan is made.** Proposal: `int split` as the last field of `fftn_shape`
+    (nonzero: split; refused with `FFTN_R2R`), mirroring `shape_view::split`. Alternatives: a
+    `fftn_layout` enumeration field (room for other layouts, refusable values), or three more
+    `fftn_kind` values.
+30. **The executions.** Proposal: `fftn_execute_split`, `fftn_execute_transforms_split`,
+    `fftn_execute_team_split` and `fftn_execute_on_split`, following 6.9's `_args` suffix; no
+    `_split_args` forms until split plans take edges.
+31. **Layout mismatches at execution.** Proposal: a split plan through an interleaved form, or
+    an interleaved plan through a `_split` form, ends the program with a message (one test of a
+    flag the handle keeps), since C cannot refuse it at compile time and an execution cannot
+    return an error; `fftn_wisdom_add` refuses split plans with a status. Alternative: leave the
+    mismatch undefined, as a wrong kind or precision of `void*` data is.
 
 **Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two
