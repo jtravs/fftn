@@ -127,8 +127,9 @@ backward.execute(spectrum.data(), back.data(), ws); // back == x, to rounding
 ```
 
 In more dimensions the last axis is halved. In place, a real row is padded to the 2(n/2 + 1)
-reals of its complex row, FFTW's layout. A c2r plan never writes its input out of place. Every
-rule is in [conventions](conventions.md#what-is-computed).
+reals of its complex row, FFTW's layout. A c2r plan never writes its input out of place. The
+rules are in [conventions](conventions.md): "Shapes and layouts", "In place" and "What is
+preserved".
 
 ## Choosing lengths
 
@@ -211,11 +212,15 @@ other libraries is planned.
 Provisional. Complex data kept as two real arrays, one of real parts and one of imaginary
 parts, are transformed by naming the element `fftn::split_complex<T>` in the shape and passing
 `fftn::split_ptr{re, im}` to `execute` (`include/fftn/split.hpp`): c2c, r2c with split output
-and c2r with split input, in every rank and form of execution. The plan converts to and from
-the interleaved form in its workspace around the transform, so the results are those of the
-interleaved plan bit for bit; [conventions](conventions.md#split-complex) gives the layout and
-what is not built yet (edges, stored runs, measured planning and wisdom on split plans). A
-fused form that reads and writes the split arrays in the transform's own passes is planned.
+and c2r with split input, in every rank and form of execution. There are no shape helpers for
+split data (no `rows_*` form), so a split shape is written field by field, as
+[conventions](conventions.md#split-complex) shows. The plan converts to and from the interleaved
+form in its workspace around the transform, so the values are those of the interleaved program
+run in the block, bit for bit. Rows always run as the chain, so a split plan of rows need not
+match, bit for bit, an interleaved plan of the same shape that the rules put on another
+strategy. Conventions gives the layout and what is not built yet: rows on strategies other than
+the chain, edges, stored runs, measured planning and wisdom on split plans. A fused form that
+reads and writes the split arrays in the transform's own passes is planned.
 
 ## The convenience layer
 
@@ -267,6 +272,7 @@ and `transforms_of` on plans) follows the agreed design.
 ## What is planned
 
 Not built, and so not documented beyond a mention: tuning the speed of the real-to-real
-transforms; split-complex data read and written in the transform's own passes; edges, stored
-runs and measured planning on split-complex plans; `array_of` for Kokkos Views. FFTN's
+transforms; split-complex data read and written in the transform's own passes; split rows on
+strategies other than the chain; edges, stored runs and measured planning on split-complex
+plans; `array_of` for Kokkos Views. FFTN's
 progress and what comes next are in [dev/PLAN.md](../dev/PLAN.md).

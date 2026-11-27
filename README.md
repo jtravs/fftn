@@ -62,7 +62,8 @@ Built and tested; the parts marked provisional have not yet had their API review
   transform.
 - Split-complex arrays (provisional), converted in the plan's workspace.
 - numpy- and scipy-style one-call functions with cached plans (`fftn/easy.hpp`,
-  provisional), a Kokkos adapter shaped like Kokkos-FFT, and a C API (provisional).
+  provisional), a Kokkos adapter shaped like Kokkos-FFT (partly provisional), and a C API
+  (provisional).
 - No dependencies: a static library with light headers. GCC 14+, Clang 16+, Apple Clang;
   Windows through Clang. Run-time selection of the instruction set, from SSE-only x86-64
   and plain NEON up to AVX2, AVX-512 and NEON with FCMA, so one build runs well on old and

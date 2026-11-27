@@ -610,10 +610,10 @@ Nothing is normalised unless asked, as for the other kinds: `options::scale` mul
 output by one factor, so a plan of the inverse kind with `scale` 1/N undoes the transform, and
 1/√N on both makes the DHT, `dst1`, `dct4` and `dst4` orthonormal. The orthonormal `dct1`,
 `dct2`, `dct3`, `dst2` and `dst3` need weights on the first or last points besides 1/√N (scipy's
-`norm="ortho"`);
-a plan does not apply them itself, but takes them as real factors on its edges, which is how
-the convenience layer's `norm::ortho` gives scipy's results ([easy](easy.md#real-to-real-transforms),
-which lists the weights).
+`norm="ortho"`). A plan does not apply them itself. Along one axis they are real factors on its
+edges, which is how the convenience layer's `norm::ortho` gives scipy's results there; over
+several axes the convenience layer weights the first and last hyperplanes of each axis in a pass
+of its own ([easy](easy.md#real-to-real-transforms), which lists the weights).
 
 ```cpp file=examples/r2r.cpp region=dht
 // H_k = sum_j x_j (cos + sin)(2 pi jk / n) of every row.
