@@ -44,7 +44,11 @@ say "installed files"
 (cd "$prefix" && find . -type f | sed 's|^\./||' | sort) > build/package-files.txt
 cat build/package-files.txt
 allowed='^(include/fftn/([a-z0-9_]+/)*[a-z0-9_]+\.(h|hpp)|lib(64)?/(libfftn\.a|fftn\.lib)'
-allowed+='|lib(64)?/(libfftn_c\.(so|dylib)|fftn_c\.lib)|bin/fftn_c\.dll'
+# The shared library's file carries its full version (libfftn_c.so.<version>,
+# libfftn_c.<version>.dylib: libfftn_c.so.0.1.0 at version 0.1.0);
+# the soname and linker names beside it are links, which find -type f does not list.
+allowed+='|lib(64)?/(libfftn_c\.so(\.[0-9]+)+|libfftn_c(\.[0-9]+)+\.dylib|fftn_c\.lib)'
+allowed+='|bin/fftn_c\.dll'
 allowed+='|lib(64)?/cmake/fftn/fftn(Config|ConfigVersion|Targets|Targets-[a-z]+)\.cmake'
 allowed+='|lib(64)?/pkgconfig/fftn\.pc|share/doc/fftn/LICENSE)$'
 unexpected=$(grep -vE "$allowed" build/package-files.txt || true)

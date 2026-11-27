@@ -51,7 +51,7 @@ struct fftn_plan {
   // core holds call_c's instantiations in their place, and each execution hands it a thunk
   // with the C function and the caller's user pointer (c_exec_args).
   std::array<fftn_block_fn, 3> calls{};
-  // The shape's kind and whether its complex sides are split (fftn_shape::split): the _split
+  // The shape's kind and whether its complex sides are split (fftn_shape::layout): the _split
   // executions pass the imaginary arrays of the complex sides only, and every execution checks
   // that its form matches the plan's layout (DESIGN.md 18.2, Q31).
   fftn::detail::transform_kind kind = fftn::detail::transform_kind::c2c;
@@ -109,9 +109,11 @@ static_assert(FFTN_PLANNING_MEASURE == static_cast<int>(fftn::planning::measure)
 static_assert(FFTN_FORWARD == static_cast<int>(fftn::direction::forward));
 static_assert(FFTN_BACKWARD == static_cast<int>(fftn::direction::backward));
 
-// The value a C caller stored in an enumeration-typed field or argument, read as the int it
-// is in C: a value outside the enumeration, which the C side may hold, is never loaded as the
-// C++ enumeration type (UBSan's enum check would rightly flag it).
+// The value a C caller stored in an enumeration-typed field or argument, read as an int (the
+// enumeration's underlying type is the compiler's choice, int-sized here, unsigned int with
+// GCC and Clang when no value is negative): a value outside the enumeration, which the C side
+// may hold, is never loaded as the C++ enumeration type (UBSan's enum check would rightly flag
+// it).
 template <class E> int raw_value(const E& e) noexcept {
   static_assert(sizeof(E) == sizeof(int), "C enumerations are ints");
   int v = 0;
@@ -267,11 +269,14 @@ struct converted_shape {
     } else if (s->r2r_kinds != nullptr) {
       refuse(where + ".r2r_kinds", "is not NULL; only an FFTN_R2R shape has kinds");
     }
-    if (s->split != 0 && kind == FFTN_R2R) {
-      refuse(where + ".split",
-             "is " + std::to_string(s->split) + "; an FFTN_R2R shape has no complex side to split");
+    const int layout = raw_value(s->layout);
+    if (layout != FFTN_INTERLEAVED && layout != FFTN_SPLIT) {
+      refuse(where + ".layout", "is " + std::to_string(layout) + ", not an fftn_layout");
     }
-    view.split = s->split != 0;
+    if (layout == FFTN_SPLIT && kind == FFTN_R2R) {
+      refuse(where + ".layout", "is FFTN_SPLIT; an FFTN_R2R shape has no complex side to split");
+    }
+    view.split = layout == FFTN_SPLIT;
     view.axes = axes;
     view.batches = batches;
     view.runs = runs;

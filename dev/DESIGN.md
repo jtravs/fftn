@@ -1107,8 +1107,9 @@ Points that matter:
   typedef struct fftn_split_const_ptr {                                   /* an input side */
     const void* re; const void* im;
   } fftn_split_const_ptr;
+  typedef enum fftn_layout { FFTN_INTERLEAVED = 0, FFTN_SPLIT = 1 } fftn_layout;
   /* fftn_shape gains a last field, so that a zeroed shape stays interleaved: */
-  /*   int split;   nonzero: the complex sides are split arrays (FFTN_C2C, _R2C, _C2R only) */
+  /*   fftn_layout layout;   FFTN_SPLIT: the complex sides are split arrays (C2C, R2C, C2R) */
   void fftn_execute_split(const fftn_plan*, fftn_split_const_ptr in, fftn_split_ptr out,
                           fftn_workspace*);
   void fftn_execute_transforms_split(const fftn_plan*, size_t first, size_t count,
@@ -1123,16 +1124,18 @@ Points that matter:
     precisions, and a const struct for the input as 6.8's `const void* in`, since C has no
     `split_ptr<const T>` conversion. A real side (r2c's input, c2r's output) passes its array as
     `re`; its `im` is not read (NULL by convention), so every kind has one signature.
-  - *The plan.* A flag on the shape, `fftn_shape::split`, mirroring the core's
-    `shape_view::split` that C++'s element types set: one plan type, one `fftn_plan_create`, the
-    kind and precision fields unchanged, strides and distances counting reals on a split side as
-    in C++. `split` with `FFTN_R2R` is refused in C. The cost: `fftn_shape` grew a field on
+  - *The plan.* An enumeration field on the shape, `fftn_shape::layout` (18.2 Q29, settled
+    by the maintainer on 2026-11-27), whose `FFTN_SPLIT` sets the core's `shape_view::split`
+    as C++'s element types do: one plan type, one `fftn_plan_create`, the kind and precision
+    fields unchanged, strides and distances counting reals on a split side as in C++.
+    `FFTN_INTERLEAVED` is 0, so a zeroed shape is interleaved; a value outside the enumeration
+    is refused with `FFTN_ERROR_INVALID_ARGUMENT`, as other C enumerations are, and so is
+    `FFTN_SPLIT` with `FFTN_R2R`. An enumeration rather than an `int` flag leaves room for other
+    layouts and makes stray values refusable. The cost: `fftn_shape` grew a field on
     2026-11-27, which Q21 allows before 1.0, so C callers and FFI mirrors of the struct (ctypes,
     Julia's `ccall`, Fortran's `iso_c_binding`) must be rebuilt or updated, and C++ callers that
-    list every field in a designated initialiser without `split` get GCC's
-    `-Wmissing-field-initializers`. Alternative: three kinds (`FFTN_C2C_SPLIT`, …), the only
-    choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
-    `fftn_kind` having to know them.
+    list every field in a designated initialiser without `layout` get GCC's
+    `-Wmissing-field-initializers`.
   - *The executions.* The four forms with a `_split` suffix, as 6.9 added `_args`; no form takes
     both, since split plans take no edges. A split plan through the other forms, or a plan on
     interleaved data through the `_split` forms, ends the program with a message, as the core's
@@ -1147,7 +1150,8 @@ Points that matter:
     planned by the rules whatever `options.effort` and `options.use` say, as in C++.
     `fftn_plan_describe`, `_workspace_bytes`, `_instruction_set` and `fftn_transforms_of` are
     unchanged. Pipelines have no split form (neither has C++).
-  - *As built*: the block as written. The handle keeps the shape's kind and `split`, so a
+  - *As built*: the block as written. The handle keeps the shape's kind and whether its
+    layout is split, so a
     `_split` execution passes each complex side's `im` as the core's factor pointer and the real
     parts through the slot, as `plan::execute`'s split overloads do (`detail::split_args`), and
     every plan execution checks its form against the flag (`check_layout`, the core's
@@ -1186,8 +1190,15 @@ Points that matter:
     `config.hpp` and `c_api.h`, so Q21's check works from C.
   - *Q20's shared library*: `FFTN_BUILD_C_SHARED` (off) builds `libfftn_c` from `c_api.cpp`
     with the static library inside, exporting `fftn_` only (`FFTN_C_API`, an export list on
-    macOS and a version script on ELF); installed and exported as `fftn::fftn_c`, with no
-    SOVERSION (Q21). A test checks that every C symbol of both libraries starts `fftn_`.
+    macOS and a version script on ELF); installed and exported as `fftn::fftn_c`. A test
+    checks that every C symbol of both libraries starts `fftn_`. Its SOVERSION follows the
+    minor version while FFTN is 0.x (the maintainer, 2026-11-27): `0.<minor>` from the project
+    version, so the soname is `libfftn_c.so.0.<minor>` on ELF and the install name
+    `libfftn_c.0.<minor>.dylib` on macOS, whose compatibility version is the SOVERSION and
+    current version the VERSION, the project's full version; a minor version may change the C
+    API (Q21), and a program never loads another minor version's library. Windows' DLL name is
+    unchanged. The SOVERSION after 0.x is left for 1.0 (the build refuses a major version above
+    0 until it is decided).
   - *Building*: the tests and examples enable C, with the C++ compiler's sibling when `CC` is
     unset (`cmake/FftnCCompiler.cmake`), so that sanitizer runtimes do not mix; a C program
     links the static library with the C++ driver.
@@ -5074,7 +5085,9 @@ Q26 and Q27 wait: no release tag yet. The headers keep "provisional" until step 
     code and message; no thread-local last error.
 20. **A shared library.** Python's ctypes, Julia's `ccall` and some Fortran builds want one.
     Proposal: an opt-in shared library, `fftn_c`, that exports the `fftn_` symbols only; the C++
-    API stays static (section 14.2).
+    API stays static (section 14.2). *Settled 2026-11-27 (the maintainer): its SOVERSION is
+    `0.<minor>` from the project version and its VERSION the full version while FFTN is 0.x
+    (5.9, "As built (step 6.8)").*
 21. **ABI.** Proposal: plain structs, no size or version fields, until 1.0; the version macros
     of `config.hpp` are the check.
 22. **Scope of the first C step.** Proposal: plans of every built kind, workspaces, the four
@@ -5124,7 +5137,10 @@ Q26 and Q27 wait: no release tag yet. The headers keep "provisional" until step 
     (`-Wmissing-field-initializers`). Alternatives: a `fftn_layout` enumeration field (room for
     other layouts, refusable values, the same layout change), or three more `fftn_kind` values,
     the only choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
-    `fftn_kind` knowing them.
+    `fftn_kind` knowing them. *Settled 2026-11-27 (the maintainer): an `fftn_layout`
+    enumeration, `fftn_layout layout` as the last field, `FFTN_INTERLEAVED = 0` (the default)
+    and `FFTN_SPLIT = 1`; other values are refused with a status, as other C enumerations are,
+    and `FFTN_SPLIT` with `FFTN_R2R` stays refused (5.9, "Split complex").*
 30. **The executions.** Proposal: `fftn_execute_split`, `fftn_execute_transforms_split`,
     `fftn_execute_team_split` and `fftn_execute_on_split`, following 6.9's `_args` suffix; no
     `_split_args` forms until split plans take edges.
@@ -5553,6 +5569,7 @@ to change before a release.
 | 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
 | 2026-11-27 | Zen 3's class (x86-64, a private L2 under 1 MiB, at least 2 MiB of L3 per CPU) applies to AMD's processors only (`set_grid_sizes`, section 13.5): X51's tops of 4, X59's fair runs, X62's Bluestein limit and whole-line stages, X60's and X63's packed c2r intermediate, X72's depth-first half lengths and X73's anchored runs now read `machine_profile::vendor`, as X65's, X67's and X85's rules on the class already did. Another vendor's cores with those caches, unknown included, keep the large-L3 branch's fields (X29, X32, X36, X43, X57) and the defaults of the class's; Apple's and the Xeon 6240's halves of the shared fields stand. Not a performance change: every AMD recording (the EPYC 7763, the Zen 2 VM, now in the tests, and Zen 5) and every other recording keeps its whole profile, field for field | The maintainer's decision, applying the policy of 2026-11-25 ("a rule measured on only one vendor is keyed to that vendor") to the older Zen 3 rules: every one was measured on AMD's cores only (the EPYC 7763; Zen 2 in X64's and X81's screens), and an Intel core with a private L2 under 1 MiB and that much L3 per CPU (a four-core client part, a small VM) matches the cache key. The large-L3 branch stays unkeyed: it also reaches the recorded Ice Lake VM and the Axion VM, so keying it would change measured machines' plans |
+| 2026-11-27 | Two C API changes (section 5.9; the maintainer's decisions): `fftn_shape`'s last field is `fftn_layout layout` (`FFTN_INTERLEAVED = 0`, the default, and `FFTN_SPLIT = 1`; other values and `FFTN_SPLIT` with `FFTN_R2R` refused with `FFTN_ERROR_INVALID_ARGUMENT`) in place of `int split` (18.2 Q29, settled); the shared library `fftn_c` has the SOVERSION `0.<minor>` from the project version and its full version as VERSION while FFTN is 0.x (Q20) | An enumeration leaves room for other layouts and refuses stray values, as the C API's other enumerations do, at the same cost as the flag (the field was added the same day). A minor version may change the C API before 1.0 (Q21), so a program built against one minor version must not load another's library: the soname, and macOS's compatibility version, change with the minor version |
 | 2026-11-27 | `fftn::kokkos::array_of` (task 5.5, section 5.5, "As built"; 18.2 "Pipelines" 10 settled by the maintainer as proposed): `array_of(in, out)` and `array_of(in, out, halved)` return `std::array<axis, rank>`, one axis per View dimension with the extents (the real side's on the halved dimension) and the Views' strides; c2c, r2c, c2r and real pairs; the halved dimension the last unless named, a named one refused at compile time for c2c and real pairs; `shape_of`'s per-dimension checks shared, every zero extent now refused before any stride; a stride of 0 at extent 1 given as 1; no address checks | The maintainer accepted the proposal on 2026-11-27. Two overloads rather than one default argument, because a default `-1` cannot be told from an explicit one and a c2c pair must not take it; the kind is a type property, so its refusal is a compile-time one like the adapter's other type checks. Explicit strides, because 0 means the tight default to `axes_*` and pipelines |
 
 ---
