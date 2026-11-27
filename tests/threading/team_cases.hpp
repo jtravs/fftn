@@ -527,22 +527,10 @@ void add_cases(std::vector<team_case>& out, const fftn::detail::build_settings& 
   team.profile.column_near_tile_bytes = 0;
   out.push_back(make_case("c2c_planes_team_chain_256x20x1" + suffix,
                           fftn::planes_c2c<T>(256, 20, 1, bwd), 5120, 5120, false, team, target));
-  // Experiment X85 (core/r2r.cpp): real-to-real planes and a volume whose strided axes run as
-  // lanes over blocks of adjacent lines (machine_profile::r2r_lanes_columns), with a narrower
-  // block left over, and DCT-I and DST-I of odd lengths on the folded route (r2r_folded_max),
-  // whose store stage is one unit.
+  // Experiment X85 (core/r2r.cpp): DCT-I and DST-I of odd lengths on the folded route
+  // (machine_profile::r2r_folded_max), whose store stage is one unit, rows and a plane.
   fftn::detail::build_settings r2r = settings;
-  r2r.profile.r2r_lanes_columns = true;
   r2r.profile.r2r_folded_max = 1025;
-  out.push_back(make_case("r2r_dct2_planes_20x13x2" + suffix,
-                          fftn::planes_r2r<T>(20, 13, 2, fftn::r2r_kind::dct2), 520, 520, false,
-                          r2r, target));
-  fftn::shape<T, T> r2r_volume;
-  r2r_volume.axes = {{.n = 6}, {.n = 8}, {.n = 11}};
-  r2r_volume.kinds = {fftn::r2r_kind::dct3, fftn::r2r_kind::dht, fftn::r2r_kind::dst4};
-  r2r_volume.batches = {{.count = 2}};
-  out.push_back(
-      make_case("r2r_volume_inplace_6x8x11x2" + suffix, r2r_volume, 1056, 1056, true, r2r, target));
   out.push_back(make_case("r2r_dct1_folded_65x3" + suffix,
                           fftn::rows_r2r<T>(65, 3, fftn::r2r_kind::dct1), 195, 195, false, r2r,
                           target));

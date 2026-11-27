@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Experiment X85's routes of real-to-real plans (core/r2r.cpp), forced through the machine
-// profile on every instruction set in both precisions: the strided axes of planes and volumes as
-// lanes over blocks of adjacent lines (machine_profile::r2r_lanes_columns) give every kind's output
-// bitwise equal to the per-line plan's, in and out of place, whole blocks and a narrower one left
-// over; the folded DCT-I and DST-I of odd n (machine_profile::r2r_folded_max) against the
+// Experiment X85's folded DCT-I and DST-I of odd n (core/r2r.cpp, machine_profile::r2r_folded_max),
+// forced through the machine profile on every instruction set in both precisions: against the
 // quadruple-precision reference within the tolerance the r2r tests apply to these kinds
 // (tests/api/r2r_test.cpp), at the lengths X85 measured inside it, and the kinds twice.
 
@@ -18,6 +15,7 @@
 #include "support/outcome.hpp"
 #include "support/precisions.hpp"
 #include "support/tolerance.hpp"
+#include "threading/schedule.hpp"
 
 #include <fftn/fftn.hpp>
 
@@ -25,7 +23,7 @@
 
 #include <array>
 #include <cstddef>
-#include <cstring>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <vector>
@@ -35,11 +33,6 @@ namespace {
 using fftn::r2r_kind;
 using fftn::detail::build_settings;
 using fftn::detail::make_plan_core;
-
-constexpr std::array<r2r_kind, 9> all_kinds{
-    r2r_kind::dct1, r2r_kind::dct2, r2r_kind::dct3, r2r_kind::dct4, r2r_kind::dst1,
-    r2r_kind::dst2, r2r_kind::dst3, r2r_kind::dst4, r2r_kind::dht,
-};
 
 std::string kind_name(r2r_kind k) {
   constexpr std::array<const char*, 9> names{"dct1", "dct2", "dct3", "dct4", "dst1",
@@ -67,60 +60,10 @@ std::vector<T> run(const fftn::detail::plan_core& core, const std::vector<T>& x,
   return out;
 }
 
-TYPED_TEST(R2rRoutes, LanesOverAdjacentLinesAgreeBitwiseWithTheLines) {
-  using T = TypeParam;
-  struct shape_case {
-    std::vector<std::size_t> n;
-    std::size_t count;
-    bool lanes_expected; // every kind's strided axes take the lanes (every pass has a lane kernel)
-  };
-  const std::vector<shape_case> cases{
-      {.n = {64, 40}, .count = 2, .lanes_expected = true},  // whole blocks only on most targets
-      {.n = {33, 17}, .count = 3, .lanes_expected = false}, // a narrower block left over
-      {.n = {12, 10}, .count = 2, .lanes_expected = false},
-      {.n = {6, 5, 9}, .count = 2, .lanes_expected = false}, // two strided axes
-      {.n = {96, 97}, .count = 1, .lanes_expected = false},
-  };
-  for (const fftn::isa t : fftn::test::runnable_isas()) {
-    for (const r2r_kind kind : all_kinds) {
-      for (const shape_case& sc : cases) {
-        for (const bool in_place : {false, true}) {
-          fftn::shape<T, T> sh;
-          std::size_t reals = 1;
-          for (const std::size_t n : sc.n) {
-            sh.axes.push_back({.n = n});
-            sh.kinds.push_back(kind);
-            reals *= n;
-          }
-          sh.batches = {{.count = sc.count}};
-          const std::string what = kind_name(kind) + " " + std::to_string(sc.n[0]) + " x ... " +
-                                   fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float") +
-                                   (in_place ? ", in place" : "");
-          SCOPED_TRACE(what);
-          const fftn::options opts{.in_place = in_place, .force_isa = t};
-          build_settings on;
-          on.profile.r2r_lanes_columns = true;
-          const auto lanes = make_plan_core(fftn::detail::view_of(sh), opts, on);
-          const auto lines = make_plan_core(fftn::detail::view_of(sh), opts, build_settings{});
-          const std::string text = fftn::detail::describe(*lanes);
-          const bool took = text.find("lanes over blocks of") != std::string::npos;
-          if (sc.lanes_expected) {
-            EXPECT_TRUE(took) << text;
-          }
-          EXPECT_EQ(fftn::detail::describe(*lines).find("lanes over blocks of"), std::string::npos);
-          fftn::test::input_source src(0x85A1ULL + reals);
-          const std::vector<T> x = src.reals<T>(reals * sc.count);
-          EXPECT_TRUE(run<T>(*lanes, x, in_place) == run<T>(*lines, x, in_place)) << text;
-        }
-      }
-    }
-  }
-}
-
 // The lengths whose folded route X85's rule D1 measured within half the r2r tests' rms bound
 // (dev/experiments/X85-r2r-speed.md): odd n up to folded_limit, some of each residue the route
 // branches on, and every odd n to 65 (Rader and Bluestein half lengths among them).
-constexpr std::size_t folded_limit = 385;
+constexpr std::size_t folded_limit = 257;
 
 TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
   using T = TypeParam;

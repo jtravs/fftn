@@ -111,8 +111,6 @@
 //                    the build setting behind it were deleted by its rule 4)
 //   R2R_FOLDED_MAX=N   the profile's r2r_folded_max: odd DCT-I and DST-I axes up to N points take
 //                    the folded route (X85's arm D; 0: the extensions; at most 65535)
-//   R2R_LANES_COLUMNS=0|1   the profile's r2r_lanes_columns: real-to-real planes' and volumes'
-//                    strided axes as lanes over blocks of adjacent lines (X85's arm L)
 //   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
 //                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
 //                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
@@ -1980,13 +1978,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.profile.r2r_folded_max = static_cast<std::uint16_t>(*v);
-      overrides.str(key, value);
-    } else if (key == "R2R_LANES_COLUMNS") {
-      if (value != "0" && value != "1") {
-        say(message, message_size, "R2R_LANES_COLUMNS is 0 or 1");
-        return fbench_error;
-      }
-      s.settings.profile.r2r_lanes_columns = value == "1";
       overrides.str(key, value);
     } else if (key == "PIPELINE") {
       if (value != "fused" && value != "separate") {
