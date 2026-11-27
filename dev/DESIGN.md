@@ -888,8 +888,8 @@ Points that matter:
   last, as the r2c pairing is fused (9.1), is still open: X85 drafted it (arm F) without
   building it, as it needs new pass kinds per route in the generator.
 - **As built (step 6.12, experiment X85; src/core/r2r.cpp).** *The folded DCT-I and DST-I*: an
-  odd axis of n ≤ `machine_profile::r2r_folded_max` points (DCT-I from 33: its single rows of 5–17
-  points took 0.88–1.09 of the extension's time from one run to the next), in a plan without accumulation, runs
+  odd axis of n ≤ `machine_profile::r2r_folded_max` points (DCT-I from 33: at 5 points it was slower in every run, 1.04–1.08 of the extension's time,
+  and single rows of 9–17 points swung between 0.875 and 1.093 from run to run), in a plan without accumulation, runs
   the real DFT R of N = n ∓ 1 points instead of the extension of 2N (Numerical Recipes' cosft1
   and sinft): with the line's points X_0 … X_N (DST-I: zeros around the line), u_j and v_j their
   sums and differences about the middle and s_j = sin(πj/N), the read stage packs
@@ -903,12 +903,16 @@ Points that matter:
   7763 (0.64–0.97), none slower. The odd outputs
   are running sums, so the error grows like √n: inside half the r2r tests' rms bound up to 257 points
   (`avx2`, both precisions), but the tests' largest error of the kind twice fails at 251–261 points
-  on some inputs (lesson 4.32). The limit is 129 on Zen 3's class (AMD's cores, X85, adopted under
+  on some inputs (lesson 4.33). The limit is 129 on Zen 3's class (AMD's cores, X85, adopted under
   the narrowing clause), 0 (the extensions) elsewhere: on the Xeon 6240's class DCT-I of 45 and
-  65 points lost (X85's rule D2), and other classes are unmeasured.
+  65 points lost (X85's rule D2), and other classes are unmeasured.The rule is keyed by the machine
+  (`machine_profile::r2r_folded_isa`, the processor's best target, as `pipeline_lanes_isa`), so
+  every target of a Zen 3 machine takes it alike and a VM that hides AVX2 does not reach it. Far past
+  the limit the route fails even fbench's looser check (DST-I of 16385 points in float, X85's Xeon run
+  at `R2R_FOLDED_MAX=65535`): one reason the field is capped low.
   *Lanes over adjacent lines (arm L), deleted*: the strided axis of a plane as blocks of adjacent
-  lines (each line's read stage into a tile, the lanes chain, each line's store stage) took 1.021 of
-  the per-line plans' time on the EPYC (100 of 270 planes and volumes slower, up to 1.16), and on
+  lines (each line's read stage into a tile, the lanes chain, each line's store stage) took 1.022 of
+  the per-line plans' time on the EPYC (106 of 270 planes and volumes slower, up to 1.18), and on
   `avx2` the lanes chain's bits differ from the scratch chain's at line lengths 32 and 48.
   *Standing* (Q15): see X85's file.
 
@@ -5474,9 +5478,9 @@ to change before a release.
 | 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
 | 2026-11-27 | Experiment X68 (task 5.3h, section 12.5, "As measured"): fbench's `STAGE` option (today's route, the three objects, the factor variant, the slab grouping, one sweep), catalogue `x68`, the DRAM traffic campaign; no library change | X68's rules on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): 5.3's acceptance not met (O/T at 384² at full width 2.59 and 1.89; 1.32 with two components on the EPYC), the planes over a stride-1 batch about 5 times the tight planes' time (lead 1, for the maintainer); the multi-axis pipeline proposed by rule 4 (G/O 0.305 and 0.519), behind lead 1, not built |
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
+| 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
 
 ---
-| 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.021, up to 1.16) with the per-line stages still scalar, and their bits differ on `avx2` |
 
 ## 20. References
 

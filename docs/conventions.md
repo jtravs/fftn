@@ -677,7 +677,10 @@ bins of an r2c (a complex transform of n/2, or of n for odd n); DCT-II reorders 
 of a c2r and reads the result back from Makhoul's order; DCT-IV pairs and twiddles the line for
 a complex transform of n/2 (odd n: a zero-padded complex transform of 2n, about four times the
 work); DCT-I and DST-I take the r2c of the line's even or odd extension, of 2(n − 1) or 2(n + 1)
-reals (about twice the work of the kinds II and III); the sine kinds are the cosine ones with
+reals (about twice the work of the kinds II and III); on some machines, short odd lines (up to a
+limit the machine's profile sets, 129 points on AMD's Zen 3 class; DCT-I from 33) take a folded
+route instead, the r2c of n ∓ 1 reals with half the outputs as running sums of the spectrum, half
+the work but with an error that grows like √n, which is why it stops short; the sine kinds are the cosine ones with
 alternating signs and reversals. `plan::describe()` names each axis's route. An axis of one point
 is the identity for `dht`, `dct3` and `dst3`, doubles for `dct2`, `dst2` and `dst1`
 (Y_0 = 2 x_0), and multiplies by √2 for `dct4` and `dst4`; these factors join the scales, so the

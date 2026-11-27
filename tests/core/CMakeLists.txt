@@ -8,9 +8,9 @@
 # chain builder's narrow and pair leaf tables on every target (X28, X28b); the lanes column
 # phase of planes and volumes (X40); volumes plane at a time and their scratch bound (task
 # 4.2); the depth-first chain (X46) and Bluestein convolutions on it (X50); the batch leaves
-# (X53); the rules measured on one vendor's processors (DESIGN.md 13.5); the real-to-real routes
-# of X85 (lanes over adjacent lines, the folded DCT-I and DST-I). The quadruple-precision
-# reference makes the checks heavy, so the tests are optimised in every build type.
+# (X53); the rules measured on one vendor's processors (DESIGN.md 13.5); X85's folded DCT-I and
+# DST-I. The quadruple-precision reference makes the checks heavy, so the tests are optimised in
+# every build type.
 
 fftn_add_test(fftn_core_tests SOURCES core_test.cpp passes_test.cpp grid_test.cpp
   real_test.cpp lanes_test.cpp tails_test.cpp planning_test.cpp chain_test.cpp columns_test.cpp

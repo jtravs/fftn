@@ -1175,7 +1175,8 @@ would win; only the profile said where it lost. [X68](experiments/X68-free-space
 short lines.** The DCT-I and DST-I of odd n by a real DFT of n ∓ 1 points (Numerical Recipes'
 cosft1 and sinft; FFTW's documentation calls its REDFT00 by an r2hc of n − 1 less accurate) halve
 the chain of the even and odd extensions and took 0.78–0.79 of their time on the EPYC over the cases
-up to 129 or 257 points (DCT-I single rows below 33 points swung between 0.88 and 1.09 from run to run, so
+up to 129 or 257 points (DCT-I of 5 points lost in every run, 1.04–1.08, and single rows of 9–17 points swung
+between 0.875 and 1.093 from run to run, so
 they were left out), 0.57–0.82 beyond. But half its outputs are prefix sums of the spectrum, whose rounding
 errors add: the relative RMS error grows like √n (Mac and EPYC: 1e-16 at 5 points, 2e-15 at 1025,
 1.5e-14 at 49153 in double, where the extensions stay at 1–3e-16), against an FFT's √log n. The RMS
@@ -1190,7 +1191,7 @@ metrics, on round trips and on many inputs, and expect a length limit, not a yes
 batches too.** Real-to-real planes whose strided axis ran as lanes over blocks of adjacent lines
 (the read stage of each line into a tile, the chain as lanes passes, the store stage of each line
 back), with the read and store stages still scalar per line, took 1.022 of the per-line plans'
-time over 270 planes and volumes on the EPYC (106 slower, up to 1.16; 29 faster): the scalar
+time over 270 planes and volumes on the EPYC (106 slower, up to 1.18; 29 faster): the scalar
 stages and the tile's strided writes cost what the shared chain saved. And a runtime stride added
 to those scalar stages' scratch indexing (1 in every per-line plan) cost 5–15 % on small planes
 by itself against the base commit (76 of 340 cases past the band; not diagnosed further, the stride was

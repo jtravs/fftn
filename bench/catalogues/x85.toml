@@ -3,8 +3,9 @@
 #
 # Experiment X85 (dev/experiments/X85-r2r-speed.md, task 6.12): real-to-real speed. Groups d-*
 # are arm D's targets (DCT-I and DST-I of odd lengths, the folded route: fbench option
-# R2R_FOLDED_MAX), groups l-* arm L's (planes and volumes, whose strided axes run as lanes over
-# blocks of adjacent lines: R2R_LANES_COLUMNS=1). Format in bench/README.md; weights are equal.
+# R2R_FOLDED_MAX), groups l-* arm L's (planes and volumes, whose strided axes ran as lanes over
+# blocks of adjacent lines under the option R2R_LANES_COLUMNS=1; arm L was rejected and deleted,
+# 363ed5aa, so the groups now serve as collateral cases). Format in bench/README.md; weights are equal.
 
 [catalogue]
 name = "x85"

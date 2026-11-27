@@ -1094,12 +1094,19 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     std::size_t m = even ? n / 2 : n;
     // The folded routes of DCT-I and DST-I (X85's arm D): odd n up to the profile's limit, without
     // accumulation (DCT-I's v_0 waits in the output's place of Y_1). A real DFT of n -+ 1 points:
-    // a complex chain of half that. DCT-I from 33 points only: its single rows of 5 to 17 points,
-    // whose extensions are a leaf or a short chain, took 0.88-1.09 of the extension's time from
-    // one EPYC 7763 run to the next (the folded DCT-I's extra stage for v_0 and its one-unit store
-    // weigh on so short a line), from 33 points 0.84-0.92 in every run (X85's narrowings).
+    // a complex chain of half that. DCT-I from 33 points only (X85's narrowings, EPYC 7763): at 5
+    // points, whose extension is one leaf of 4, it was slower in every run (1.04-1.08 of the
+    // extension's time: the folded DCT-I's extra stage for v_0 and its one-unit store weigh on so
+    // short a line); single rows of 9-17 points swung between 0.875 and 1.093 from run to run; from
+    // 33 points it took 0.84-0.92 in every run.
     constexpr std::size_t folded_dct1_min = 33;
-    const bool folded = extension && !even && !e.out.accumulate &&
+    // The limit is the machine's (machine_profile::r2r_folded_isa: the processor's best target,
+    // not the plan's), so every target of a machine takes the route alike.
+    const fftn::isa folded_isa = settings.profile.r2r_folded_isa;
+    const bool folded_machine =
+        folded_isa == fftn::isa::best || static_cast<unsigned char>(folded_isa) ==
+                                             static_cast<unsigned char>(plan_target_of(options{}));
+    const bool folded = extension && !even && !e.out.accumulate && folded_machine &&
                         n <= static_cast<std::size_t>(settings.profile.r2r_folded_max) &&
                         (rt != route::dct1 || n >= folded_dct1_min);
     if (fourth && !even) {

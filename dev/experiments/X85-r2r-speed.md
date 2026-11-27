@@ -136,18 +136,20 @@ keyed to that vendor's class; plans outside a rule's reach stay as they were):
 ## Results
 
 **Judging run, EPYC 7763** (20261127-070028-304b; DMOG node17 shared, every round loaded, load
-average 44–60 of 128; GCC 16.2, `avx2`; band ±1.73 %; commit 0a1e55a1; arms A, A~, B = c2a6f672,
+average 44–60 of 128; GCC 16.2, `avx2`; 9 rounds stored (stopped by the author once the verdicts
+were settled), band ±1.26 %; commit 0a1e55a1; arms A, A~, B = c2a6f672,
 D = `R2R_FOLDED_MAX=65535`, L = `R2R_LANES_COLUMNS=1`):
 
 - **D:** over the 46 `d-*` cases with every axis odd and at most 257 points (N_acc below), D ÷ A
-  0.787; all faster but DCT-I of 5 points, 1.041 [1.023, 1.043], past the band by 0.6 %, a near
+  0.787; all faster but DCT-I of 5 points, 1.042 [1.023, 1.044], past the band by 1.0 %, a near
   miss. Above 257 (not judged: outside N_acc) 0.57–0.82.
-- **L:** over the 270 planes and volumes L ÷ A 1.021, 100 slower (DCT-IV 384² 1.16, DCT-II 256² in
-  place 1.10, the DHT of 1024² in place 1.09), 27 faster: rule L1 fails. Rule L2 fails too: on
+- **L:** over the 270 planes and volumes L ÷ A 1.022, 106 slower (up to 1.18), 29 faster: rule L1
+  fails. Rule L2 fails too: on
   `avx2` the lanes chain gives other bits than the line's scratch chain at line lengths 32 and 48
   (test run below; scalar, `x86_v2` and `avx` agree bitwise).
-- **C:** B ÷ A geometric mean 0.990, 68 cases where the base was faster beyond the band (small
-  planes 0.85–0.95): the read and store stages' scratch stride, added for L only, costs.
+- **C:** B ÷ A geometric mean 0.991, 76 cases where the base was faster beyond the band (0.86–0.98,
+  small planes most) and 31 where it was slower: the read and store stages' scratch stride, added
+  for L only, costs.
 
 **Accuracy (rule D1), EPYC `avx2`** (DMOG job 520982, `bench/x85/accuracy.py`): folded, the
 largest swept n with every swept n up to it within half the bound is **257**; the first miss is
@@ -170,18 +172,21 @@ re-run here and this run decides it); every case the setting does not move (abov
 volumes of other kinds) on its old plan and not slower beyond the band; rule C on every case
 (B ÷ A).
 
-**Deciding run, EPYC** (20261127-072527-8c75, stopped after 6 rounds; node17 shared, loaded,
-load average 34; band ±1.60 %; final code 363ed5aa): D = `R2R_FOLDED_MAX=257` over the 46 target
-cases 0.793, but DCT-I of 5 points 1.078 [1.076, 1.108] of A: the near miss is confirmed and rule
-D2's second clause fails on that one case (DCT-I of 9: 0.977 [0.949, 0.985]; DST-I of 5 0.918). No
-case outside the targets moved (D ÷ A 0.998 over the other 294, none slower beyond the band). Rule
-C (B = c2a6f672 ÷ A): 15 cases where the base was faster beyond the band (0.92–0.98: DCT-I rows of
-33–129 points on the extension, which A runs with the same plans) and 15 where it was slower
-(1.03–1.25: DST-II planes of 16–128 points), with the same plans (describe identical) in both
-directions: the TU's code moved (the folded kernels added to src/core/r2r.cpp), not the stages.
+**Deciding run, EPYC** (20261127-072527-8c75, stopped by the author; 7 valid rounds stored;
+node17 shared, loaded, load average 34; band ±1.44 %; final code 363ed5aa): D =
+`R2R_FOLDED_MAX=257` over the 46 target cases 0.793, but DCT-I of 5 points 1.077 [1.075, 1.089]
+of A: the near miss is confirmed and rule D2's second clause fails on that one case (DCT-I of 9:
+0.972 [0.956, 0.983]; DST-I of 5 0.920). No case outside the targets moved (D ÷ A 0.999 over the
+other 294, none slower beyond the band). Rule C (B = c2a6f672 ÷ A): 22 cases where the base was
+faster beyond the band (0.92–0.98: DCT-I rows of 33–129 points on the extension, which A runs with
+the same plans) and 20 where it was slower (1.02–1.26: DST-II planes of 16–128 points), with the
+same plans (describe identical) in both directions: the TU's code moved (the folded kernels added
+to src/core/r2r.cpp), not the stages. (The figures first written here, band ±1.60 %, DCT-I 5
+1.078 and 15/15 cases, were read from the run at 6 rounds; these are the stored run's.)
 
 **Narrowing (AGENTS.md section 6, commit a997ebb8):** DCT-I takes the folded route from 9 points
-only (its extension of 5 points is one leaf of 4, which the folded route's extra stage outweighs).
+only (its extension of 5 points is one leaf of 4, which the folded route's extra stage outweighs:
+1.04–1.08 in both runs).
 **Narrowed deciding run, EPYC (declared before it starts):** code a997ebb8, arms A, D =
 `R2R_FOLDED_MAX=257`, catalogue `x85`: every excluded case (DCT-I of 5) on its old plan (notes
 identical to A's), and no case D moves (odd DCT-I from 9 and odd DST-I up to 257) slower than A
@@ -191,7 +196,7 @@ beyond the band; the geometric mean over the moved cases is reported against D2'
 average 34; band ±1.48 %; code a997ebb8): DCT-I of 5 on its old plan in both arms, as declared,
 but read 1.032 [0.999, 1.078]; the moved cases 0.802 over 46, yet DCT-I single rows of 9 and 17
 points at 1.093 [1.077, 1.124] and 1.073 [1.052, 1.078], where the two runs before had them at
-0.88–0.98: the narrowed change fails its deciding run. Single DCT-I rows below 33 points swing by
+0.875–0.97: the narrowed change fails its deciding run. Single DCT-I rows below 33 points swing by
 about 10 % from one run to the next on this node; from 33 points DCT-I took 0.84–0.92 in all three
 runs, DST-I 0.62–0.93 at every length, batches and planes 0.70–0.95. Cases above 257 kept their
 plans (0.99–1.01).
@@ -232,7 +237,7 @@ on the same plan and binary in both arms: noise, not the change. DMOG's full cte
 profile folding): **3743 of 3743 pass**. **It passes.**
 
 **Judging run, Xeon 6240** (20261127-081910-ebcf; Slurm 17561 in the `fbench-serial` chain, 7 of 12
-rounds loaded, a lupercal job of 8 CPUs beside it; GCC 14.4, `avx512`; band ±1.67 %; code a997ebb8,
+rounds loaded, another job of 8 CPUs beside it; GCC 14.4, `avx512`; band ±1.67 %; code a997ebb8,
 so DCT-I folds from 9 there; arms A, B = c2a6f672, D = `R2R_FOLDED_MAX=65535`, F = FFTW 3.3.11
 (`sse2-avx-avx2-avx2_128-avx512`), P = pocketfft (`-march=native`)):
 
@@ -267,7 +272,9 @@ DCT-III, DST-III and the DHT; planes 0.56 (kinds I), 0.91 (IV), 1.29–1.72 (II,
   clause** (44363fa6): `machine_profile::r2r_folded_max` = 129 there, DCT-I from 33 points (a
   constant in core/r2r.cpp, for every class). Rule D1's rms sweep allowed 257, its tests' clause
   only about 250 (the largest error of the kind twice), so 129; rule D2 passed on the final code
-  (0.794 over the 35 cases it moves, none slower). Every other class keeps 0 (the extensions)
+  (0.794 over the 35 cases it moves, none slower). The rule is keyed by the machine
+  (`machine_profile::r2r_folded_isa` = `avx2`, the processor's best target, added after the second
+  read): every target of a Zen 3 machine takes it alike, and a VM that hides AVX2 does not reach it. Every other class keeps 0 (the extensions)
   until measured: on the Xeon 6240's class rule D2 failed (DCT-I of 45 and 65 points), Apple's waits
   for the daytime Mac leg. For
   the maintainer's veto: the three narrowings (DCT-I below 9, then below 33, on evidence that DCT-I
@@ -282,7 +289,7 @@ DCT-III, DST-III and the DHT; planes 0.56 (kinds I), 0.91 (IV), 1.29–1.72 (II,
   tail limit, planes and volumes of the kinds II, III and the DHT 1.3–3.1; on the Xeon's `x85` cases
   FFTN beats FFTW (1.319) but pocketfft takes 0.56 of FFTN's time on planes and volumes. Multi-axis
   r2r is the gap; rows of the kinds I, II and IV are well ahead.
-- Lessons 4.32 (running sums cost accuracy as √n) and 4.33 (lanes with scalar per-line stages).
+- Lessons 4.33 (running sums cost accuracy as √n) and 4.34 (lanes with scalar per-line stages).
 - Follow-ups: r2r planes and volumes as lanes over lines with the read and store stages vectorised
   across the lanes (pocketfft's 0.39–0.74 on the Xeon); the DCT-III/DST-III route (its read stage
   pairs and twiddles, its store stage undoes Makhoul's order, both scalar); arm F; a DST-I-only key on

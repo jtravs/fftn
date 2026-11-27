@@ -797,6 +797,8 @@ TEST(Schedule, GridSizesFromCaches) {
   // the extensions everywhere else.
   EXPECT_EQ(machine_profile{}.r2r_folded_max, 0U);
   EXPECT_EQ(epyc86.r2r_folded_max, 129U);
+  EXPECT_EQ(epyc86.r2r_folded_isa, fftn::isa::avx2);
+  EXPECT_EQ(machine_profile{}.r2r_folded_isa, fftn::isa::best);
   for (const auto v : {fftn::detail::cpu_vendor::intel, fftn::detail::cpu_vendor::unknown}) {
     EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs", v).r2r_folded_max, 0U);
   }

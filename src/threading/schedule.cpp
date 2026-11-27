@@ -235,14 +235,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   }
   // X85's arm D (machine_profile::r2r_folded_max): odd DCT-I (from 33 points, core/r2r.cpp) and
   // DST-I up to 129 points take the folded route on Zen 3's class (AMD's cores; the EPYC 7763,
-  // `avx2`). The route's odd outputs are running sums, its error grows like sqrt n: rule D1's rms
-  // sweep stayed inside half the r2r tests' bound to 257 points, but the tests' largest error of
-  // the kind twice failed at 251 on avx2 (tests/api/r2r_test.cpp, DST-I) and from 261 on the
-  // baseline targets, so the limit is 129, where that ratio is about three quarters of its 251
-  // value. Over the 35 cases it moves the route took 0.794 of the extensions' time, none slower
-  // (the deciding run 20261127-083621-be45).
+  // measured on `avx2`), a rule keyed by the machine (r2r_folded_isa: its best target), so that
+  // every target of such a machine takes it alike. The route's odd outputs are running sums, its
+  // error grows like sqrt n: rule D1's rms sweep stayed inside half the r2r tests' bound to 257
+  // points, but the tests' largest error of the kind twice failed at 251 on avx2
+  // (tests/api/r2r_test.cpp, DST-I) and from 261 on the baseline targets, so the limit is 129,
+  // where that ratio is about three quarters of its 251 value. Over the 35 cases it moves the
+  // route took 0.794 of the extensions' time, none slower (the deciding run
+  // 20261127-083621-be45).
   if (zen3_like && p.vendor == cpu_vendor::amd) {
     p.r2r_folded_max = 129;
+    p.r2r_folded_isa = fftn::isa::avx2;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;

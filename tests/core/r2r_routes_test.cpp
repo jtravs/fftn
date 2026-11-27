@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -85,16 +86,9 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
         }
         const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
                                  fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
-        fftn::test::input_source src(0xF01DULL + n);
-        const std::vector<double> xd = src.reals<double>(n);
-        const std::array<fftn::test::reference::r2r_type, 1> type{
-            static_cast<fftn::test::reference::r2r_type>(kind)};
-        const std::array<std::size_t, 1> extents{n};
-        const std::vector<fftn::test::exact_real> want =
-            against_reference(n) ? fftn::test::reference::r2r(type, extents, xd)
-                                 : std::vector<fftn::test::exact_real>{};
         build_settings folded;
         folded.profile.r2r_folded_max = static_cast<std::uint16_t>(folded_limit);
+        folded.profile.r2r_folded_isa = fftn::isa::best; // the host's profile may key it
         const fftn::shape<T, T> sh = fftn::rows_r2r<T>(n, 1, kind);
         const auto core = make_plan_core(fftn::detail::view_of(sh), {.force_isa = t}, folded);
         const std::string text = fftn::detail::describe(*core);
@@ -102,25 +96,50 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
           o.fail(what + ": not on the folded route:\n" + text);
           continue;
         }
-        const std::vector<T> x(xd.begin(), xd.end());
-        const std::vector<T> y = run<T>(*core, x, false);
+        // The inputs: one random line at every length; at the limit's neighbours, where the
+        // margin is smallest (X85: about 1.3 times on avx2), three more seeds, a constant and an
+        // alternating line too (each exact in float).
+        std::vector<std::pair<std::string, std::vector<double>>> inputs;
+        inputs.emplace_back("", fftn::test::input_source(0xF01DULL + n).reals<double>(n));
+        if (n + 2 >= folded_limit) {
+          for (const std::uint64_t seed : {0xA1ULL, 0xB2ULL, 0xC3ULL}) {
+            inputs.emplace_back(", seed " + std::to_string(seed),
+                                fftn::test::input_source(seed + n).reals<double>(n));
+          }
+          inputs.emplace_back(", constant", std::vector<double>(n, 1.0));
+          std::vector<double> alternating(n);
+          for (std::size_t j = 0; j < n; ++j) {
+            alternating[j] = j % 2 == 0 ? 1.0 : -1.0;
+          }
+          inputs.emplace_back(", alternating", std::move(alternating));
+        }
         // The r2r tests' tolerance for these kinds: the underlying transform of N = 2(n -+ 1)
         // points, a rounding per stage operation (10) and the input's (1).
         const std::size_t big = kind == r2r_kind::dct1 ? 2 * (n - 1) : 2 * (n + 1);
         const fftn::test::tolerance tol =
             fftn::test::derived_tolerance<T>(big, fftn::test::fftn_bound(big)) +
             fftn::test::input_rounding<T>() * 11.0;
-        if (!want.empty()) {
-          o.within(fftn::test::compare<T>(std::span<const T>(y), want), tol, what);
+        for (const auto& [label, xd] : inputs) {
+          const std::array<fftn::test::reference::r2r_type, 1> type{
+              static_cast<fftn::test::reference::r2r_type>(kind)};
+          const std::array<std::size_t, 1> extents{n};
+          const std::vector<T> x(xd.begin(), xd.end());
+          const std::vector<T> y = run<T>(*core, x, false);
+          if (against_reference(n) || !label.empty()) {
+            o.within(fftn::test::compare<T>(std::span<const T>(y),
+                                            fftn::test::reference::r2r(type, extents, xd)),
+                     tol, what + label);
+          }
+          // The kind twice: N times the input, within two transforms.
+          const std::vector<T> back = run<T>(*core, y, false);
+          std::vector<fftn::test::exact_real> scaled(n);
+          for (std::size_t j = 0; j < n; ++j) {
+            scaled[j] =
+                fftn::test::exact_from(static_cast<double>(x[j]) * static_cast<double>(big));
+          }
+          o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0,
+                   what + label + ", twice");
         }
-        // The kind twice: N times the input, within two transforms.
-        const std::vector<T> back = run<T>(*core, y, false);
-        std::vector<fftn::test::exact_real> scaled(n);
-        for (std::size_t j = 0; j < n; ++j) {
-          scaled[j] = fftn::test::exact_from(static_cast<double>(x[j]) * static_cast<double>(big));
-        }
-        o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0,
-                 what + ", twice");
       }
     }
   }
@@ -214,6 +233,7 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
       const fftn::options opts{.in_place = lc.in_place, .scale = lc.scale, .force_isa = t};
       build_settings folded;
       folded.profile.r2r_folded_max = 65535;
+      folded.profile.r2r_folded_isa = fftn::isa::best; // the host's profile may key it
       const auto make = [&](const build_settings& s) {
         return lc.factors ? fftn::detail::make_plan_core_with_edges(fftn::detail::view_of(sh), opts,
                                                                     fftn::detail::view_of(e), s)
@@ -266,9 +286,40 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
 // Accumulation keeps the extension (the folded DCT-I parks v_0 in the output), and so do even
 // lengths, DCT-I below 33 points and lengths above the limit; the plans without the switches are
 // main's.
+// The limit Zen 3's class sets (129, src/threading/schedule.cpp): 129 folds and 131 does not, for
+// DCT-I and DST-I, in double and float.
+TEST(R2rRoutes, FoldedRouteStopsAtTheProfileLimit) {
+  build_settings zen3;
+  zen3.profile.r2r_folded_max = 129;
+  zen3.profile.r2r_folded_isa = fftn::isa::best;
+  const auto folds = [&](auto zero, std::size_t n, r2r_kind k) {
+    using T = decltype(zero);
+    return fftn::detail::describe(
+               *make_plan_core(fftn::detail::view_of(fftn::rows_r2r<T>(n, 2, k)), {}, zen3))
+               .find("folded route") != std::string::npos;
+  };
+  for (const r2r_kind k : {r2r_kind::dct1, r2r_kind::dst1}) {
+    EXPECT_TRUE(folds(0.0, 129, k)) << kind_name(k);
+    EXPECT_FALSE(folds(0.0, 131, k)) << kind_name(k);
+    EXPECT_TRUE(folds(0.0F, 129, k)) << kind_name(k);
+    EXPECT_FALSE(folds(0.0F, 131, k)) << kind_name(k);
+  }
+  // Keyed to another best target than this processor's: the extensions.
+  build_settings other = zen3;
+  other.profile.r2r_folded_isa = fftn::isa::scalar;
+  if (fftn::detail::plan_target_of({}) != fftn::detail::target::scalar) {
+    EXPECT_EQ(fftn::detail::describe(*make_plan_core(fftn::detail::view_of(fftn::rows_r2r<double>(
+                                                         65, 2, r2r_kind::dst1)),
+                                                     {}, other))
+                  .find("folded route"),
+              std::string::npos);
+  }
+}
+
 TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
   build_settings folded;
   folded.profile.r2r_folded_max = 101;
+  folded.profile.r2r_folded_isa = fftn::isa::best; // the host's profile may key it
   const auto text = [&](std::size_t n, r2r_kind k, const build_settings& s, bool acc) {
     const fftn::shape<double, double> sh = fftn::rows_r2r<double>(n, 2, k);
     if (!acc) {
