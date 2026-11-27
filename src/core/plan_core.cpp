@@ -1507,9 +1507,9 @@ void callback_output_stages(precision prec, bool real, const edge_side& out, std
 // then reads. real: the line holds real values (a real side). home: where stored runs are read
 // (zeros elsewhere) and where the vocabulary's pass goes, the workspace block for plans. The
 // callback runs where the row is in the side's natural order: in place on the input itself, else at
-// `target` (the workspace block, or the output with build_settings::callback_copy_out), which the
-// callback fills (produce: with zeros between the stored runs) or which a copy of the input fills
-// first (modify: the run read stage, or a copy, so that the plan's input is not changed). The
+// `target` (a scratch line or the workspace block), which the callback fills (produce: with zeros
+// between the stored runs) or which a copy of the input fills first (modify: the run read stage,
+// or a copy, so that the plan's input is not changed). The
 // side's factor and scale follow in a separate pass, unless the factor is fused into the chain's
 // first pass, so that the callback sees the values before any vocabulary (DESIGN.md 12.3).
 endpoint row_input_with_callback(precision prec, bool real, const edge_side& in, std::size_t n,
@@ -1578,8 +1578,8 @@ endpoint row_input_with_callback(precision prec, bool real, const edge_side& in,
     return block;
   }
   // The vocabulary: a factor that is not fused, or the scale where resolve_edges put it on this
-  // side (with the edges' separate passes): into the block, or in place in the output where the
-  // callback ran there out of place (callback_copy_out).
+  // side (with the edges' separate passes): into the block, or in place where the row already is
+  // in the output out of place.
   if (has_vocabulary(in)) {
     const endpoint to = from.where == slot::out && !in_place ? from : block;
     st.push_back(edge_pass_stage(prec, vocabulary_of(in), false, n, from.where, from.stride,
@@ -1647,14 +1647,11 @@ void row_output_with_callback(precision prec, bool real, const edge_side& out, s
 namespace {
 
 // Where row_input_with_callback runs the input's callback, for describe().
-std::string row_input_where(const edge_side& in, bool in_place, slot target) {
+std::string row_input_where(const edge_side& in, bool in_place) {
   if (in_place) {
     return "on each row in the input, in place";
   }
-  const std::string where = target == slot::out && !in.runs.any() ? "in the output, which the "
-                                                                    "chain then transforms in "
-                                                                    "place"
-                                                                  : "in the workspace block";
+  const std::string where = "in the workspace block";
   if (in.call.mode == callback_mode::produce) {
     return "on each row " + where;
   }
@@ -3142,12 +3139,10 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         if (any_callback(*edge_ops)) {
           // Block callbacks (task 5.3a) in DESIGN.md 12.3's order: read or produce, modify,
           // then the vocabulary; the vocabulary, modify, then store, accumulate or consume.
-          // The modifying or producing input's copy goes to the workspace block, or with
-          // callback_copy_out (X66's arm) to the output, which the chain then transforms in
-          // place; never to a consumed output, which may be null.
-          const endpoint target =
-              settings.callback_copy_out && !edge_ops->in.runs.any() && !consumed ? to : block;
-          from = row_input_with_callback(s.prec, false, edge_ops->in, n, from, c.in_place, target,
+          // The modifying or producing input's copy goes to the workspace block (X66's rule 4:
+          // the copy into the output, the chain then in place there, lost on the EPYC 7763 and
+          // the Xeon 6240, and was deleted).
+          from = row_input_with_callback(s.prec, false, edge_ops->in, n, from, c.in_place, block,
                                          slot::block, settings.chunk_points, block_bytes,
                                          c.callback_sites, st);
           const bool direct = edge_ops->out.call.mode == callback_mode::modify &&
@@ -3178,7 +3173,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           }
           uses_block = std::ranges::any_of(
               st, [](const stage& x) { return x.src == slot::block || x.dst == slot::block; });
-          cb_in_where = row_input_where(edge_ops->in, c.in_place, target.where);
+          cb_in_where = row_input_where(edge_ops->in, c.in_place);
           cb_out_where = line_to.where == slot::block ? "on each row in the workspace block"
                                                       : "on each row in the output";
         } else {

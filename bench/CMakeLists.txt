@@ -374,7 +374,7 @@ if(FFTN_BUILD_TESTS)
        "id=5 kind=c2c dims=12x8 batch=4 place=out sign=-1 layout=interleaved\nid=6 kind=r2c dims=8x6x4 batch=1 place=out sign=-1\n")
   foreach(_opts IN ITEMS "EDGE_CALL=exp" "EDGE_CALL=cubic+EDGE_ARM=loop"
                          "EDGE_CALL=exp+CALL_SIDE=in+CALL_MODE=produce"
-                         "EDGE_CALL=cubic+CALL_SIDE=in+CALLBACK_COPY=out+CALLBACK_BLOCK_BYTES=128"
+                         "EDGE_CALL=cubic+CALL_SIDE=in+CALLBACK_BLOCK_BYTES=128"
                          "EDGE_CALL=exp+CALL_SIDE=in+EDGE_ARM=loop")
     string(REPLACE "+" " " _spaced "${_opts}")
     string(REPLACE "=" "_" _name "${_opts}")

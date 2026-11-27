@@ -107,8 +107,8 @@
 //                    avx2 and fma; the last two on x86-64 Linux)
 //   CALL_LOOP=memory|lines   the callback walks its block in memory order (default) or line by
 //                    line whatever the strides
-//   CALLBACK_BLOCK_BYTES=B, CALLBACK_COPY=block|out   the profile's callback_block_bytes, and
-//                    build_settings::callback_copy_out
+//   CALLBACK_BLOCK_BYTES=B   the profile's callback_block_bytes (X66; its CALLBACK_COPY arm and
+//                    the build setting behind it were deleted by its rule 4)
 //   PIPELINE=fused|separate   a convolution instead of the transform (task 5.5): every row
 //                    of a c2c forward case (`pipeline<C, C, C>`) or of an r2c case
 //                    (`pipeline<T, C, T>`, the output rows real, each at the start of its row
@@ -1856,13 +1856,6 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.settings.profile.callback_block_bytes = static_cast<std::uint32_t>(*v);
-      overrides.str(key, value);
-    } else if (key == "CALLBACK_COPY") {
-      if (value != "block" && value != "out") {
-        say(message, message_size, "CALLBACK_COPY is block or out");
-        return fbench_error;
-      }
-      s.settings.callback_copy_out = value == "out";
       overrides.str(key, value);
     } else if (key == "PIPELINE") {
       if (value != "fused" && value != "separate") {
