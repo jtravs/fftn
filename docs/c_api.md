@@ -2,10 +2,11 @@
 
 `fftn/c_api.h` gives C programs, and any language that can call C, the plans of the C++ API:
 every kind and precision, workspaces, the four forms of execution, wisdom and the length
-queries, and the fusion objects: edges, block callbacks and row pipelines ("Fusion" below). It
-is provisional (steps 6.8 and 6.9): it follows the proposals of DESIGN 5.9 and of 18.2
-("Phase 6", Q17–Q22), which the maintainer has not yet settled, so names and types may change
-before the first release. The declarations, preconditions and guarantees are in
+queries, the fusion objects (edges, block callbacks and row pipelines: "Fusion" below) and
+split-complex data ("Split complex" below). It is provisional (steps 6.8 and 6.9, and the split
+form after 6.10): it follows the proposals of DESIGN 5.9 and of 18.2 ("Phase 6", Q17–Q22 and
+Q28–Q31), which the maintainer has not yet settled, so names and types may change before the
+first release. The declarations, preconditions and guarantees are in
 [include/fftn/c_api.h](../include/fftn/c_api.h); this page says how the pieces fit.
 
 A C plan wraps the same plan core as `fftn::plan`, so it computes exactly what the C++ plan of
@@ -110,6 +111,7 @@ Each C type stands for the C++ type of the same name, field by field:
 | `fftn_executor` (`fftn/executor.h`) | `fftn::executor_ref` |
 | `fftn_wisdom` (opaque) | `fftn::wisdom` |
 | `fftn_length_kind` | `fftn::length_kind` |
+| `fftn_shape::split`, `fftn_split_ptr`, `fftn_split_const_ptr` ("Split complex" below) | `fftn::split_complex<T>`, `fftn::split_ptr<T>`, `fftn::split_ptr<const T>` |
 
 - **One plan type** serves every kind and precision, and data are `void*`. Complex values are
   interleaved pairs, so arrays of C99 `double _Complex`, C++ `std::complex<double>` and
@@ -351,9 +353,88 @@ own:
   team's members would wait for ever), and a C++ exception thrown by a callback written in C++
   ends the program (`std::terminate`) at the boundary: no exception crosses FFTN.
 
+## Split complex
+
+Complex values kept as two arrays of reals ([conventions.md](conventions.md), "Split complex")
+have a C form too (provisional: DESIGN 5.9, "Split complex", and 18.2 Q28–Q31). A shape with
+`split` set is the C++ shape with `fftn::split_complex<T>` on its complex sides, for `FFTN_C2C`,
+`FFTN_R2C` and `FFTN_C2R`; its plan is executed through the four forms with a `_split` suffix,
+which take the arrays as an `fftn_split_const_ptr` (input) and an `fftn_split_ptr` (output), the
+C forms of `split_ptr<const T>` and `split_ptr<T>`:
+
+```c file=examples/c_api_split.c region=split
+// Real rows into split spectra: the shape of interleaved r2c rows with split set; on the split
+// side strides and distances count reals, the same numbers for both arrays.
+const fftn_axis axis = {N, 0, 0};
+const fftn_batch batch = {COUNT, 0, 0};
+fftn_shape shape = {0};
+fftn_options options = fftn_options_default();
+fftn_error error;
+shape.kind = FFTN_R2C;
+shape.precision = FFTN_DOUBLE;
+shape.rank = 1;
+shape.axes = &axis;
+shape.batch_rank = 1;
+shape.batches = &batch;
+shape.split = 1;
+fftn_plan* forward = fftn_plan_create(&shape, NULL, &error);
+
+// And back: c2r from the split spectra, scaled by 1/n.
+shape.kind = FFTN_C2R;
+options.scale = 1.0 / N;
+fftn_plan* backward = forward != NULL ? fftn_plan_create(&shape, &options, &error) : NULL;
+if (backward == NULL) {
+  fprintf(stderr, "fftn: %s\n", error.message);
+  fftn_plan_release(forward);
+  return EXIT_FAILURE;
+}
+size_t bytes = fftn_plan_workspace_bytes(forward, 1);
+if (fftn_plan_workspace_bytes(backward, 1) > bytes) {
+  bytes = fftn_plan_workspace_bytes(backward, 1);
+}
+fftn_workspace* ws = fftn_workspace_create(bytes, &error);
+if (ws != NULL) {
+  // A real side passes its array as re; its im is not read.
+  const fftn_split_const_ptr real_in = {rows, NULL};
+  const fftn_split_ptr spectra = {re, im};
+  const fftn_split_const_ptr spectra_in = {re, im};
+  const fftn_split_ptr real_out = {back, NULL};
+  fftn_execute_split(forward, real_in, spectra, ws);
+  fftn_execute_split(backward, spectra_in, real_out, ws); // back = rows, up to rounding
+
+  char text[512];
+  fftn_plan_describe(forward, text, sizeof text); // names the conversion pass
+  printf("%s\n", text);
+  fftn_workspace_destroy(ws);
+}
+fftn_plan_release(backward);
+fftn_plan_release(forward);
+```
+
+- **The arrays.** `re` and `im` are `void*` in the plan's precision, laid out by the shape's
+  strides and distances, which count reals on a split side and hold for both arrays. They may lie
+  anywhere relative to each other. A real side (r2c's input, c2r's output) passes its array as
+  `re`; its `im` is not read. In place (c2c only) each input array is the output array of its
+  part.
+- **The executions.** `fftn_execute_split`, `fftn_execute_transforms_split`,
+  `fftn_execute_team_split` and `fftn_execute_on_split` are the four forms, with the threading
+  rules above and results bitwise equal to the C++ split plan's (the tests compare them for every
+  kind, rows to volumes, in both precisions). A split plan given to a form without the suffix,
+  or an interleaved plan given to a `_split` form, ends the program with a message, as does a
+  NULL `im` on a split side.
+- **What split plans do not take,** as in C++: edges (`fftn_plan_create_edges` refuses split
+  shapes with edges), stored runs, r2c or c2r in place, and wisdom (`fftn_wisdom_add` refuses a
+  split plan; split plans are planned by the rules, which `fftn_plan_describe` says when other
+  planning was asked for). `split` with `FFTN_R2R` is refused. Pipelines have no split form.
+- **`fftn_shape` grew a field** (`split`, last) on 2026-11-27, as Q21 allows before 1.0. A
+  zeroed shape is unchanged in meaning, but C programs must be rebuilt against the new header,
+  and mirrors of the struct in other languages (Python's `ctypes`, Julia's `ccall`, Fortran's
+  `iso_c_binding`) must add the field. C++ code that names every field in a designated
+  initialiser and leaves out `split` gets a `-Wmissing-field-initializers` warning.
+
 ## Not yet in C
 
-The split-complex layout comes with 5.8. The structs carry no size or version fields
-until 1.0 (Q21): `FFTN_VERSION_MAJOR`, `FFTN_VERSION_MINOR` and `FFTN_VERSION_PATCH`
-(`fftn/version.h`, included by `fftn/c_api.h`) are the check, and `fftn_version()` gives the
-linked library's version.
+The structs carry no size or version fields until 1.0 (Q21): `FFTN_VERSION_MAJOR`,
+`FFTN_VERSION_MINOR` and `FFTN_VERSION_PATCH` (`fftn/version.h`, included by `fftn/c_api.h`) are
+the check, and `fftn_version()` gives the linked library's version. Edges on split-complex data
+are not built in C++ yet, so not in C either.
