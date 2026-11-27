@@ -233,6 +233,15 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.callback_block_bytes = static_cast<std::uint32_t>(
         std::min<std::size_t>(c.l2.size / 4, std::numeric_limits<std::uint32_t>::max()));
   }
+  // X85's arm D (machine_profile::r2r_folded_max): odd DCT-I (from 33 points, core/r2r.cpp) and
+  // DST-I up to 257 points take the folded route on Zen 3's class (AMD's cores; the EPYC 7763,
+  // `avx2`): 257 is rule D1's limit, the largest swept length whose error stays inside half the
+  // r2r tests' bound in both precisions (the route's odd outputs are running sums, its error grows
+  // like sqrt n), and the folded route took 0.784 of the extension's time over the 43 rows,
+  // batches and planes it moves, none slower (the narrowed deciding run 20261127-075715-2887).
+  if (zen3_like && p.vendor == cpu_vendor::amd) {
+    p.r2r_folded_max = 257;
+  }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
     p.fit_row_bytes = c.l3.size / 4 * 3; // X57: three quarters of the CCX's L3

@@ -818,11 +818,12 @@ Points that matter:
 - **Accuracy.** These are the well-conditioned routes: the error grows as the underlying
   transform's, and the derived tolerance (15.2) is that transform's plus one rounding per stage
   operation. `dct1` and `dst1` start with the extensions. FFTW computes REDFT00 with an r2c of
-  n − 1, which is cheaper and known to be less accurate; whether to adopt such a route is step
-  6.12's experiment, judged on accuracy as well as time.
+  n − 1, which is cheaper and known to be less accurate; step 6.12's experiment X85 measured
+  such a route (the folded one, "As built (step 6.12)" below): its error grows like √n, so it is
+  taken only for short odd lines, where the profile sets `machine_profile::r2r_folded_max`.
 - **Several axes and strides.** Each axis is a phase over its lines (9.3), as in multi-axis
-  plans, reading strided lines into the scratch line. The lanes over adjacent lines (9.3) come
-  later, with step 6.12.
+  plans, reading strided lines into the scratch line. The lanes over adjacent lines (9.3) were
+  X85's arm L and lost (below): strided axes keep one line at a time.
 - **What else applies.** Edges (12.1) with scales, real factors and accumulation on both sides;
   complex factors and stored runs are refused. Teams, executors, `execute_transforms`,
   `planning::measure` and wisdom work as for every plan.
@@ -884,7 +885,31 @@ Points that matter:
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
   5.1b (multi-axis lines, real factors). The odd `dct4` zero-pads into the scratch line and
   does not use 5.1d's stored runs or 5.1e's pruned codelets (see the as-built note above). Fusing the read stage into the first pass and the store stage into the
-  last, as the r2c pairing is fused (9.1), is step 6.12.
+  last, as the r2c pairing is fused (9.1), is still open: X85 drafted it (arm F) without
+  building it, as it needs new pass kinds per route in the generator.
+- **As built (step 6.12, experiment X85; src/core/r2r.cpp).** *The folded DCT-I and DST-I*: an
+  odd axis of n ≤ `machine_profile::r2r_folded_max` points (DCT-I from 33: its single rows of 5–17
+  points took 0.88–1.09 of the extension's time from one run to the next), in a plan without accumulation, runs
+  the real DFT R of N = n ∓ 1 points instead of the extension of 2N (Numerical Recipes' cosft1
+  and sinft): with the line's points X_0 … X_N (DST-I: zeros around the line), u_j and v_j their
+  sums and differences about the middle and s_j = sin(πj/N), the read stage packs
+  y_j = u_j/2 − s_j v_j (DST-I: s_j u_j + v_j/2) as the r2c packs a line, the forward chain of N/2
+  runs in scratch, and the store stage (one unit) forms 2R_m by the r2c's pairing and writes
+  DCT-I's Y_2m = 2 Re R_m and Y_(2m+1) = Y_(2m−1) − 2 Im R_m from
+  Y_1 = v_0 + (2/M) Σ (M − i) Im R_i, M = N/2 (the odd outputs sum to M v_0; v_0 = x_0 − x_(n−1)
+  goes to the output's place of Y_1 by a stage of its own, which is why accumulation keeps the
+  extension), DST-I's Y_(2m−1) = −2 Im R_m and Y_2m = Y_(2m−2) + 2 Re R_m from Y_0 = Re R_0. Half
+  the chain: 0.784 of the extension's time over the 43 cases it moves on the EPYC 7763 (0.54–0.97),
+  none slower. The odd outputs
+  are running sums, so the error grows like √n: inside half the r2r tests' rms bound only up to 257
+  points (`avx2`, both precisions), and the tests' largest error of the kind twice fails from 513
+  (lesson 4.32). The limit is 257 on Zen 3's class (AMD's cores, X85, adopted
+  under the narrowing clause), 0 (the extensions) everywhere else until measured.
+  *Lanes over adjacent lines (arm L), deleted*: the strided axis of a plane as blocks of adjacent
+  lines (each line's read stage into a tile, the lanes chain, each line's store stage) took 1.021 of
+  the per-line plans' time on the EPYC (100 of 270 planes and volumes slower, up to 1.16), and on
+  `avx2` the lanes chain's bits differ from the scratch chain's at line lengths 32 and 48.
+  *Standing* (Q15): see X85's file.
 
 ### 5.8 Split-complex layout
 
@@ -4935,10 +4960,13 @@ table are built on the proposal, provisional and with a second reader, until it 
     multiplier and the inverse DCT, as Poisson solvers use) go to phase 7, on demand.
 14. **DCT-I and DST-I.** Proposal: the extensions (twice the work, the underlying transform's
     accuracy) first; a cheaper route only if step 6.12 shows it within the accuracy contract
-    (section 15).
+    (section 15). Measured (X85): the folded route of odd n is within half the r2r tests' bound
+    only up to 257 points, so it is taken there only (5.7, "As built (step 6.12)").
 15. **Speed target.** Proposal: at or below FFTW's r2r (MEASURE, best SIMD build) as a geometric
     mean over an `r2r` catalogue of the standard lengths, one thread, on the three local
-    machines, with the tail rule of 1.3; pocketfft as a second reference.
+    machines, with the tail rule of 1.3; pocketfft as a second reference. The catalogue and the
+    backends exist since step 6.12 (`bench/catalogues/r2r.toml`); X85 records the standing on the
+    EPYC and the Xeon (the Mac's is a daytime follow-up). Still the maintainer's to settle.
 
 *Split-complex layout (5.8)*
 
@@ -5427,6 +5455,7 @@ to change before a release.
 | 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
 
 ---
+| 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 257 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.784 of the extension's time on the EPYC up to 257 points) but its error grows like √n: inside half the r2r tests' bound only to 257 points (18.2 Q14). The lanes lost on the EPYC (1.021, up to 1.16) with the per-line stages still scalar, and their bits differ on `avx2` |
 
 ## 20. References
 

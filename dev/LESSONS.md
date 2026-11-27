@@ -1154,6 +1154,29 @@ yet whole lines stayed at 1.09–1.23, the plans' own chains having measured top
 pipeline must carry every strategy and vectorised kernel its separate parts reach before its saved
 sweep can show. [X67](experiments/X67-row-pipelines.md).
 
+4.32 **A half-cost transform whose outputs are running sums of a spectrum is accurate only for
+short lines.** The DCT-I and DST-I of odd n by a real DFT of n ∓ 1 points (Numerical Recipes'
+cosft1 and sinft; FFTW's documentation calls its REDFT00 by an r2hc of n − 1 less accurate) halve
+the chain of the even and odd extensions and took 0.784 of their time on the EPYC over the cases
+up to 257 points (DCT-I single rows below 33 points swung between 0.88 and 1.09 from run to run, so
+they were left out), 0.57–0.82 beyond. But half its outputs are prefix sums of the spectrum, whose rounding
+errors add: the relative RMS error grows like √n (Mac and EPYC: 1e-16 at 5 points, 2e-15 at 1025,
+1.5e-14 at 49153 in double, where the extensions stay at 1–3e-16), against an FFT's √log n. Inside
+half the bound the r2r tests apply (ε (3 √log₂ N + 11)) only up to 257 points in both precisions;
+the largest error of the kind applied twice fails the tests' bound from 513. Judge such routes on
+both metrics and on round trips, and expect a length limit, not a yes or no.
+[X85](experiments/X85-r2r-speed.md).
+
+4.33 **Batching lines into vector lanes pays only when the per-line work around the transform
+batches too.** Real-to-real planes whose strided axis ran as lanes over blocks of adjacent lines
+(the read stage of each line into a tile, the chain as lanes passes, the store stage of each line
+back), with the read and store stages still scalar per line, took 1.021 of the per-line plans'
+time over 270 planes and volumes on the EPYC (100 slower, up to 1.16; 27 faster): the scalar
+stages and the tile's strided writes cost what the shared chain saved. And a runtime stride added
+to those scalar stages' scratch indexing (1 in every per-line plan) cost 5–15 % on small planes
+by itself against the base commit (68 of 340 cases past the band; not diagnosed further, the stride was
+deleted with the lanes). [X85](experiments/X85-r2r-speed.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
