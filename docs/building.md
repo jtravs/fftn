@@ -107,6 +107,7 @@ The build options are the cache variables at the top of
   processors run the scalar kernels; keep the default for a distributed build.
 - `FFTN_BUILD_C_SHARED` (off): also build `libfftn_c` (`fftn_c.dll` on Windows), a shared
   library of the C API that exports its `fftn_` functions and nothing else, installed and
-  exported as `fftn::fftn_c` ([c_api.md](c_api.md)). Provisional.
+  exported as `fftn::fftn_c` ([c_api.md](c_api.md)), with the SOVERSION `0.<minor>` and the
+  project's full version as its VERSION. Provisional.
 - `FFTN_MASKED_TAILS` (`AUTO`): masked partial vector runs on x86, on with GCC by default.
   Results are bitwise the same either way.

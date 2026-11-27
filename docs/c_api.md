@@ -91,6 +91,10 @@ standard library itself (`-lstdc++` with GCC, `-lc++` with Clang on macOS):
 a shared library. With `-DFFTN_BUILD_C_SHARED=ON` the build also makes `libfftn_c`
 (`fftn_c.dll` on Windows), installed and exported as `fftn::fftn_c`, which holds the whole
 library inside and exports the `fftn_` functions and nothing else. The C++ API stays static.
+While FFTN is 0.x a minor version may change the C API, so the library's SOVERSION is the
+major and minor version: `libfftn_c.so.0.1` on Linux (the soname, linked to the fully versioned
+file, with `libfftn_c.so` for the linker), `libfftn_c.0.1.dylib` on macOS (whose compatibility
+version is 0.1), and a program built against 0.1 never loads 0.2. Windows' DLL is not renamed.
 
 Every C symbol the library defines starts with `fftn_`; a test checks both libraries.
 

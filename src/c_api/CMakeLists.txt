@@ -22,6 +22,16 @@ if(FFTN_BUILD_C_SHARED)
   target_compile_definitions(fftn_c PRIVATE FFTN_C_EXPORTS INTERFACE FFTN_C_SHARED)
   target_link_libraries(fftn_c PRIVATE fftn)
   set_target_properties(fftn_c PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+  # While FFTN is 0.x a minor version may change the C API (AGENTS.md section 1), so the
+  # SOVERSION is the major and minor version (libfftn_c.so.0.1, libfftn_c.0.1.dylib) and a
+  # program built against one minor version never loads another; VERSION is the full version.
+  # Mach-O's compatibility and current versions follow them; Windows DLL names do not change.
+  # (The maintainer, 2026-11-27; DESIGN.md 5.9.) What 1.0 takes is not decided yet.
+  if(NOT PROJECT_VERSION_MAJOR EQUAL 0)
+    message(FATAL_ERROR "fftn_c's SOVERSION after 0.x is not decided (DESIGN.md 5.9)")
+  endif()
+  set_target_properties(fftn_c PROPERTIES VERSION ${PROJECT_VERSION}
+                                          SOVERSION 0.${PROJECT_VERSION_MINOR})
   if(APPLE)
     target_link_options(fftn_c PRIVATE
       "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/fftn_c.exports")

@@ -1161,8 +1161,15 @@ Points that matter:
     `config.hpp` and `c_api.h`, so Q21's check works from C.
   - *Q20's shared library*: `FFTN_BUILD_C_SHARED` (off) builds `libfftn_c` from `c_api.cpp`
     with the static library inside, exporting `fftn_` only (`FFTN_C_API`, an export list on
-    macOS and a version script on ELF); installed and exported as `fftn::fftn_c`, with no
-    SOVERSION (Q21). A test checks that every C symbol of both libraries starts `fftn_`.
+    macOS and a version script on ELF); installed and exported as `fftn::fftn_c`. A test
+    checks that every C symbol of both libraries starts `fftn_`. Its SOVERSION follows the
+    minor version while FFTN is 0.x (the maintainer, 2026-11-27): `0.<minor>` from the project
+    version, so the soname is `libfftn_c.so.0.<minor>` on ELF and the install name
+    `libfftn_c.0.<minor>.dylib` on macOS, whose compatibility version is the SOVERSION and
+    current version the VERSION, the project's full version; a minor version may change the C
+    API (Q21), and a program never loads another minor version's library. Windows' DLL name is
+    unchanged. The SOVERSION after 0.x is left for 1.0 (the build refuses a major version above
+    0 until it is decided).
   - *Building*: the tests and examples enable C, with the C++ compiler's sibling when `CC` is
     unset (`cmake/FftnCCompiler.cmake`), so that sanitizer runtimes do not mix; a C program
     links the static library with the C++ driver.
@@ -5492,6 +5499,7 @@ to change before a release.
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 | 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
+| 2026-11-27 | Two C API changes (section 5.9; the maintainer's decisions): `fftn_shape`'s last field is `fftn_layout layout` (`FFTN_INTERLEAVED = 0`, the default, and `FFTN_SPLIT = 1`; other values and `FFTN_SPLIT` with `FFTN_R2R` refused with `FFTN_ERROR_INVALID_ARGUMENT`) in place of `int split` (18.2 Q29, settled); the shared library `fftn_c` has the SOVERSION `0.<minor>` from the project version and its full version as VERSION while FFTN is 0.x (Q20) | An enumeration leaves room for other layouts and refuses stray values, as the C API's other enumerations do, at the same cost as the flag (the field was added the same day). A minor version may change the C API before 1.0 (Q21), so a program built against one minor version must not load another's library: the soname, and macOS's compatibility version, change with the minor version |
 
 ---
 
