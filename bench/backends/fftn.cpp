@@ -132,6 +132,7 @@
 // that they too run on the performance cores.
 
 #include "backends/common.hpp"
+#include "backends/fftn_stage.hpp"
 #include "backends/fftn_tuning.hpp"
 #include "core/plan_core.hpp"
 #include "harness/backend.hpp"
@@ -258,7 +259,7 @@ std::optional<edge_spec> parse_edge(std::string_view text, bool output) {
 // edges: a plan with EDGE_IN or EDGE_OUT, executed out of line (plan_record::edge_mode says
 // how), so that a plain serial plan's execute stays one test and one call (X49); pipeline: a
 // PIPELINE arm (plan_record::pipe), likewise.
-enum class call : unsigned char { serial, executor, team, edges, pipeline };
+enum class call : unsigned char { serial, executor, team, edges, pipeline, stage };
 
 // EDGE_CALL (experiment X66):
 // The work of a block callback (fftn/callback.hpp), pure per element: none (no callback),
@@ -304,7 +305,11 @@ struct session {
   call_build build = call_build::clones;                       // CALL_BUILD
   bool memory_order = true;                                    // CALL_LOOP
   std::string call_text, mode_text = "modify", build_text = "clones";
-  pipe_arm pipeline = pipe_arm::none; // PIPELINE
+  pipe_arm pipeline = pipe_arm::none;               // PIPELINE
+  std::optional<fbench::stage::arm_kind> stage;     // STAGE
+  std::vector<fbench::stage::time_line> stage_time; // STAGE_TIME
+  bool stage_selfcheck = false;                     // STAGE_SELFCHECK
+  std::string stage_text, stage_time_text;
   std::string description;
 };
 
@@ -1283,7 +1288,8 @@ std::unique_ptr<pipeline_arm> make_pipeline_arm(const fbench_case& c, const fftn
 }
 
 struct plan_record {
-  std::unique_ptr<pipeline_arm> pipe; // PIPELINE (mode call::pipeline): the case's arm
+  std::unique_ptr<pipeline_arm> pipe;        // PIPELINE (mode call::pipeline): the case's arm
+  std::unique_ptr<fbench::stage::arm> stage; // STAGE (mode call::stage): the case's arm
   std::shared_ptr<const detail::plan_core> core;
   std::unique_ptr<std::byte[]> ws_memory; // WORKSPACE=page: the memory ws borrows
   fftn::workspace ws;
@@ -1524,6 +1530,7 @@ void run_core(const plan_record& r, const void* in, void* out, const fftn::exec_
   case call::serial:
   case call::edges:
   case call::pipeline: // never an edge mode
+  case call::stage:
     if (args != nullptr) {
       detail::execute_all(*r.core, in, out, r.ws, *args);
     } else {
@@ -1692,6 +1699,9 @@ void execute_call(const plan_record& r, const void* in, void* out) {
     return;
   case call::pipeline:
     r.pipe->run(in, out);
+    return;
+  case call::stage:
+    r.stage->run(out);
     return;
   case call::serial:
     return;
@@ -1863,6 +1873,30 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.pipeline = value == "fused" ? pipe_arm::fused : pipe_arm::separate;
+    } else if (key == "STAGE") {
+      s.stage = fbench::stage::parse_arm(value);
+      if (!s.stage) {
+        say(message, message_size, "STAGE is T, O, Of, G or C");
+        return fbench_error;
+      }
+      s.stage_text = value;
+    } else if (key == "STAGE_SELFCHECK") {
+      if (value != "0" && value != "1") {
+        say(message, message_size, "STAGE_SELFCHECK is 0 or 1");
+        return fbench_error;
+      }
+      s.stage_selfcheck = value == "1";
+    } else if (key == "STAGE_TIME") {
+      const auto lines = fbench::stage::parse_time(value);
+      if (!lines) {
+        say(message, message_size,
+            "STAGE_TIME is STORED.NT.FIRST[,...] with NT even, FIRST >= 1 and FIRST + STORED <= "
+            "NT/2 (got " +
+                value + ")");
+        return fbench_error;
+      }
+      s.stage_time = *lines;
+      s.stage_time_text = value;
     } else if (key == "RADICES") {
       try {
         s.settings.radices = parse_radices(value);
@@ -2050,6 +2084,16 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         "CALL_LOOP");
     return fbench_error;
   }
+  if (!s.stage && (!s.stage_time.empty() || s.stage_selfcheck)) {
+    say(message, message_size, "STAGE_TIME and STAGE_SELFCHECK need STAGE");
+    return fbench_error;
+  }
+  if (s.stage && (s.edge_in.any() || s.edge_out.any() || calls || s.pipeline != pipe_arm::none ||
+                  s.mode == call::team || !s.settings.radices.empty())) {
+    say(message, message_size,
+        "STAGE does not combine with EDGE_IN, EDGE_OUT, EDGE_CALL, PIPELINE, CALL=team or RADICES");
+    return fbench_error;
+  }
   if (s.pipeline != pipe_arm::none && (s.edge_in.any() || s.edge_out.any() ||
                                        s.mode == call::team || !s.settings.radices.empty())) {
     say(message, message_size,
@@ -2075,7 +2119,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("isa", fftn::isa_name(probe.instruction_set()))
         .boolean("isa_forced", s.isa != fftn::isa::best)
         // PIPELINE takes forward c2c and r2c rows out of place only: those kinds are partial.
-        .raw("supports", s.pipeline != pipe_arm::none ? "[]" : R"(["c2c","r2c","c2r"])")
+        .raw("supports", s.pipeline != pipe_arm::none || s.stage ? "[]" : R"(["c2c","r2c","c2r"])")
         .raw("precisions", R"(["f64","f32"])")
         .str("planning", s.planning)
         .str("rader", s.rader)
@@ -2105,6 +2149,14 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
       // The harness then checks each row against its input delayed by one (backend.hpp).
       d.str("pipeline", s.pipeline == pipe_arm::fused ? "fused" : "separate")
           .str("output", "delay");
+    }
+    if (s.stage) {
+      d.raw("partial", R"(["c2c"])");
+      // The harness then checks the output against the input (backend.hpp).
+      d.str("stage", s.stage_text).str("output", "identity");
+      if (!s.stage_time.empty()) {
+        d.str("stage_time", s.stage_time_text);
+      }
     }
     if (s.measure_seconds != 0) {
       d.str("measure_seconds", std::to_string(s.measure_seconds));
@@ -2195,6 +2247,27 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
         .measure_seconds = s.measure_seconds,
         .measure_scratch_bytes = s.measure_scratch,
     };
+    if (s.stage) {
+      record->mode = call::stage;
+      fbench::stage::config cfg{.arm = *s.stage,
+                                .real_lines = s.stage_time,
+                                .isa = s.isa,
+                                .threads = s.threads,
+                                .exec = std::nullopt};
+      if (s.exec) {
+        cfg.exec.emplace(*s.exec);
+      }
+      cfg.selfcheck = s.stage_selfcheck;
+      std::string why;
+      record->stage = fbench::stage::make(*c, cfg, why);
+      if (!record->stage) {
+        say(message, message_size, why);
+        return fbench_unsupported;
+      }
+      say(message, message_size, record->stage->note());
+      *plan = record.release();
+      return fbench_ok;
+    }
     if (s.pipeline != pipe_arm::none) {
       record->mode = call::pipeline;
       record->pipe = c->precision == fbench_f32 ? make_pipeline_arm<float>(*c, opts)

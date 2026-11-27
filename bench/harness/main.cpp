@@ -14,6 +14,12 @@
 // form one group, so they must fit the PMU's counters at once; a group the kernel did not
 // keep scheduled the whole time reports its running fraction below 1.
 //
+// `run --perf-ctl CTL,ACK` (POSIX) instead hands the counting to `perf stat` started around this
+// process with `-D -1 --control fifo:CTL,ACK`: the harness enables perf's counters (every thread
+// of the process, any events perf takes, uncore included where allowed) over the same executes
+// and reports how many it counted ("calls"); perf's totals divided by them are per call. One
+// case per process, since perf's totals cover the process (bench/x68/traffic.py).
+//
 // Every result is one JSON line on standard output. The driver (bench/fbench.py) owns the
 // statistics; this program measures one process and says what it measured.
 
@@ -51,6 +57,14 @@
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <fcntl.h> // perf_control
+#include <unistd.h>
+#define FBENCH_PERF_CONTROL 1
+#else
+#define FBENCH_PERF_CONTROL 0
 #endif
 
 #ifdef __APPLE__
@@ -122,6 +136,7 @@ struct settings {
   double perturb = 0.0;
   std::uint64_t seed = 1;
   std::string pmu;
+  std::string perf_ctl;
 };
 
 template <class T> T parse_number(std::string_view text, std::string_view what) {
@@ -177,6 +192,8 @@ settings parse_settings(std::span<char* const> args) {
       s.seed = parse_number<std::uint64_t>(next(), key);
     } else if (key == "--pmu") {
       s.pmu = next();
+    } else if (key == "--perf-ctl") {
+      s.perf_ctl = next();
     } else {
       throw std::invalid_argument("unknown option " + std::string(key));
     }
@@ -293,9 +310,25 @@ std::uint64_t hash(std::string_view s) {
 
 // ---- Hardware counters -----------------------------------------------------------------
 
+// What counts events over the counted executes: the harness's own counters, or perf's.
+class count_source {
+public:
+  count_source() = default;
+  count_source(const count_source&) = delete;
+  count_source& operator=(const count_source&) = delete;
+  count_source(count_source&&) = delete;
+  count_source& operator=(count_source&&) = delete;
+  virtual ~count_source() = default;
+  virtual void reset() const = 0;
+  virtual void enable() const = 0;
+  virtual void disable() const = 0;
+  // The counts per call over `calls` executes, as a JSON object.
+  [[nodiscard]] virtual std::string per_call(std::int64_t calls) const = 0;
+};
+
 // One group of user-mode counters on the calling thread (perf_event_open), enabled only
 // around the execute loops. Linux only; elsewhere opening fails with a message.
-class counters {
+class counters final : public count_source {
 public:
   explicit counters(std::string_view spec) {
 #ifdef __linux__
@@ -357,16 +390,16 @@ public:
   counters& operator=(const counters&) = delete;
   counters(counters&&) = delete;
   counters& operator=(counters&&) = delete;
-  ~counters() { close_all(); }
+  ~counters() override { close_all(); }
 
-  void reset() const { control(reset_op); }
-  void enable() const { control(enable_op); }
-  void disable() const { control(disable_op); }
+  void reset() const override { control(reset_op); }
+  void enable() const override { control(enable_op); }
+  void disable() const override { control(disable_op); }
 
   // The counts per call over `calls` executes, and the fraction of the enabled time the
   // group was scheduled (1 when the counts are exact).
   // NOLINTNEXTLINE(readability-convert-member-functions-to-static): reads fds_ on Linux
-  [[nodiscard]] std::string per_call(std::int64_t calls) const {
+  [[nodiscard]] std::string per_call(std::int64_t calls) const override {
     fbench::json out; // NOLINT(misc-const-correctness): filled on Linux
 #ifdef __linux__
     std::vector<std::uint64_t> buf(3 + fds_.size());
@@ -417,6 +450,69 @@ private:
   }
   std::vector<int> fds_;
   std::vector<std::string> names_;
+};
+
+// perf stat's control FIFOs (`perf stat -D -1 --control fifo:CTL,ACK`): enable and disable are
+// perf's commands, each answered on the acknowledgement FIFO before the executes go on.
+class perf_control final : public count_source {
+public:
+  explicit perf_control(std::string_view spec) {
+#if !FBENCH_PERF_CONTROL
+    throw std::invalid_argument("--perf-ctl needs POSIX FIFOs; not counting " + std::string(spec));
+#else
+    const std::size_t comma = spec.find(',');
+    if (comma == std::string_view::npos) {
+      throw std::invalid_argument("--perf-ctl is CTL,ACK (perf's control and ack FIFOs)");
+    }
+    const std::string ctl(spec.substr(0, comma));
+    const std::string ack(spec.substr(comma + 1));
+    ctl_ = open(ctl.c_str(), O_WRONLY | O_CLOEXEC); // NOLINT(cppcoreguidelines-pro-type-vararg)
+    ack_ = open(ack.c_str(), O_RDONLY | O_CLOEXEC); // NOLINT(cppcoreguidelines-pro-type-vararg)
+    if (ctl_ < 0 || ack_ < 0) {
+      close_all();
+      throw std::runtime_error("--perf-ctl: cannot open " + ctl + " or " + ack);
+    }
+#endif
+  }
+  perf_control(const perf_control&) = delete;
+  perf_control& operator=(const perf_control&) = delete;
+  perf_control(perf_control&&) = delete;
+  perf_control& operator=(perf_control&&) = delete;
+  ~perf_control() override { close_all(); }
+
+  void reset() const override {}
+  void enable() const override { command("enable\n"); }
+  void disable() const override { command("disable\n"); }
+  [[nodiscard]] std::string per_call(std::int64_t calls) const override {
+    return fbench::json().integer("calls", calls).str("counted_by", "perf").object();
+  }
+
+private:
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static): uses the FIFOs on POSIX
+  void command(std::string_view text) const {
+#if FBENCH_PERF_CONTROL
+    if (write(ctl_, text.data(), text.size()) != static_cast<ssize_t>(text.size())) {
+      return;
+    }
+    std::array<char, 16> buf{};
+    static_cast<void>(read(ack_, buf.data(), buf.size()));
+#else
+    static_cast<void>(text);
+#endif
+  }
+  void close_all() {
+#if FBENCH_PERF_CONTROL
+    if (ctl_ >= 0) {
+      close(ctl_);
+    }
+    if (ack_ >= 0) {
+      close(ack_);
+    }
+#endif
+    ctl_ = ack_ = -1;
+  }
+  int ctl_ = -1;
+  int ack_ = -1;
 };
 
 // ---- One case --------------------------------------------------------------------------
@@ -479,7 +575,7 @@ public:
   // Runs `calls` executes and returns the time they took, plus `delay` times that time
   // spent spinning (the seeded slowdown of the +DELAY option). With `pmu`, its counters run
   // during the executes only (not the restores).
-  double run(std::int64_t calls, double delay, const counters* pmu = nullptr) {
+  double run(std::int64_t calls, double delay, const count_source* pmu = nullptr) {
     double total = 0.0;
     std::int64_t done = 0;
     while (done < calls) {
@@ -537,12 +633,16 @@ bool takes_f32() {
 }
 
 // Whether the backend's describe says its output is each transform's input delayed by one
-// element ("output":"delay", backend.hpp), which check_delay checks instead of the DFT.
+// element ("output":"delay", backend.hpp), which check_delay checks instead of the DFT, or the
+// input itself ("output":"identity"), which check_identity checks.
 bool delayed_output() {
   return std::string(fbench_describe()).find(R"("output":"delay")") != std::string::npos;
 }
+bool identity_output() {
+  return std::string(fbench_describe()).find(R"("output":"identity")") != std::string::npos;
+}
 
-std::string run_case(const case_spec& c, const settings& s, const counters* pmu) {
+std::string run_case(const case_spec& c, const settings& s, const count_source* pmu) {
   const fbench::layout& l = c.layout;
   const std::uint64_t seed = hash(c.id) ^ s.seed;
   fbench::json out;
@@ -619,7 +719,9 @@ std::string run_case(const case_spec& c, const settings& s, const counters* pmu)
   }
   const fbench::check_result chk =
       delayed_output() ? fbench::check_delay(l, reference_in.data(), result)
-                       : fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);
+      : identity_output()
+          ? fbench::check_identity(l, reference_in.data(), result)
+          : fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);
   out.str("status", "ok").num("plan_s", plan_s);
   if (!note.empty()) {
     out.str("note", note);
@@ -772,7 +874,12 @@ int command_run(std::span<char* const> args) {
     return 1;
   }
   std::cout << describe_line() << '\n' << std::flush;
-  const std::unique_ptr<counters> pmu = s.pmu.empty() ? nullptr : std::make_unique<counters>(s.pmu);
+  std::unique_ptr<count_source> pmu;
+  if (!s.perf_ctl.empty()) {
+    pmu = std::make_unique<perf_control>(s.perf_ctl);
+  } else if (!s.pmu.empty()) {
+    pmu = std::make_unique<counters>(s.pmu);
+  }
   for (const std::string& line : lines) {
     std::string result;
     try {

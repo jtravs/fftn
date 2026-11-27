@@ -489,6 +489,46 @@ check_result check_delay(const layout& l, const void* in, const void* out) {
   return r;
 }
 
+check_result check_identity(const layout& l, const void* in, const void* out) {
+  const auto* x = static_cast<const double*>(in);
+  const auto* y = static_cast<const double*>(out);
+  check_result r;
+  if (l.kind != fbench_c2c) {
+    return r; // not a kind the identity check knows: never a pass
+  }
+  const double eps = l.precision == fbench_f32 ? std::numeric_limits<float>::epsilon()
+                                               : std::numeric_limits<double>::epsilon();
+  r.tol = 40.0 * eps * (1.0 + std::log2(static_cast<double>(l.n_total)));
+  r.rows = l.batch;
+  r.samples = l.n_total;
+  double diff2 = 0.0;
+  double ref2 = 0.0;
+  double diff_max = 0.0;
+  for (std::int64_t b = 0; b < l.batch; ++b) {
+    double e_in = 0.0;
+    double e_out = 0.0;
+    for (std::int64_t j = 0; j < l.n_total; ++j) {
+      const value want = load(l.in, x, b, j);
+      const value got = load(l.out, y, b, j);
+      const double dre = got.re - want.re;
+      const double dim = got.im - want.im;
+      const double d2 = dre * dre + dim * dim;
+      diff2 += d2;
+      ref2 += want.re * want.re + want.im * want.im;
+      diff_max = std::isnan(d2) ? std::numeric_limits<double>::infinity()
+                                : std::max(diff_max, std::sqrt(d2));
+      e_in += want.re * want.re + want.im * want.im;
+      e_out += got.re * got.re + got.im * got.im;
+    }
+    const double p = std::abs(e_out - e_in) / e_in;
+    r.parseval = std::isnan(p) ? std::numeric_limits<double>::infinity() : std::max(r.parseval, p);
+  }
+  r.err_rms = std::sqrt(diff2 / ref2);
+  r.err_max = diff_max / std::sqrt(ref2 / static_cast<double>(l.batch * l.n_total));
+  r.pass = r.err_rms <= r.tol && r.err_max <= 8.0 * r.tol && r.parseval <= r.tol;
+  return r;
+}
+
 namespace {
 
 // Writes an impulse (c2c, r2c) or the half spectrum of one (c2r) at multi-index p into
@@ -634,7 +674,31 @@ std::string selftest() {
   if (std::string failed = check_impulses(); !failed.empty()) {
     return failed;
   }
-  return check_delays();
+  if (std::string failed = check_delays(); !failed.empty()) {
+    return failed;
+  }
+  // The identity check: the input itself passes, in place and out of place; one wrong value fails.
+  for (const bool in_place : {true, false}) {
+    const layout l = make_layout(fbench_c2c, 3, {4, 3, 5}, 2, -1, in_place, fbench_f64);
+    std::vector<double> x(l.reals_in());
+    fill_input(l, x.data(), 11);
+    std::vector<double> y(l.reals_out(), 0.0);
+    for (std::int64_t b = 0; b < l.batch; ++b) {
+      for (std::int64_t j = 0; j < l.n_total; ++j) {
+        const value v = load(l.in, x.data(), b, j);
+        y[idx(2 * l.out.offset(b, j))] = v.re;
+        y[idx(2 * l.out.offset(b, j) + 1)] = v.im;
+      }
+    }
+    if (!check_identity(l, x.data(), y.data()).pass) {
+      return "the identity check rejects the input itself";
+    }
+    y[idx(2 * l.out.offset(1, 7))] += 1e-9;
+    if (check_identity(l, x.data(), y.data()).pass) {
+      return "the identity check accepts a wrong output";
+    }
+  }
+  return {};
 }
 
 } // namespace fbench
