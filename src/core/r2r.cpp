@@ -645,6 +645,171 @@ pass_fn store_kernel(route r, bool factor, bool scaled, bool accumulate, bool ev
   return store_kernel_of<T, route::dht>(factor, scaled, accumulate, even);
 }
 
+// The folded routes of DCT-I and DST-I for odd n (experiment X85, arm D; the algorithm of
+// Numerical Recipes' cosft1 and sinft, W. H. Press et al., section 12.3): the real DFT R of N = n -
+// 1 (DST-I: n + 1) reals y instead of the extension's 2N, so a complex chain of M = N/2 where the
+// extension runs one of N. With the line's points X_0 .. X_N (DST-I: X_0 = X_N = 0 around the
+// line), u_j = X_j + X_(N-j), v_j = X_j - X_(N-j) and s_j = sin(pi j / N):
+//   DCT-I: y_j = u_j / 2 - s_j v_j, so Re R_m = Y_2m / 2, and Y_(2m+1) = Y_(2m-1) - 2 Im R_m from
+//     Y_1 = v_0 + (2 / M) sum_(i=1..M-1) (M - i) Im R_i (the odd outputs sum to M v_0);
+//   DST-I: y_j = s_j u_j + v_j / 2, so Y_(2m-1) = -2 Im R_m, and Y_(2m) = Y_(2m-2) + 2 Re R_m from
+//     Y_0 = Re R_0.
+// The odd outputs are running sums of the spectrum, so the transform's errors add along them: the
+// route is less accurate than the extension's as n grows, which is X85's question. The read stage
+// packs y as the r2c packs a line (unit p: y_2p + i y_2p+1; s_j at pass_args::twiddles for
+// j = 0 .. M); DCT-I's v_0 goes by a stage of its own to the output's place of Y_1, which the store
+// stage reads before it writes there (so no accumulation on this route); the store stage, one
+// unit, forms 2 R_m by the r2c's pairing (dct2_store's, w^m at pass_args::twiddles) twice over.
+template <class T, bool Sine, bool Factor>
+void folded_read(const pass_args* a, const void* src, void* dst, std::size_t first,
+                 std::size_t last) {
+  const auto* x = static_cast<const T*>(src);
+  auto* z = static_cast<T*>(dst);
+  const auto* s = static_cast<const T*>(a->twiddles);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  const std::size_t n = a->n;
+  const std::size_t big = Sine ? n + 1 : n - 1;
+  const T half = T(0.5);
+  const auto point = [&](std::size_t j) {
+    if constexpr (Sine) {
+      return j == 0 || j == big ? T{} : line_real<T, Factor>(a, x, f, j - 1);
+    } else {
+      return line_real<T, Factor>(a, x, f, j);
+    }
+  };
+  const auto y = [&](std::size_t j) {
+    if (j == 0) {
+      if constexpr (Sine) {
+        return T{};
+      } else {
+        return (point(0) + point(big)) * half;
+      }
+    }
+    const T p = point(j);
+    const T q = point(big - j);
+    const T sj = s[2 * j <= big ? j : big - j];
+    if constexpr (Sine) {
+      return sj * (p + q) + (p - q) * half;
+    } else {
+      return (p + q) * half - sj * (p - q);
+    }
+  };
+  for (std::size_t k = first; k < last; ++k) {
+    z[2 * k] = y(2 * k);
+    z[2 * k + 1] = y((2 * k) + 1);
+  }
+}
+
+// DCT-I's v_0 = x_0 - x_(n-1) of the folded route, written to the output's place of Y_1 (one unit).
+template <class T, bool Factor>
+void folded_v0(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  if (first >= last) {
+    return;
+  }
+  const auto* x = static_cast<const T*>(src);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  static_cast<T*>(dst)[a->dst_stride] =
+      line_real<T, Factor>(a, x, f, 0) - line_real<T, Factor>(a, x, f, a->n - 1);
+}
+
+template <class T, bool Sine, bool Factor, bool Scaled>
+void folded_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  if (first >= last) {
+    return;
+  }
+  const auto* z = static_cast<const T*>(src);
+  auto* y = static_cast<T*>(dst);
+  const auto* w = static_cast<const T*>(a->twiddles);
+  const std::size_t n = a->n;
+  const std::size_t h = Sine ? (n + 1) / 2 : (n - 1) / 2;
+  // 2 R_m by the r2c's pairing of bins m and M - m without its halving (dct2_store's).
+  const auto bin = [&](std::size_t m, T& vr, T& vi) {
+    const std::size_t p = m == h ? 0 : m;
+    const std::size_t q = m == 0 ? 0 : h - m;
+    const T zr = z[2 * p];
+    const T zi = z[2 * p + 1];
+    const T cr = z[2 * q];
+    const T ci = -z[2 * q + 1];
+    const T er = zr + cr;
+    const T ei = zi + ci;
+    const T o_re = zi - ci;
+    const T o_im = cr - zr;
+    const T wr = w[2 * m];
+    const T wi = w[2 * m + 1];
+    vr = er + (wr * o_re - wi * o_im);
+    vi = ei + (wr * o_im + wi * o_re);
+  };
+  T vr{};
+  T vi{};
+  if constexpr (Sine) {
+    T even{};
+    for (std::size_t m = 0; m < h; ++m) {
+      bin(m, vr, vi);
+      if (m == 0) {
+        even = vr * T(0.5);
+      } else {
+        put<T, Factor, Scaled, false>(a, y, (2 * m) - 1, -vi);
+        even = even + vr;
+      }
+      put<T, Factor, Scaled, false>(a, y, 2 * m, even);
+    }
+  } else {
+    T weighted{};
+    for (std::size_t m = 0; m <= h; ++m) {
+      bin(m, vr, vi);
+      put<T, Factor, Scaled, false>(a, y, 2 * m, vr);
+      if (m != 0 && m != h) {
+        weighted = weighted + static_cast<T>(h - m) * vi;
+      }
+    }
+    T odd = y[a->dst_stride] + weighted / static_cast<T>(h);
+    put<T, Factor, Scaled, false>(a, y, 1, odd);
+    for (std::size_t m = 1; m < h; ++m) {
+      bin(m, vr, vi);
+      odd = odd - vi;
+      put<T, Factor, Scaled, false>(a, y, (2 * m) + 1, odd);
+    }
+  }
+}
+
+template <class T> pass_fn folded_read_kernel(bool sine, bool factor) {
+  if (sine) {
+    return factor ? &folded_read<T, true, true> : &folded_read<T, true, false>;
+  }
+  return factor ? &folded_read<T, false, true> : &folded_read<T, false, false>;
+}
+
+template <class T> pass_fn folded_store_kernel(bool sine, bool factor, bool scaled) {
+  if (sine) {
+    if (factor) {
+      return scaled ? &folded_store<T, true, true, true> : &folded_store<T, true, true, false>;
+    }
+    return scaled ? &folded_store<T, true, false, true> : &folded_store<T, true, false, false>;
+  }
+  if (factor) {
+    return scaled ? &folded_store<T, false, true, true> : &folded_store<T, false, true, false>;
+  }
+  return scaled ? &folded_store<T, false, false, true> : &folded_store<T, false, false, false>;
+}
+
+// The sines s_j = sin(pi j / N), j = 0 .. N/2, of a folded route over N reals (folded_read),
+// each correctly rounded: the negated imaginary part of exp(-2 pi i j / 2N).
+template <class T> std::vector<T> folded_sines(std::size_t big) {
+  std::vector<T> table(big / 2 + 1);
+  for (std::size_t j = 0; j < table.size(); ++j) {
+    table[j] = -unit_root<T>(-1, j, 2 * big).imag();
+  }
+  return table;
+}
+
 // The twiddles of a DCT or DST line of n (dct3_read, dct2_store): n even, per k = 0 .. n/2 the
 // pairing's w^k = exp(-2 pi i k / n) then t_k = exp(-i pi k / (2n)); odd, t_k for
 // k = 0 .. (n-1)/2. Each correctly rounded (core/twiddles.hpp).
@@ -927,8 +1092,27 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     // The complex chain's length: n/2 or n (the DHT, the kinds II and III), n/2 or 2n (the kinds
     // IV), and half the extension, n - 1 or n + 1 (DCT-I, DST-I).
     std::size_t m = even ? n / 2 : n;
+    // The folded routes of DCT-I and DST-I (X85's arm D): odd n up to the profile's limit, without
+    // accumulation (DCT-I's v_0 waits in the output's place of Y_1). A real DFT of n -+ 1 points:
+    // a complex chain of half that. DCT-I from 33 points only (X85's narrowings, EPYC 7763): at 5
+    // points, whose extension is one leaf of 4, it was slower in every run (1.04-1.08 of the
+    // extension's time: the folded DCT-I's extra stage for v_0 and its one-unit store weigh on so
+    // short a line); single rows of 9-17 points swung between 0.875 and 1.093 from run to run; from
+    // 33 points it took 0.84-0.92 in every run.
+    constexpr std::size_t folded_dct1_min = 33;
+    // The limit is the machine's (machine_profile::r2r_folded_isa: the processor's best target,
+    // not the plan's), so every target of a machine takes the route alike.
+    const fftn::isa folded_isa = settings.profile.r2r_folded_isa;
+    const bool folded_machine =
+        folded_isa == fftn::isa::best || static_cast<unsigned char>(folded_isa) ==
+                                             static_cast<unsigned char>(plan_target_of(options{}));
+    const bool folded = extension && !even && !e.out.accumulate && folded_machine &&
+                        n <= static_cast<std::size_t>(settings.profile.r2r_folded_max) &&
+                        (rt != route::dct1 || n >= folded_dct1_min);
     if (fourth && !even) {
       m = 2 * n;
+    } else if (folded) {
+      m = rt == route::dct1 ? (n - 1) / 2 : (n + 1) / 2;
     } else if (extension) {
       m = rt == route::dct1 ? n - 1 : n + 1;
     }
@@ -941,6 +1125,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       std::vector<T> twiddles;
       if (fourth) {
         twiddles = dct4_twiddles<T>(n);
+      } else if (folded) {
+        twiddles = folded_sines<T>(2 * m);
       } else if (extension) {
         twiddles = pairing_twiddles<T>(2 * m);
       } else {
@@ -955,7 +1141,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     std::vector<stage> line;
     stage rd;
     // The extensions' reads are packed whatever n's parity.
-    rd.run = read_kernel<T>(rt, read_factor, even || extension);
+    rd.run = folded ? folded_read_kernel<T>(sine, read_factor)
+                    : read_kernel<T>(rt, read_factor, even || extension);
     rd.args.src_stride = src.stride[d];
     rd.args.src_qstride = read_factor ? e.in.axis_strides[d] : 0;
     rd.args.n = n;
@@ -982,6 +1169,12 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
                             " complex values"
                       : " twiddled into scratch as " + std::to_string(n) +
                             " complex values, zero-padded to " + std::to_string(m));
+    } else if (folded) {
+      rd.args.twiddles = dct_table;
+      rd.name = "r2r read: " + kname + " line folded (" +
+                (sine ? "s_j u_j + v_j / 2" : "u_j / 2 - s_j v_j") + ") into " +
+                std::to_string(2 * m) + " reals, packed into scratch as " + std::to_string(m) +
+                " complex pairs";
     } else if (extension) {
       rd.name = "r2r read: " + kname + " line's " + (sine ? "odd" : "even") + " extension of " +
                 std::to_string(2 * m) + " reals packed into scratch as " + std::to_string(m) +
@@ -998,6 +1191,21 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       rd.name += ", times the input edge's real factor";
     }
     line.push_back(std::move(rd));
+    if (folded && !sine) {
+      stage v0;
+      v0.run = read_factor ? &folded_v0<T, true> : &folded_v0<T, false>;
+      v0.args.src_stride = src.stride[d];
+      v0.args.dst_stride = dst.stride[d];
+      v0.args.src_qstride = read_factor ? e.in.axis_strides[d] : 0;
+      v0.args.n = n;
+      v0.src = src.where;
+      v0.dst = dst.where;
+      v0.units = 1;
+      v0.chunks = 1;
+      v0.moving_factors = read_factor ? moving_in_factor : 0;
+      v0.name = "r2r read: dct1 line's x_0 - x_(n-1) into the output's place of Y_1";
+      line.push_back(std::move(v0));
+    }
 
     std::size_t need = 0;
     const slot z = chain.scratch_transform(m, sign, need, line);
@@ -1007,13 +1215,14 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     const bool scaled = scale != 1.0;
     const bool accumulate = last && e.out.accumulate;
     stage st;
-    st.run = store_kernel<T>(rt, store_factor, scaled, accumulate, even || extension);
+    st.run = folded ? folded_store_kernel<T>(sine, store_factor, scaled)
+                    : store_kernel<T>(rt, store_factor, scaled, accumulate, even || extension);
     st.args.dst_stride = dst.stride[d];
     st.args.src_qstride = store_factor ? e.out.axis_strides[d] : 0;
     st.args.n = n;
     st.args.scale = scaled ? scale : 1.0;
-    if (dht && even) {
-      const std::vector<T> twiddles = pairing_twiddles<T>(n);
+    if ((dht && even) || folded) {
+      const std::vector<T> twiddles = pairing_twiddles<T>(folded ? 2 * m : n);
       auto& table = tables_of<T>(c).emplace_back(twiddles.begin(), twiddles.end());
       st.args.twiddles = table.data();
     } else if (second || fourth || extension) {
@@ -1027,6 +1236,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       st.units = even ? m + 1 : half_units;
     } else if (fourth) {
       st.units = even ? m : n;
+    } else if (folded) {
+      st.units = 1; // the odd outputs are running sums
     } else if (extension) {
       st.units = n;
     } else {
@@ -1045,6 +1256,13 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
           "the " + kname + " twiddle" +
           (even ? ", Y_2k and Y_(n-1-2k) from bin k" : ", Y_k from the real part of bin k < n") +
           (sine ? ", with alternating signs" : "");
+    } else if (folded) {
+      store_what = std::string("the r2c pairing, ") +
+                   (sine ? "the odd outputs from its imaginary parts and the even ones as running "
+                           "sums of its real parts"
+                         : "the even outputs from its real parts and the odd ones as running sums "
+                           "of its imaginary parts") +
+                   ", one unit";
     } else if (extension) {
       store_what =
           std::string("the r2c pairing's ") +
@@ -1077,6 +1295,9 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
                          : "the odd-length route: a zero-padded complex transform of 2n, about "
                            "four times the even route's work") +
                    (sine ? ", the sine kind by reversal and signs" : "") + ")";
+    } else if (folded) {
+      route_text = " (the folded route: a real DFT of n " + std::string(sine ? "+" : "-") +
+                   " 1 points, half the extension's work, its odd outputs running sums)";
     } else if (extension) {
       route_text = std::string(" (the ") + (sine ? "odd" : "even") +
                    " extension: about twice the work of the kinds II and III)";
@@ -1090,6 +1311,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       read_note = " (Makhoul's order)";
     } else if (fourth) {
       read_note = even ? " (pairs, twiddled)" : " (twiddled, zero-padded)";
+    } else if (folded) {
+      read_note = " (folded)";
     } else if (extension) {
       read_note = sine ? " (the odd extension)" : " (the even extension)";
     } else if (!dht) {

@@ -793,6 +793,17 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(
       x86("linux-gcp-n2-ice-lake.sysfs", fftn::detail::cpu_vendor::intel).callback_block_bytes,
       24U * 1024U);
+  // The folded DCT-I and DST-I (X85's arm D) up to 129 points on Zen 3's class, AMD's cores only;
+  // the extensions everywhere else.
+  EXPECT_EQ(machine_profile{}.r2r_folded_max, 0U);
+  EXPECT_EQ(epyc86.r2r_folded_max, 129U);
+  EXPECT_EQ(epyc86.r2r_folded_isa, fftn::isa::avx2);
+  EXPECT_EQ(machine_profile{}.r2r_folded_isa, fftn::isa::best);
+  for (const auto v : {fftn::detail::cpu_vendor::intel, fftn::detail::cpu_vendor::unknown}) {
+    EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs", v).r2r_folded_max, 0U);
+  }
+  EXPECT_EQ(apple.r2r_folded_max, 0U);
+  EXPECT_EQ(x86("linux-gcp-c4d-zen5.sysfs").r2r_folded_max, 0U);
   // The team state on pages of its own on the Xeon 6240's class only (X79, narrowed to it by the
   // maintainer): the EPYC 7763, the M5 Max, Granite Rapids, the Ice Lake VM, Zen 5 and Axion keep
   // it on its 128-byte lines.
