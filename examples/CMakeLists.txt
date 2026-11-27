@@ -28,6 +28,12 @@ fftn_configure_target(fftn_example_c_api_fusion)
 set_target_properties(fftn_example_c_api_fusion PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 target_link_libraries(fftn_example_c_api_fusion PRIVATE fftn::fftn)
 add_test(NAME example.c_api_fusion COMMAND fftn_example_c_api_fusion)
+# Split complex in the C API: real rows into split spectra and back.
+add_executable(fftn_example_c_api_split c_api_split.c)
+fftn_configure_target(fftn_example_c_api_split)
+set_target_properties(fftn_example_c_api_split PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+target_link_libraries(fftn_example_c_api_split PRIVATE fftn::fftn)
+add_test(NAME example.c_api_split COMMAND fftn_example_c_api_split)
 # The same program on the C API's shared library, when it is built (FFTN_BUILD_C_SHARED).
 if(TARGET fftn_c)
   add_executable(fftn_example_c_api_shared c_api.c)
