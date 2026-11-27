@@ -4685,9 +4685,9 @@ infrastructure to maintain.
 
 | Document | Content | Form |
 |---|---|---|
-| `README.md` | what FFTN is, a first example, links | Markdown |
+| `README.md` | what FFTN is, what is built (provisional parts marked), a first example, links | Markdown with an example |
 | `docs/conventions.md` | every convention, stated exactly: the formula each transform computes (the real-to-real kinds of 5.7 included), signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving, split-complex arrays), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
-| `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
+| `docs/guide.md` | task-oriented, a map of the other pages: a first transform, plans and workspaces, rows, planes, volumes, real transforms, choosing lengths, planning effort and wisdom, threads, fusion, real-to-real transforms, split complex, the convenience layer, Kokkos, the C API; what is provisional and what is planned | Markdown with examples |
 | `docs/planning.md` | planning effort (rules, quick and full measurement) and wisdom | Markdown with an example |
 | `docs/lengths.md` | fast lengths (`next_fast_length`) and the per-length estimate (`relative_cost`) | Markdown with an example |
 | `docs/kokkos.md` | the optional Kokkos adapter: View-based construction, the Kokkos-FFT-shaped plan, moving a Kokkos-FFT call site, the rules for Views and axes, normalisation, and every difference from Kokkos-FFT | Markdown with examples |
@@ -4705,9 +4705,9 @@ infrastructure to maintain.
 - **The public headers are the API reference.** Every public declaration carries a
   comment stating what it does, its preconditions, and what it guarantees. The Markdown
   documents explain and link; they do not restate signatures.
-- **Examples are compiled.** Every code example in `docs/` is a snippet of a file under
-  `examples/`, which the build compiles and the tests run. A gate stage checks that the
-  snippets in the documents match the files, so examples cannot rot.
+- **Examples are compiled.** Every code example in `docs/` and `README.md` is a snippet of a
+  file under `examples/`, which the build compiles and the tests run. A gate stage checks that
+  the snippets in the documents match the files, so examples cannot rot.
 - **Completeness is checked, not hoped for.** Doxygen is used as a linter only: a gate
   stage runs it over `include/fftn/` with undocumented public members as errors. It needs
   one small configuration file and produces nothing that is committed. Rendering an HTML
@@ -5425,6 +5425,7 @@ to change before a release.
 | 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 | 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
 | 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
+| 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 
 ---
 

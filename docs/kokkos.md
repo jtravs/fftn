@@ -245,6 +245,10 @@ namespace per build.
   real transforms. The real View must show that padding itself: take it as the first n
   columns of a View of 2(n/2 + 1) reals over the complex memory (a subview of the padded rows
   does it, in either layout).
+- **A View's dimensions as axes.** A helper returning the `axis` list of a pair of Views, to
+  pass to the core's `axes_*` functions (`array_of`), is planned; its design awaits the
+  maintainer. Meanwhile `shape_of` gives the whole shape, whose fields may be changed before
+  the plan is built.
 
 ## Normalisation
 
