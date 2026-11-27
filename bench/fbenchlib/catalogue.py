@@ -182,7 +182,7 @@ def load(name_or_path: str) -> Catalogue:
                     f"{where}: r2r is one of {R2R_KINDS}, or one per axis joined by '.'"
                 )
             per_axis = axis_kinds * len(dims) if len(axis_kinds) == 1 else axis_kinds
-            if any(k == "dct1" and d < 2 for k, d in zip(per_axis, dims, strict=True)):
+            if per_axis and any(k == "dct1" and d < 2 for k, d in zip(per_axis, dims, strict=True)):
                 raise ValueError(f"{where}: dct1 needs every length >= 2")
             if precision not in PRECISIONS:
                 raise ValueError(f"{where}: precision is one of {PRECISIONS}")
