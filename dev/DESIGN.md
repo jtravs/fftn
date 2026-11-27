@@ -1810,8 +1810,8 @@ buffer, then rows). Both foldings need distinct source and destination, so:
 - out of place, DIT order needs no scratch of size N and DIF order needs one;
 - **in place** (N1 ≠ N2 in general) the grid needs either one scratch of size N, or an
   explicit in-place permutation pass (a digit-reversal swap, which exists only for
-  palindromic radix sequences, as in KFR's sandwich), or, inside a pipeline, no
-  permutation at all (section 12.2). Experiment X12 chooses per regime.
+  palindromic radix sequences, as in KFR's sandwich). Experiment X12 chooses per regime.
+  (Pipelines do not take the grid: section 12.2, X9.)
 
 Two regimes:
 
@@ -3023,13 +3023,18 @@ Points that matter:
   whose first pass does so, pruned edges, and depth-first chains (X50). Fan-out and blocks of
   copies need a loop over a scratch-resident line, the same extension the Bluestein copies need
   (X36b).
-- **Scrambled order.** A middle made only of vocabulary may later run in the plan's own order
-  instead of the natural one. With in-place strategies that removes two permutation passes; in
-  the blocked grid, the forward's last transpose and the inverse's first. A `spectral_layout`
-  object would expose the order to callers who store their multipliers permuted. This is
-  experiment X9; the estimate from prior art (MKL's scrambled mode, djbfft, PFFFT) is 10–25 %
-  for L2-resident sizes and more beyond. Callbacks always see natural order, because their
-  coordinates must be affine in the block.
+- **Natural order for now; the scrambled middle open for the depth-first pair** (experiment X9,
+  2026-11-27). The middle runs in the natural order, and there is no `spectral_layout`. No pair
+  runs a pass only for the natural order: the chains are Stockham autosorts (8.5), the depth-first
+  chains fold the four-step transpose into their first and top passes, the lanes' gather and
+  scatter are the tile's layout, and no pipeline takes the grid. On the chain and lanes pairs, the
+  forward's last pass and the inverse's first act on the same R-tuples, so a joined middle pass
+  needs no scrambled order. On the depth-first pair a scrambled order may pay through locality:
+  the forward in DIF at the top, each block's two sub-row chains and the factor in cache, then the
+  inverse in DIT, is 3 traversals of the line against today's 6 and 4 for the best natural-order
+  form from today's passes. It is a lead for the performance phase, to be tested first on
+  Bluestein's depth-first convolution, whose kernel table the plan owns (no API). Callbacks see
+  natural order in any case, because their coordinates must be affine in the block.
 
 **Plan for task 5.2** (designed 2026-11-25; 5.2a–5.2f built, "As built" below; steps 5.2a–5.2g in PLAN phase 5,
 experiment X67; the API points the maintainer has to settle are listed in 18.2, "Pipelines").
@@ -3464,7 +3469,7 @@ pipelines.
   - a lanes tile, where element i of row r is at i B + r (`element_stride` B, `line_stride`
     1, `lines` the block's valid rows, never its idle lanes).
 
-  Never on an internal layout: split registers, scrambled orders (5.4), the packed c2r half
+  Never on an internal layout: split registers, the packed c2r half
   spectrum (X60) or padded lanes. Per strategy:
 
   | Strategy | Input edge (after the read, before the first pass) | Output edge (after the last pass) |
@@ -5479,6 +5484,7 @@ to change before a release.
 | 2026-11-27 | Experiment X68 (task 5.3h, section 12.5, "As measured"): fbench's `STAGE` option (today's route, the three objects, the factor variant, the slab grouping, one sweep), catalogue `x68`, the DRAM traffic campaign; no library change | X68's rules on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): 5.3's acceptance not met (O/T at 384² at full width 2.59 and 1.89; 1.32 with two components on the EPYC), the planes over a stride-1 batch about 5 times the tight planes' time (lead 1, for the maintainer); the multi-axis pipeline proposed by rule 4 (G/O 0.305 and 0.519), behind lead 1, not built |
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 | 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
+| 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
 
 ---
 
