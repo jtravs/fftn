@@ -470,9 +470,9 @@ struct machine_profile {
   edge_forms_reach edge_batched_forms = edge_forms_reach::none;
   // The bytes a block callback's block holds at most (fftn/callback.hpp, DESIGN.md 12.3; task
   // 5.3b): lines up to this are passed whole (several short lines a strategy holds together in
-  // one call), longer ones in element ranges of about this size. Half the L1 data cache, the
-  // design's proposal until experiment X66 decides it per profile: set_grid_sizes sets it from
-  // the L1 data cache. Last, so that every field above keeps its place, and 32 bits, so that it
+  // one call), longer ones in element ranges of about this size. set_grid_sizes sets half the L1
+  // data cache, and a quarter of L2 on the Xeon 6240's class (experiment X66's rule 3). Last, so
+  // that every field above keeps its place, and 32 bits, so that it
   // fits the struct's tail padding: the profile's size, which the plain drivers' code copies
   // (schedule::profile), stays what it was.
   std::uint32_t callback_block_bytes = std::uint32_t{16} * 1024;

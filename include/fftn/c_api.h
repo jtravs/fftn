@@ -39,6 +39,8 @@
 
 /* NOLINTNEXTLINE(modernize-deprecated-headers): the header is C as well as C++ */
 #include <stddef.h>
+/* NOLINTNEXTLINE(modernize-deprecated-headers): the header is C as well as C++ */
+#include <stdint.h>
 
 /* NOLINTBEGIN(modernize-use-using,modernize-redundant-void-arg,performance-enum-size): C */
 
@@ -413,6 +415,299 @@ FFTN_C_API const char* fftn_isa_name(int target) FFTN_C_NOEXCEPT;
 
 /** fftn::version(): the linked library's version as "major.minor.patch". */
 FFTN_C_API const char* fftn_version(void) FFTN_C_NOEXCEPT;
+
+/* ---- Fusion: edges, block callbacks and pipelines (step 6.9) ----
+ *
+ * Provisional (step 6.9, dev/DESIGN.md 5.9 and 12): the C form of fftn/edges.hpp,
+ * fftn/callback.hpp and fftn/pipeline.hpp, whose C++ API the maintainer accepted as built on
+ * 2026-11-26. dev/DESIGN.md 5.9 names the edge types and gives no C block for the rest, so the
+ * choices listed in its "As built (step 6.9)" are provisional too. The C++ headers state what
+ * each operation computes, its preconditions and its guarantees; docs/fusion.md says which tool
+ * fits which work, and docs/c_api.md ("Fusion") quotes a compiled C example. */
+
+/** What an edge's factor multiplies by, fftn::factor_kind. */
+typedef enum fftn_factor_kind {
+  FFTN_FACTOR_NONE,    /**< no factor */
+  FFTN_FACTOR_REAL,    /**< real values in the plan's precision */
+  FFTN_FACTOR_COMPLEX, /**< complex values (interleaved pairs) in the plan's precision */
+} fftn_factor_kind;
+
+/**
+ * A factor of an edge, fftn::factor: the strides are borrowed arrays, a pointer and a count,
+ * read during the call that builds the plan or pipeline only. The array itself arrives with
+ * each execution (fftn_exec_args). NULL strides only with a count of 0; a batch stride count of
+ * 0 broadcasts along every batch dimension, as the C++ empty vector does.
+ */
+typedef struct fftn_factor {
+  fftn_factor_kind kind;         /**< FFTN_FACTOR_NONE: no factor (the strides are ignored) */
+  size_t axis_stride_count;      /**< the entries of axis_strides: one per axis */
+  const ptrdiff_t* axis_strides; /**< the array's stride along each axis, in its elements */
+  size_t batch_stride_count;     /**< the entries of batch_strides: one per batch dimension, or 0 */
+  const ptrdiff_t* batch_strides; /**< the array's stride along each batch dimension */
+} fftn_factor;
+
+/**
+ * fftn::along_transforms: fftn_block_info::line_axis when the lines of a block are consecutive
+ * transforms of the batch.
+ */
+#define FFTN_ALONG_TRANSFORMS SIZE_MAX
+
+/**
+ * Where a block lies, fftn::block_info, handed to a C callback with each call and valid during
+ * the call only. Element i of line k is at `data` advanced by `i * element_stride + k *
+ * line_stride` elements of the edge's type (a complex value is one element: two reals).
+ */
+typedef struct fftn_block_info {
+  size_t transform;         /**< the batch number of line 0's transform */
+  size_t rank;              /**< the entries of origin: the shape's axes (1 for a pipeline) */
+  const size_t* origin;     /**< the logical index of element 0 of line 0 along each axis */
+  size_t element_axis;      /**< the axis (an index into the shape's axes) elements advance along */
+  size_t line_axis;         /**< the axis lines advance along, or FFTN_ALONG_TRANSFORMS */
+  size_t length;            /**< the elements per line */
+  size_t lines;             /**< the lines of the block, at least 1 */
+  ptrdiff_t element_stride; /**< the distance between consecutive elements of a line */
+  ptrdiff_t line_stride;    /**< the distance between consecutive lines (0 for one line) */
+  size_t group;             /**< the members of a pipeline's group handed together; 1 otherwise */
+  ptrdiff_t group_stride;   /**< the distance between consecutive members of a group, or 0 */
+  size_t copy;              /**< which copy of a pipeline's fan-out an epilogue block is; else 0 */
+  int member;               /**< the member running the call: 0 serially, the rank, the task */
+  void* scratch;            /**< this member's scratch, on a 128-byte boundary; NULL for none */
+  size_t scratch_bytes;     /**< the bytes at scratch: fftn_callback::scratch_bytes */
+} fftn_block_info;
+
+/**
+ * A block callback, fftn::block_fn in C: `user` is the edge's pointer in fftn_exec_args
+ * (in_user, mid_user, out_user) as given, NULL included; `data` addresses element 0 of line 0,
+ * of the edge's element type (the plan's precision; complex values interleaved).
+ *
+ * fftn/callback.hpp's contract holds: coverage (each element once per execution, in blocks of
+ * the plan's choosing, possibly on several threads at once and in any order), purity for
+ * bitwise-identical results across execution forms, no use of the workspace but `scratch`, no
+ * writes outside the block but to the application's own memory, and nested serial executions
+ * only (fftn_execute, fftn_execute_args, fftn_execute_transforms and its _args form, or a
+ * pipeline's serial forms), each with a workspace of its own.
+ *
+ * **Failure.** A callback returns nothing and cannot stop the execution: one that fails records
+ * the failure in the application's memory (through `user`, written by any member, so an atomic
+ * flag or one slot per `member`) and returns, and the caller checks it after the execution,
+ * whose output is then the application's to discard. A callback must return normally: leaving
+ * it by `longjmp` is undefined (team members would wait for it for ever), and a C++ exception
+ * that reaches FFTN from it ends the program (`std::terminate`), since none crosses FFTN.
+ */
+typedef void (*fftn_block_fn)(void* user, const fftn_block_info* info, void* data);
+
+/** What a callback does with its block, fftn::callback_mode. */
+typedef enum fftn_callback_mode {
+  FFTN_CALLBACK_MODIFY,  /**< changes the edge's values in place */
+  FFTN_CALLBACK_PRODUCE, /**< input edges only: fills the block; the input is not read */
+  FFTN_CALLBACK_CONSUME, /**< output edges only: takes the block; the output is not written */
+} fftn_callback_mode;
+
+/** The callback of an edge, fftn::callback: a NULL fn is none, with the other fields 0. */
+typedef struct fftn_callback {
+  fftn_block_fn fn;        /**< the function, or NULL */
+  fftn_callback_mode mode; /**< FFTN_CALLBACK_MODIFY by default */
+  size_t scratch_bytes;    /**< scratch per member, counted in the workspace's bytes */
+} fftn_callback;
+
+/**
+ * One edge, fftn::edge: a scale, a factor, accumulation (output edges only) and a callback.
+ * Start from fftn_edge_default(): a zeroed struct has a scale of 0, which is a valid scale.
+ */
+typedef struct fftn_edge {
+  double scale;       /**< a real factor; 1 */
+  fftn_factor mul;    /**< the factor's kind and strides; none */
+  int accumulate;     /**< nonzero: out += result (output edges only); 0 */
+  fftn_callback call; /**< a block callback; none */
+} fftn_edge;
+
+/** A plan's two edges, fftn::plan_edges. */
+typedef struct fftn_plan_edges {
+  fftn_edge in;  /**< the input edge */
+  fftn_edge out; /**< the output edge */
+} fftn_plan_edges;
+
+/**
+ * The data of one execution, fftn::exec_args: the factor arrays and the callbacks' user
+ * pointers. Every pointer may be NULL where nothing reads it; a zeroed struct is no data.
+ */
+typedef struct fftn_exec_args {
+  const void* in_factor;  /**< the input edge's (or a pipeline prologue's) factor array */
+  const void* mid_factor; /**< a pipeline middle's factor array */
+  const void* out_factor; /**< the output edge's (or a pipeline epilogue's) factor array */
+  void* in_user;          /**< the input edge's (or prologue's) callback argument */
+  void* mid_user;         /**< a pipeline middle's callback argument */
+  void* out_user;         /**< the output edge's (or epilogue's) callback argument */
+} fftn_exec_args;
+
+/** fftn::edge{}: scale 1, no factor, no accumulation, no callback. */
+FFTN_C_API fftn_edge fftn_edge_default(void) FFTN_C_NOEXCEPT;
+
+/**
+ * Builds the plan of `shape` with `options` (NULL: the defaults) and `edges` (NULL: none), as
+ * the constructor of fftn::plan that takes plan_edges does, and returns it with one reference;
+ * NULL on failure. With NULL edges it is fftn_plan_create.
+ *
+ * Fails as fftn_plan_create does, and with FFTN_ERROR_INVALID_ARGUMENT where the C++ constructor
+ * refuses the edges (the message names the C++ field), where a factor's kind or a callback's
+ * mode is not one of its enumerators, and where a stride array is NULL with a count that is not
+ * 0. The edges' stride arrays are borrowed for the call only; their callbacks are kept.
+ */
+FFTN_C_API fftn_plan* fftn_plan_create_edges(const fftn_shape* shape, const fftn_options* options,
+                                             const fftn_plan_edges* edges,
+                                             fftn_error* error) FFTN_C_NOEXCEPT;
+
+/**
+ * fftn::plan::execute(in, out, ws, args): fftn_execute with the data of the execution (`args`;
+ * NULL is a zeroed fftn_exec_args). A plan with factors or callbacks must be executed through
+ * the _args forms: the others, like an execution without an array the plan needs, end the
+ * program with a message on stderr, as in C++.
+ */
+FFTN_C_API void fftn_execute_args(const fftn_plan* plan, const void* in, void* out,
+                                  fftn_workspace* workspace,
+                                  const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/** fftn::plan::execute_transforms with exec_args: fftn_execute_transforms with `args`. */
+FFTN_C_API void fftn_execute_transforms_args(const fftn_plan* plan, size_t first, size_t count,
+                                             const void* in, void* out, fftn_workspace* workspace,
+                                             const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/**
+ * The team fftn::plan::execute with exec_args: fftn_execute_team with `args`, the same on every
+ * member (each member's callbacks receive the user pointers of its own call).
+ */
+FFTN_C_API void fftn_execute_team_args(const fftn_plan* plan, const void* in, void* out,
+                                       fftn_team team, fftn_workspace* workspace,
+                                       fftn_completion done,
+                                       const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/** The executor fftn::plan::execute with exec_args: fftn_execute_on with `args`. */
+FFTN_C_API int fftn_execute_on_args(const fftn_plan* plan, const void* in, void* out,
+                                    const fftn_executor* executor, fftn_workspace* workspace,
+                                    const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/**
+ * The kinds of row pipeline, fftn::pipeline<In, Mid, Out>'s element types, with C the complex
+ * type of the precision and T its real type.
+ */
+typedef enum fftn_pipeline_kind {
+  FFTN_PIPELINE_CCC, /**< <C, C, C>: two complex transforms, of directions first and -first */
+  FFTN_PIPELINE_TCT, /**< <T, C, T>: r2c, a complex middle of n/2 + 1 bins, then c2r */
+  FFTN_PIPELINE_CTC, /**< <C, T, C>: c2r, a real middle of n points, then r2c */
+} fftn_pipeline_kind;
+
+/** The middle of a pipeline, fftn::pipeline_desc::middle: no accumulation. */
+typedef struct fftn_middle {
+  double scale;       /**< a real factor; 1 */
+  fftn_factor mul;    /**< the factor by bin: one axis stride, batch strides or none */
+  fftn_callback call; /**< a callback on each whole line of the spectrum (modify only) */
+} fftn_middle;
+
+/** fftn::no_group: fftn_pipeline_desc::group without a group. */
+#define FFTN_NO_GROUP SIZE_MAX
+
+/**
+ * A row pipeline's description, fftn::pipeline_desc, field by field; the arrays (batches,
+ * runs, the factors' strides) are borrowed for the call of fftn_pipeline_create only. Start
+ * from fftn_pipeline_desc_default(): a zeroed struct has scales of 0, a fan-out of 0 and a
+ * group of batch dimension 0.
+ */
+typedef struct fftn_pipeline_desc {
+  fftn_pipeline_kind kind;      /**< the kind; FFTN_PIPELINE_CCC */
+  fftn_precision precision;     /**< the precision; FFTN_DOUBLE */
+  int first;                    /**< FFTN_PIPELINE_CCC: the first direction; FFTN_FORWARD */
+  fftn_axis line;               /**< the line: its length n and strides (0: tight) */
+  size_t batch_rank;            /**< the batch dimensions; 0 for a single line */
+  const fftn_batch* batches;    /**< batch_rank batch dimensions, slowest first */
+  size_t run_count;             /**< the stored runs of the line; 0 for none */
+  const fftn_stored_run* runs;  /**< run_count runs, each of axis 0 */
+  fftn_edge prologue;           /**< the input edge (no accumulation) */
+  fftn_middle middle;           /**< what multiplies the spectrum between the transforms */
+  fftn_edge epilogue;           /**< the output edge */
+  size_t fanout;                /**< inverse transforms (copies) per line; 1 */
+  ptrdiff_t fanout_out_dist;    /**< the distance between copies' outputs, in Out elements */
+  ptrdiff_t fanout_factor_dist; /**< the distance between copies' middle factors */
+  size_t group; /**< a batch dimension the middle callback sees whole; FFTN_NO_GROUP */
+} fftn_pipeline_desc;
+
+/** An opaque row pipeline of any kind and precision, fftn::pipeline: reference counted. */
+typedef struct fftn_pipeline fftn_pipeline;
+
+/**
+ * fftn::pipeline_desc{} in C: FFTN_PIPELINE_CCC, FFTN_DOUBLE, first FFTN_FORWARD, scales 1,
+ * no factors, callbacks, batches or runs, a fan-out of 1, FFTN_NO_GROUP. The line's length is
+ * left 0, to set.
+ */
+FFTN_C_API fftn_pipeline_desc fftn_pipeline_desc_default(void) FFTN_C_NOEXCEPT;
+
+/**
+ * Builds the pipeline `desc` with `options` (NULL: the defaults), as the constructor of
+ * fftn::pipeline does, and returns it with one reference; NULL on failure.
+ *
+ * Fails with FFTN_ERROR_INVALID_ARGUMENT, and the message naming the field (the C++ names, such
+ * as desc.middle.mul.kind), where the C++ constructor throws std::invalid_argument, and also when
+ * `desc` is NULL, a field holds a value that is not one of its enumerators (kind, precision,
+ * first of FFTN_PIPELINE_CCC, a run's where, a factor's kind, a callback's mode), or an array is
+ * NULL while its count is not 0; with FFTN_ERROR_OUT_OF_MEMORY when memory runs out.
+ */
+FFTN_C_API fftn_pipeline* fftn_pipeline_create(const fftn_pipeline_desc* desc,
+                                               const fftn_options* options,
+                                               fftn_error* error) FFTN_C_NOEXCEPT;
+
+/** Adds a reference to `pipeline` and returns it; NULL for NULL. As fftn_plan_ref. */
+FFTN_C_API fftn_pipeline* fftn_pipeline_ref(fftn_pipeline* pipeline) FFTN_C_NOEXCEPT;
+
+/** Drops a reference; the last frees the pipeline. Nothing for NULL. As fftn_plan_release. */
+FFTN_C_API void fftn_pipeline_release(fftn_pipeline* pipeline) FFTN_C_NOEXCEPT;
+
+/** fftn::pipeline::workspace_bytes(lanes). */
+FFTN_C_API size_t fftn_pipeline_workspace_bytes(const fftn_pipeline* pipeline,
+                                                int lanes) FFTN_C_NOEXCEPT;
+
+/** fftn::pipeline::describe() copied into `buffer` as fftn_plan_describe does. */
+FFTN_C_API size_t fftn_pipeline_describe(const fftn_pipeline* pipeline, char* buffer,
+                                         size_t size) FFTN_C_NOEXCEPT;
+
+/** fftn::pipeline::instruction_set(): an fftn_isa, never FFTN_ISA_BEST. */
+FFTN_C_API int fftn_pipeline_instruction_set(const fftn_pipeline* pipeline) FFTN_C_NOEXCEPT;
+
+/**
+ * The transforms of the batch as fftn_pipeline_execute_transforms and fftn_pipeline_transforms_of
+ * count them, fftn::pipeline::transform_count(): the lines, or with a group the groups.
+ */
+FFTN_C_API size_t fftn_pipeline_transform_count(const fftn_pipeline* pipeline) FFTN_C_NOEXCEPT;
+
+/**
+ * fftn::pipeline::execute(in, out, ws, args): every line, serially. `args` NULL is a zeroed
+ * fftn_exec_args; an execution without an array the pipeline needs ends the program, as in C++.
+ */
+FFTN_C_API void fftn_pipeline_execute(const fftn_pipeline* pipeline, const void* in, void* out,
+                                      fftn_workspace* workspace,
+                                      const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/** fftn::pipeline::execute_transforms: `count` transforms from `first`, serially. */
+FFTN_C_API void fftn_pipeline_execute_transforms(const fftn_pipeline* pipeline, size_t first,
+                                                 size_t count, const void* in, void* out,
+                                                 fftn_workspace* workspace,
+                                                 const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/** The team fftn::pipeline::execute with an explicit completion, as fftn_execute_team_args. */
+FFTN_C_API void fftn_pipeline_execute_team(const fftn_pipeline* pipeline, const void* in, void* out,
+                                           fftn_team team, fftn_workspace* workspace,
+                                           fftn_completion done,
+                                           const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/** fftn::pipeline::transforms_of(team): the transforms `team`'s member owns. */
+FFTN_C_API fftn_transform_range fftn_pipeline_transforms_of(const fftn_pipeline* pipeline,
+                                                            fftn_team team) FFTN_C_NOEXCEPT;
+
+/**
+ * The executor fftn::pipeline::execute, with the statuses and preconditions of
+ * fftn_execute_on.
+ */
+FFTN_C_API int fftn_pipeline_execute_on(const fftn_pipeline* pipeline, const void* in, void* out,
+                                        const fftn_executor* executor, fftn_workspace* workspace,
+                                        const fftn_exec_args* args) FFTN_C_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */

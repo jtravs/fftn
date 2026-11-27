@@ -9,6 +9,7 @@
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/split.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -119,8 +120,11 @@ enum class r2r_kind : unsigned char {
 /// The element types select the kind: `shape<std::complex<T>, std::complex<T>>` is a
 /// complex transform (c2c), `shape<T, std::complex<T>>` a real-to-complex one (r2c),
 /// `shape<std::complex<T>, T>` a complex-to-real one (c2r) and `shape<T, T>` a real-to-real one
-/// (r2r, whose `kinds` give each axis's transform), for `T` = `double` or `float`. Other
-/// combinations do not compile.
+/// (r2r, whose `kinds` give each axis's transform), for `T` = `double` or `float`. A complex
+/// side may instead be split (fftn/split.hpp, provisional, task 6.10):
+/// `shape<split_complex<T>, split_complex<T>>`, `shape<T, split_complex<T>>` and
+/// `shape<split_complex<T>, T>` are the c2c, r2c and c2r kinds on split-complex data, whose
+/// split side's strides and distances count elements of `T`. Other combinations do not compile.
 ///
 /// Axes are listed slowest-varying first, as the dimensions of a C array; for r2c and c2r
 /// the last axis is the halved one (n/2 + 1 complex values on the complex side); r2r has no
@@ -138,9 +142,17 @@ template <class In, class Out> struct shape {
           (std::is_same_v<In, float> && std::is_same_v<Out, std::complex<float>>) ||
           (std::is_same_v<In, std::complex<float>> && std::is_same_v<Out, float>) ||
           (std::is_same_v<In, double> && std::is_same_v<Out, double>) ||
-          (std::is_same_v<In, float> && std::is_same_v<Out, float>),
+          (std::is_same_v<In, float> && std::is_same_v<Out, float>) ||
+          (std::is_same_v<In, split_complex<double>> &&
+           std::is_same_v<Out, split_complex<double>>) ||
+          (std::is_same_v<In, double> && std::is_same_v<Out, split_complex<double>>) ||
+          (std::is_same_v<In, split_complex<double>> && std::is_same_v<Out, double>) ||
+          (std::is_same_v<In, split_complex<float>> && std::is_same_v<Out, split_complex<float>>) ||
+          (std::is_same_v<In, float> && std::is_same_v<Out, split_complex<float>>) ||
+          (std::is_same_v<In, split_complex<float>> && std::is_same_v<Out, float>),
       "fftn::shape<In, Out>: the kinds are complex to complex, real to complex, complex to "
-      "real and real to real, in double or float");
+      "real and real to real, in double or float, the complex sides interleaved "
+      "(std::complex) or split (split_complex)");
 
   /// The direction of a complex-to-complex transform. Ignored by the other kinds: r2c is
   /// always forward, c2r always backward, and each real-to-real kind is one transform.
@@ -154,7 +166,7 @@ template <class In, class Out> struct shape {
   /// and side without runs is stored whole. Runs of one axis and side may not overlap, neither
   /// in their logical nor in their stored positions. Provisional (task 5.1d): not taken by
   /// in-place plans, nor together with an edge's factor (`plan_edges`), nor by real-to-real
-  /// shapes.
+  /// shapes, nor by split-complex ones (task 6.10).
   std::vector<stored_run> runs{};
   /// The kind of each axis of a real-to-real shape (`shape<T, T>`), in the order of `axes`. The
   /// kinds may differ between axes; the transform of several axes is the separable product of

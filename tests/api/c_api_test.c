@@ -249,6 +249,82 @@ static int ctest_team(const fftn_plan* plan, const void* in, void* out, int lane
 #endif
 }
 
+/* ---- Threads and pools for the fusion tests (c_fusion_test.c) ---- */
+
+typedef struct ctest_rank {
+  void (*fn)(void* arg, int rank);
+  void* arg;
+  int rank;
+} ctest_rank;
+
+#if CTEST_THREADS
+static void* ctest_rank_thread(void* r) {
+  const ctest_rank* rank = (const ctest_rank*)r;
+  rank->fn(rank->arg, rank->rank);
+  return NULL;
+}
+#endif
+
+int ctest_parallel(int lanes, void (*fn)(void* arg, int rank), void* arg) {
+  ctest_rank ranks[CTEST_MAX_LANES];
+  int r;
+  if (lanes < 1 || lanes > CTEST_MAX_LANES) {
+    return 1;
+  }
+  for (r = 0; r < lanes; ++r) {
+    ranks[r].fn = fn;
+    ranks[r].arg = arg;
+    ranks[r].rank = r;
+  }
+#if CTEST_THREADS
+  {
+    pthread_t threads[CTEST_MAX_LANES];
+    int started = 0;
+    int failed = 0;
+    for (r = 1; r < lanes; ++r) {
+      if (pthread_create(&threads[started], NULL, ctest_rank_thread, &ranks[r]) != 0) {
+        failed = 1;
+        break;
+      }
+      ++started;
+    }
+    if (!failed) {
+      fn(arg, 0);
+    }
+    for (r = 0; r < started; ++r) {
+      pthread_join(threads[r], NULL);
+    }
+    return failed;
+  }
+#else
+  for (r = lanes; r > 0; --r) {
+    fn(arg, r - 1);
+  }
+  return 0;
+#endif
+}
+
+int ctest_with_pool(int lanes, int group_size, int (*fn)(void* arg, const fftn_executor* executor),
+                    void* arg) {
+  ctest_pool pool;
+  fftn_executor executor;
+  int status;
+  if (lanes < 1 || lanes > CTEST_MAX_LANES) {
+    return FFTN_ERROR_INVALID_ARGUMENT;
+  }
+  if (ctest_pool_start(&pool, lanes) != 0) {
+    status = FFTN_ERROR_INTERNAL;
+  } else {
+    executor.self = &pool;
+    executor.concurrency = ctest_pool_concurrency;
+    executor.bulk = ctest_pool_bulk;
+    executor.group_size = group_size != 0 ? ctest_pool_group_size : NULL;
+    status = fn(arg, &executor);
+  }
+  ctest_pool_stop(&pool);
+  return status;
+}
+
 /* ---- Plans of a case ---- */
 
 static fftn_shape ctest_shape(const ctest_case* c) {

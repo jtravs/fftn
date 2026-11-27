@@ -117,12 +117,6 @@ edge_side side_of(const shape_view& s, const edge_view& e, bool output, const st
       reject(call + ".fn", "is a callback on a real-to-real plan, which takes none yet (tasks "
                            "5.3a to 5.3c built them for c2c, r2c and c2r plans)");
     }
-    // Stored runs on a multi-axis plan cut its edge phases into nests per run (run_phase,
-    // plan_core.cpp), which do not carry callbacks yet.
-    if (s.axes.size() != 1 && !s.runs.empty()) {
-      reject(call + ".fn", "is a callback on a multi-axis plan with stored runs, which takes none "
-                           "yet (task 5.3c built callbacks on planes and volumes without runs)");
-    }
     side.call = {.fn = e.call, .mode = e.call_mode, .scratch_bytes = e.call_scratch};
   }
   if (e.kind != factor_kind::none && e.kind != factor_kind::real &&
@@ -271,6 +265,51 @@ void edge_pass(const pass_args* a, const void* src, void* dst, std::size_t first
       yi[0] = re;
       if constexpr (!Real) {
         yi[1] = im;
+      }
+    }
+  }
+}
+
+// The conversion pass of a split-complex side (task 6.10, DESIGN.md 5.8) over elements
+// [first, last) of each of the stage's lines: the input's reads the real parts at src (src_stride
+// reals apart) and the imaginary parts through the input's cursor (in_factor, src_qstride reals
+// apart) and stores them interleaved at dst (dst_stride complex values apart); the output's reads
+// the interleaved values at src and stores the real parts at dst and the imaginary parts through
+// the output's cursor (out_factor). Copies only, so the values are those of the interleaved form
+// bit for bit. The output's cursor addresses the caller's imaginary array, which is writable (the
+// split execute takes it as split_ptr<T>); it travels in the const factor pointer of pass_args
+// that every cursor uses, so it is cast back here. Rows and offsets as edge_pass's (the real parts
+// count reals, the interleaved side complex values).
+template <class T, bool Output>
+void split_pass(const pass_args* a, const void* src, void* dst, std::size_t first,
+                std::size_t last) {
+  const std::size_t rows = a->rows == 0 ? 1 : a->rows;
+  const std::ptrdiff_t fs = a->src_qstride;
+  constexpr std::ptrdiff_t src_width = Output ? 2 : 1;
+  constexpr std::ptrdiff_t dst_width = Output ? 1 : 2;
+  for (std::size_t row = 0; row < rows; ++row) {
+    const auto q = static_cast<std::ptrdiff_t>(row);
+    const T* x = reinterpret_cast<const T*>(static_cast<const std::byte*>(src) +
+                                            static_cast<std::ptrdiff_t>(a->src_cols)) +
+                 q * a->src_dist * src_width;
+    T* y = reinterpret_cast<T*>(static_cast<std::byte*>(dst) +
+                                static_cast<std::ptrdiff_t>(a->dst_cols)) +
+           q * a->dst_dist * dst_width;
+    const std::byte* cursor =
+        static_cast<const std::byte*>(Output ? a->out_factor : a->in_factor) + q * a->dst_qstride;
+    for (std::size_t k = first; k < last; ++k) {
+      const auto i = static_cast<std::ptrdiff_t>(k);
+      if constexpr (Output) {
+        const T* xi = x + 2 * i * a->src_stride;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast): the caller's writable array
+        T* im = const_cast<T*>(reinterpret_cast<const T*>(cursor));
+        y[i * a->dst_stride] = xi[0];
+        im[i * fs] = xi[1];
+      } else {
+        const T* im = reinterpret_cast<const T*>(cursor);
+        T* yi = y + 2 * i * a->dst_stride;
+        yi[0] = x[i * a->src_stride];
+        yi[1] = im[i * fs];
       }
     }
   }
@@ -513,8 +552,19 @@ stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::s
                       std::size_t chunk_points, bool real, std::ptrdiff_t factor_stride,
                       edge_mode mode, const edge_rows& rows) {
   stage st;
-  st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, mode, real)
-                                  : edge_pass_for<float>(side.kind, output, mode, real);
+  if (side.split) {
+    // The conversion copies and nothing else (core/edges.hpp, edge_side::split).
+    if (side.kind != factor_kind::real || side.scale != 1.0 || side.accumulate || real ||
+        mode != edge_mode::store) {
+      throw std::logic_error("fftn: internal: a split side's pass with other operations");
+    }
+    st.run = prec == precision::f64
+                 ? (output ? &split_pass<double, true> : &split_pass<double, false>)
+                 : (output ? &split_pass<float, true> : &split_pass<float, false>);
+  } else {
+    st.run = prec == precision::f64 ? edge_pass_for<double>(side.kind, output, mode, real)
+                                    : edge_pass_for<float>(side.kind, output, mode, real);
+  }
   st.args.src_stride = src_stride;
   st.args.dst_stride = dst_stride;
   st.args.scale = side.scale;
@@ -534,7 +584,10 @@ stage edge_pass_stage(precision prec, const edge_side& side, bool output, std::s
     st.moving_factors = output ? moving_out_factor : moving_in_factor;
   }
   std::string name = output ? "edge out" : "edge in";
-  if (side.kind != factor_kind::none) {
+  if (side.split) {
+    name += output ? ": the result into the real and imaginary arrays"
+                   : ": the real and imaginary arrays into the interleaved form";
+  } else if (side.kind != factor_kind::none) {
     name += std::string(" times a ") + kind_word(side.kind) + " factor (stride " +
             std::to_string(factor_stride) + ")";
   }
@@ -576,7 +629,10 @@ std::string forced_text(const std::string& plain, const std::string& built,
 std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passes) {
   const auto describe_side = [layout](const edge_side& side, bool output) {
     std::string t;
-    if (side.kind != factor_kind::none) {
+    if (side.split) {
+      t = output ? "written from the interleaved form into its real and imaginary arrays"
+                 : "read from its real and imaginary arrays into the interleaved form";
+    } else if (side.kind != factor_kind::none) {
       t += std::string("times a ") + kind_word(side.kind) + " factor";
     }
     if (side.accumulate) {
@@ -613,7 +669,9 @@ std::string edges_text(const edge_plan& p, edge_layout layout, std::size_t passe
   const std::string cost =
       passes == 0 ? "no separate pass"
                   : std::to_string(passes) + (passes == 1 ? " separate pass" : " separate passes");
-  return "edges: " + both + "; they cost " + cost;
+  // Split-complex data (task 6.10) have no edges of their own: the line names the conversion.
+  return std::string(p.in.split || p.out.split ? "split complex: " : "edges: ") + both +
+         "; they cost " + cost;
 }
 
 std::pair<std::ptrdiff_t, std::ptrdiff_t> factor_span(const shape_view& s, const edge_view& e,

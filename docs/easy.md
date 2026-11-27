@@ -190,6 +190,9 @@ ctx.ifft(b, a); // another plan: the inverse
 ctx.fft(a, b);  // finds the first plan: allocates nothing
 ```
 
+The one-shot functions of the Kokkos adapter (`fftn::kokkos::compat::fft` and the rest,
+[kokkos.md](kokkos.md#one-shot-functions)) keep their plans in the same per-thread context.
+
 A call must not re-enter the context it runs on (a task on a context's executor calling the
 free functions on the same thread, say), and the free functions must not be called from
 another `thread_local`'s destructor once the thread is exiting.
