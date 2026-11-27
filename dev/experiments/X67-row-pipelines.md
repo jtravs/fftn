@@ -339,25 +339,38 @@ marked loaded by other users' jobs). Runs: valid halves 20261127-025103-3880, fa
 L2-resident cases of 1.009 (double) and 1.001 (float) on the EPYC 7763, and 0.765 and 0.840 on the
 Xeon 6240, against 0.80 with no case above 0.90 beyond the band. The fused pipeline saves the
 spectrum's round trip, which inside L2 is worth a few per cent; it loses more where it gives up what
-the separate calls have (lead 1–4 below).
+the separate calls have (leads 1 and 4–6 below).
 
 **Adopted (rules 3 and 4, narrowed to what R1 measured; R2 deciding):**
-- the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB of the line on the
-  Xeon 6240's class, avx512 (`machine_profile::pipeline_depth_min_kib`, `_max_kib`, `_isa`), for a
-  kernel of stride 1 or none, at most one run per side, no prologue or epilogue factor, accumulation
-  or callback. R2: C/P 1.24–1.58 on the moved valid halves, 1.18–1.64 with fan-out, 1.25–1.41 on
-  whole lines. The EPYC keeps the chain pair (D/C up to 3.4).
-- the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class (AMD)
-  and the Xeon 6240's (`machine_profile::pipeline_lanes_adjacent_max`), for a kernel of stride 1 or
+- the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB of the line in double
+  (float to the same 131072 points) on the Xeon 6240's class, avx512
+  (`machine_profile::pipeline_depth_min_kib`, `_max_kib`, `_isa`), for a kernel of stride 1 or none,
+  at most one run per side, no prologue or epilogue factor, accumulation, callback or fan-out. R2:
+  C/P 1.24–1.58 on the moved valid halves, 1.25–1.41 on whole lines (and 1.18–1.64 with fan-out,
+  since excluded). The EPYC keeps the chain pair (D/C up to 3.4).
+- the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class (AMD,
+  best target avx2) and the Xeon 6240's (best target avx512) (`machine_profile::pipeline_lanes_adjacent_max`), for a kernel of stride 1 or
   none and none of what the lanes pair refuses: C/P 1.03–2.16 on the EPYC (P/S 0.25–0.51), C/P
   1.39–1.75 on the Xeon (P/S 0.31–0.44, 64 × 512 in float excepted). Batches of short rows keep the
   chain pair (L/C 1.3–2.1).
-- Bit agreement (DESIGN 6.2, 5.2f's review): both rules are keyed by machine class and hold for
-  every target of the machine alike, so the two x86 targets of one machine never split on them.
+- Bit agreement (DESIGN 6.2, 5.2f's review): the lanes rule is keyed by the machine (its cache
+  class and its processor's best target), so a machine's `avx2` and `avx512` targets take it alike
+  and never split where the chain pair fuses the kernel. The depth-first rule is keyed by the plan's
+  target (avx512): on the Xeon a forced `avx2` plan keeps the chain pair, so its two targets split
+  on that rule, as they already do on its depth-first rows (X46) and Bluestein convolutions (X50);
+  DESIGN 6.2 lets `avx2` and `avx512` plans choose different programs.
 - Every case the rules exclude is on its chain pair in R2 (C/P no evidence), plans keep their
   programs and bits (2,244 of 2,256 probes against `main` unchanged on the EPYC; the 12 that move
   are adjacent lines of 64–512 points), and the plain driver's object disassembles the same
   (rule 8).
+
+**Narrowed after R2** (the second reader of PR 179, 2026-11-27): the depth-first rule leaves
+fan-out (R2 timed the copies at one thread only, and the pair runs them one after another in a
+team, where the chain pair shares them), and caps float lines at 131072 points, the longest
+measured (the byte limit had reached 262144); the lanes rule is keyed by the processor's best
+target as well as its cache class. The excluded cases are back on their chain pairs (exclusions
+need no timing: those cases build main's programs, probes), and R2's evidence stands for every
+case the rules still move.
 
 **Not adopted:** no fused middle (rule 5): neither M1 nor a fused tile pass is built. The near
 misses of rule 2 (the Xeon's `<T, C, T>` 65536 × 4 copies) were not re-run: clear losses on
@@ -370,18 +383,21 @@ agreement (rule 2).
    is AVX2: 6 µs of a 39 µs line at 18432 floats on the EPYC, the whole of `<T, C, T>`'s loss
    against S (1.02–1.10). M1 (the middle fused into the c2r pairing pass) or a vocabulary pass in
    the ISA regions would remove it.
-2. **Fan-out's copies** lose on the EPYC (P/S 1.08 to 1.29 for `<T, C, T>`, rule 7: the mean at
+2. **The depth-first pair with fan-out** is excluded until timed with threads (above).
+3. **`<T, C, T>` at eight threads:** 32 lines on the EPYC lose at 65536 in double (1.12) and 131072
+   in float (1.09) in R3.
+4. **Fan-out's copies** lose on the EPYC (P/S 1.08 to 1.29 for `<T, C, T>`, rule 7: the mean at
    F = 4 and 16 is above F = 1's; on the Xeon too, though there P is faster than S) and at eight threads
    (one line of four copies 1.56–3.56 on the EPYC, 1.15–2.24 from 32768 on the Xeon), where copies
    in the block's second region run one after another.
-3. **Whole lines and short-row batches against the plans' own strategies:** the separate plans keep
+5. **Whole lines and short-row batches against the plans' own strategies:** the separate plans keep
    batch leaves, real rows' depth-first and fused routes (X72, X75, X78) and the Xeon's depth-first
    chains with their measured tops (X46); the pipeline's pairs do not (EPYC whole lines 1.01–1.16,
    short rows up to 1.24; Xeon `<C, C, C>` 1.09–1.23 on the depth-first pair, `<T, C, T>`
    1.24–1.42).
-4. **The lanes pair on 64 × 512 float lines on the Xeon** stays slower than the separate plans (P/S
+6. **The lanes pair on 64 × 512 float lines on the Xeon** stays slower than the separate plans (P/S
    1.96 in R2).
-5. **Against FFTW with a loop** (rule 6, not blocking): `<T, C, T>` lines on both machines
+7. **Against FFTW with a loop** (rule 6, not blocking): `<T, C, T>` lines on both machines
    (1.07–1.39, fan-out included) and the EPYC's `<C, C, C>` 49152 and 98304 (1.20–1.37). The Xeon's
    long `<C, C, C>` lines, 1.14–1.29 of FFTW's time on the chain pair in R1, beat FFTW on the
    depth-first pair (P/W 0.80–0.94 whole, 0.84–0.94 with fan-out).

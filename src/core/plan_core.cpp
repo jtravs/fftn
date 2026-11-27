@@ -1375,11 +1375,14 @@ std::vector<std::size_t> convolution_depth_tops(std::size_t n, const build_setti
   const machine_profile& m = settings.profile;
   const fftn::isa measured = m.pipeline_depth_isa;
   const std::size_t bytes = n * 2 * sizeof(T);
+  // The upper limit is given in double; float lines up to the same number of points (X67 measured
+  // both precisions to 131072 points).
+  const std::size_t most =
+      std::size_t{m.pipeline_depth_max_kib} * 1024 * sizeof(T) / sizeof(double);
   if (settings.strategy != strategy_choice::rules || m.pipeline_depth_min_kib == 0 ||
       (measured != fftn::isa::best &&
        static_cast<unsigned char>(measured) != static_cast<unsigned char>(isa)) ||
-      bytes < std::size_t{m.pipeline_depth_min_kib} * 1024 ||
-      bytes > std::size_t{m.pipeline_depth_max_kib} * 1024) {
+      bytes < std::size_t{m.pipeline_depth_min_kib} * 1024 || bytes > most) {
     return {};
   }
   build_settings forced = settings;
@@ -1405,10 +1408,14 @@ lanes_pair_block convolution_lanes_block(std::size_t n, std::size_t rows, std::p
   // Forced, or by the rules (experiment X67, task 5.2g) for adjacent lines from the shortest X67
   // measured (64 points) up to the profile's pipeline_lanes_adjacent_max, with a lanes column
   // phase's block only.
+  // The processor's best target, not the plan's (pipeline_lanes_isa): a machine's targets agree.
   constexpr std::size_t lanes_adjacent_min = 64;
-  const bool by_rules = settings.strategy == strategy_choice::rules && in_dist == 1 &&
-                        out_dist == 1 && n >= lanes_adjacent_min &&
-                        n <= settings.profile.pipeline_lanes_adjacent_max;
+  const fftn::isa machine = settings.profile.pipeline_lanes_isa;
+  const bool by_rules =
+      settings.strategy == strategy_choice::rules && in_dist == 1 && out_dist == 1 &&
+      n >= lanes_adjacent_min && n <= settings.profile.pipeline_lanes_adjacent_max &&
+      (machine == fftn::isa::best || static_cast<unsigned char>(machine) ==
+                                         static_cast<unsigned char>(plan_target_of(options{})));
   if ((settings.strategy != strategy_choice::lanes && !by_rules) || rows < 2 ||
       !chain.lanes_fit(n, false)) {
     return {};

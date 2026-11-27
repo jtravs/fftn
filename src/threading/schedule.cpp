@@ -198,8 +198,9 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   }
   // Experiment X67 (machine_profile::pipeline_depth_min_kib): <C, C, C> pipelines' lines on the
   // depth-first pair on the Xeon 6240's class, Intel's cores only, on avx512 (the target
-  // measured), from 288 KiB of the line to 2 MiB (18432 to 131072 points in double: 0.64-0.81
-  // of the chain pair's time; float from 36864 points, where 32768 to 131072 took 0.66-0.94).
+  // measured), from 288 KiB of the line to 2 MiB in double (18432 to 131072 points: 0.64-0.81
+  // of the chain pair's time; float from 36864 to 131072 points, where 32768 to 131072 took
+  // 0.66-0.94). Without fan-out (core/pipeline.cpp, depth_measured).
   // The EPYC 7763's class keeps the chain pair (the pair took 1.0-3.4 of its time there).
   if (xeon6240_like) {
     p.pipeline_depth_min_kib = 288;
@@ -210,8 +211,16 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // lanes pair from 64 to 512 points, where it was measured: Zen 3's class, AMD's cores only, and
   // the Xeon 6240's (the lines of 64 x 512 and 512 x 512 planes took 0.46-0.96 of the chain pair's
   // time on the EPYC 7763, float most, and 0.58-0.72 on the Xeon).
-  if ((zen3_like && p.vendor == cpu_vendor::amd) || xeon6240_like) {
+  // Each on processors whose best target is the one measured (avx2 on Zen 3, avx512 on the Xeon):
+  // a key of the machine, so that both targets of one machine take the rule alike, and an Intel
+  // core of the Xeon's cache class without avx512 keeps the chain pair (AGENTS.md section 6).
+  if (zen3_like && p.vendor == cpu_vendor::amd) {
     p.pipeline_lanes_adjacent_max = 512;
+    p.pipeline_lanes_isa = fftn::isa::avx2;
+  }
+  if (xeon6240_like) {
+    p.pipeline_lanes_adjacent_max = 512;
+    p.pipeline_lanes_isa = fftn::isa::avx512;
   }
   // X66's rule 3 (machine_profile::callback_block_bytes): on the Xeon 6240's class (Intel's cores
   // only) blocks of a quarter of L2 passed in both precisions over the cubic callback cases whose

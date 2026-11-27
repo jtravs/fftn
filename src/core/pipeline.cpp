@@ -933,16 +933,17 @@ void build_lanes_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
 
 // Whether the rules may take the depth-first pair for a <C, C, C> line (convolution_depth_tops
 // says where): only for what experiment X67 measured (task 5.2g), a kernel of stride 1 along the
-// line or none, at most one stored run per side, no prologue or epilogue factor, accumulation or
-// callback. Anything else keeps the chain pair by the rules (narrowed before adoption, AGENTS.md
-// section 6); forced, the pair takes it all.
-bool depth_measured(const vocab& v) {
+// line or none, at most one stored run per side, no prologue or epilogue factor, accumulation,
+// callback or fan-out (its copies run one after another in a team, where the chain pair shares
+// them; X67 timed it at one thread only). Anything else keeps the chain pair by the rules (narrowed
+// before adoption, AGENTS.md section 6); forced, the pair takes it all.
+bool depth_measured(const vocab& v, const pipeline_view& d) {
   const auto one_run = [](const side_runs& s) { return !s.any() || s.of(0).size() <= 1; };
   return v.pro.kind == factor_kind::none && v.epi.kind == factor_kind::none && !v.epi.accumulate &&
          !v.pro.call.any() && !v.mid.call.any() && !v.epi.call.any() &&
          (v.mid.kind == factor_kind::none ||
           (v.mid.kind == factor_kind::complex && v.mid.axis_stride == 1)) &&
-         one_run(v.runs.in) && one_run(v.runs.out);
+         one_run(v.runs.in) && one_run(v.runs.out) && d.fanout == 1;
 }
 
 // The pair a <C, C, C> line takes and its stages: the lanes pair where it is forced and taken
@@ -1009,7 +1010,7 @@ strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layou
     lanes.depth_refusal = "a group";
   }
   if (l.in_stride == 1 && l.out_stride == 1 && d.group == ungrouped &&
-      (settings.strategy != strategy_choice::rules || depth_measured(v))) {
+      (settings.strategy != strategy_choice::rules || depth_measured(v, d))) {
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
         !tops.empty()) {

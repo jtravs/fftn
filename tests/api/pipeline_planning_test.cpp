@@ -12,6 +12,7 @@
 #include "core/wisdom_entry.hpp"
 #include "fftn/callback.hpp"
 #include "fftn/detail/core.hpp"
+#include "support/fftn_subject.hpp"
 #include "support/inputs.hpp"
 
 #include <fftn/fftn.hpp>
@@ -77,7 +78,10 @@ template <class T> struct conv {
         .middle = {.scale = desc.middle.scale,
                    .kind = desc.middle.mul.kind,
                    .axis_strides = desc.middle.mul.axis_strides,
-                   .batch_strides = desc.middle.mul.batch_strides},
+                   .batch_strides = desc.middle.mul.batch_strides,
+                   .call = reinterpret_cast<d::erased_block_fn>(desc.middle.call.fn),
+                   .call_mode = desc.middle.call.mode,
+                   .call_scratch = desc.middle.call.scratch_bytes},
         .epilogue = d::view_of(desc.epilogue),
         .fanout = desc.fanout,
         .fanout_out_dist = desc.fanout_out_dist,
@@ -252,6 +256,7 @@ TEST(PipelinePlanning, LanesRuleForAdjacentLines) {
   c.desc.batches[0].in_dist = c.desc.batches[0].out_dist = 1;
   build_settings rules = fixed_settings();
   rules.profile.pipeline_lanes_adjacent_max = 512;
+  rules.profile.pipeline_lanes_isa = fftn::isa::best;
   const auto by_rules = d::make_pipeline_core(c.view(), {}, rules);
   EXPECT_EQ(by_rules->built, strategy_choice::lanes) << d::describe(*by_rules);
   EXPECT_NE(d::describe(*by_rules).find("by the rules for a plane's strided lines"),
@@ -280,6 +285,8 @@ TEST(PipelinePlanning, LanesRuleForAdjacentLines) {
   EXPECT_EQ(d::make_pipeline_core(real_kernel.view(), {}, rules)->built, strategy_choice::chain);
   const conv<double> rows(n, lines);
   EXPECT_EQ(d::make_pipeline_core(rows.view(), {}, rules)->built, strategy_choice::chain);
+}
+
 // The wisdom key holds every scale: two pipelines that differ only in the epilogue's or the
 // middle's scale (no factor, callback or accumulation beside it) have different keys, so an entry
 // of one is never used for the other.
@@ -306,8 +313,8 @@ template <class E> void stand_in_never_called(void*, const fftn::block_info&, E*
 // Measured planning on the real clock over descriptions whose scratch factor arrays are not one
 // line of n (the spans of pipeline_need): fan-out with a kernel per copy, the half spectrum of
 // <T, C, T> and <C, T, C>, kernels per line and negative strides, prologue and epilogue factors,
-// stored runs, a middle callback (a stand-in that does nothing) and a group. Run under ASan in CI:
-// every read of the scratch arrays stays inside them.
+// stored runs, a middle callback (a stand-in that does nothing) and a group. Run under ASan in
+// CI: every read of the scratch arrays stays inside them.
 TEST(PipelinePlanning, ScratchSpansOfEveryShape) {
   using C = std::complex<double>;
   const fftn::options quick{.effort = fftn::planning::quick, .measure_seconds = 0.02};
@@ -369,6 +376,81 @@ TEST(PipelinePlanning, ScratchSpansOfEveryShape) {
     const fftn::pipeline<C, C, C> p(dsc, {.in_place = true, .effort = fftn::planning::quick});
     EXPECT_NE(p.describe().find("planning: measured"), std::string::npos);
   }
+}
+
+// A plane's strided lines in float and at the rule's longest line (512 points) take the lanes
+// pair too, and every vector target of the machine takes the same pair for a pipeline whose
+// complex kernel of stride 1 the chain pair would fuse (the rule is the machine's, not the
+// target's: DESIGN.md 6.2); a processor whose best target is not the profile's keeps the chain.
+TEST(PipelinePlanning, LanesRuleEveryTargetAlike) {
+  build_settings rules = fixed_settings();
+  rules.profile.pipeline_lanes_adjacent_max = 512;
+  rules.profile.pipeline_lanes_isa = fftn::isa::best;
+  const auto adjacent = [](auto c, std::size_t lines) {
+    c.desc.line.in_stride = c.desc.line.out_stride = static_cast<std::ptrdiff_t>(lines);
+    c.desc.batches[0].in_dist = c.desc.batches[0].out_dist = 1;
+    return c;
+  };
+  const conv<float> f = adjacent(conv<float>(64, 512), 512);
+  EXPECT_EQ(d::make_pipeline_core(f.view(), {}, rules)->built, strategy_choice::lanes);
+  const conv<double> long_lines = adjacent(conv<double>(512, 64), 64);
+  EXPECT_EQ(d::make_pipeline_core(long_lines.view(), {}, rules)->built, strategy_choice::lanes);
+  std::vector<strategy_choice> pairs;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    if (t != fftn::isa::scalar) {
+      pairs.push_back(d::make_pipeline_core(long_lines.view(), {.force_isa = t}, rules)->built);
+    }
+  }
+  EXPECT_TRUE(std::ranges::all_of(pairs, [&](strategy_choice s) { return s == pairs.front(); }));
+  build_settings other_machine = rules;
+  const fftn::isa best = d::instruction_set(*d::make_pipeline_core(long_lines.view(), {}, rules));
+  other_machine.profile.pipeline_lanes_isa =
+      best == fftn::isa::scalar ? fftn::isa::avx512 : fftn::isa::scalar;
+  EXPECT_EQ(d::make_pipeline_core(long_lines.view(), {}, other_machine)->built,
+            strategy_choice::chain);
+}
+
+// X67's depth-first rule at its limits (machine_profile::pipeline_depth_*), built only: inside
+// the byte range it takes the pair; above it (double beyond 2 MiB, float beyond the same 131072
+// points), with two runs on a side, a middle callback, a real kernel, a kernel of stride 2, a
+// strided line or fan-out it keeps the chain pair.
+TEST(PipelinePlanning, DepthRuleLimits) {
+  build_settings rules = fixed_settings();
+  rules.profile.pipeline_depth_min_kib = 288;
+  rules.profile.pipeline_depth_max_kib = 2048;
+  rules.profile.pipeline_depth_isa = fftn::isa::best;
+  const auto pair_of = [&](const auto& c) {
+    return d::make_pipeline_core(c.view(), {}, rules)->built;
+  };
+  EXPECT_EQ(pair_of(conv<double>(34560, 1)), strategy_choice::depth);
+  EXPECT_EQ(pair_of(conv<double>(131072, 1)), strategy_choice::depth);
+  EXPECT_EQ(pair_of(conv<double>(196608, 1)), strategy_choice::chain);
+  EXPECT_EQ(pair_of(conv<float>(65536, 1)), strategy_choice::depth);
+  EXPECT_EQ(pair_of(conv<float>(131072, 1)), strategy_choice::depth);
+  EXPECT_EQ(pair_of(conv<float>(196608, 1)), strategy_choice::chain);
+  const std::size_t n = 34560;
+  conv<double> two_runs(n, 1);
+  const std::vector<fftn::stored_run> runs{
+      {.axis = 0, .where = fftn::side::in, .logical = 0, .stored = 0, .count = n / 4},
+      {.axis = 0, .where = fftn::side::in, .logical = n / 2, .stored = n / 4, .count = n / 4}};
+  two_runs.desc = fftn::complex_convolution_rows<double>(n, 1, runs);
+  EXPECT_EQ(pair_of(two_runs), strategy_choice::chain);
+  conv<double> callback(n, 1);
+  callback.desc.middle.call = {.fn = &stand_in_never_called<std::complex<double>>};
+  EXPECT_EQ(pair_of(callback), strategy_choice::chain);
+  conv<double> real_kernel(n, 1);
+  real_kernel.desc.middle.mul = {.kind = fftn::factor_kind::real, .axis_strides = {1}};
+  EXPECT_EQ(pair_of(real_kernel), strategy_choice::chain);
+  conv<double> stride_two(n, 1);
+  stride_two.desc.middle.mul.axis_strides = {2};
+  EXPECT_EQ(pair_of(stride_two), strategy_choice::chain);
+  conv<double> strided(n, 1);
+  strided.desc.line.in_stride = 2;
+  EXPECT_EQ(pair_of(strided), strategy_choice::chain);
+  conv<double> copies(n, 1);
+  copies.desc.fanout = 2;
+  copies.desc.fanout_out_dist = static_cast<std::ptrdiff_t>(n);
+  EXPECT_EQ(pair_of(copies), strategy_choice::chain);
 }
 
 } // namespace

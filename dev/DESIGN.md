@@ -3300,20 +3300,27 @@ besides the chain pair, each where X67 measured it winning and for what it measu
 - **The depth-first pair** for a `<C, C, C>` line contiguous on both sides from
   `machine_profile::pipeline_depth_min_kib` to `pipeline_depth_max_kib` of the complex line, on the
   target `pipeline_depth_isa`, with the tops the forced pair takes (`convolution_depth_tops`; the
-  program X67 timed). Set on the Xeon 6240's class (Intel's cores), avx512: 288 KiB to 2 MiB
-  (18432 to 131072 points in double, from 36864 in float), where the pair took 0.62–0.83 of the
-  chain pair's time with valid halves, fan-out and whole lines. Narrowed to what X67 measured
-  (`depth_measured`): a kernel of stride 1 or none, at most one stored run per side, no prologue or
-  epilogue factor, accumulation or callback. The EPYC 7763's class keeps the chain pair (the pair
-  lost there, as rows' depth-first chains do on avx2).
+  program X67 timed). Set on the Xeon 6240's class (Intel's cores), avx512: 288 KiB to 2 MiB in
+  double (18432 to 131072 points; float from 36864 to the same 131072 points, the longest measured),
+  where the pair took 0.62–0.83 of the chain pair's time with valid halves and whole lines.
+  Narrowed to what X67 measured (`depth_measured`): a kernel of stride 1 or none, at most one
+  stored run per side, no prologue or epilogue factor, accumulation, callback or fan-out (copies
+  won at one thread, but the pair runs them one after another in a team where the chain pair
+  shares them; unmeasured with threads). The rule is keyed by the plan's target, so the Xeon's
+  forced `avx2` plans keep the chain pair: a machine's two x86 targets may split on it, as they do
+  on its depth-first rows (X46) and Bluestein convolutions (X50), which DESIGN 6.2 allows (`avx2`
+  and `avx512` plans may choose different programs). The EPYC 7763's class keeps the chain pair
+  (the pair lost there, as rows' depth-first chains do on avx2).
 - **The lanes pair** for lines one element apart on both sides (a plane's strided axis) from 64
   points to `machine_profile::pipeline_lanes_adjacent_max` (512 on Zen 3's class, AMD's cores, and
   on the Xeon 6240's), with a lanes column phase's block only, for a kernel of stride 1 or none
   and none of what `lanes_pair_refusal` names: 0.46–0.96 of the chain pair's time on the EPYC,
   0.58–0.72 on the Xeon. Batches of short rows keep the chain pair (the lanes pair took 1.3–2.1 of
-  its time). The rule is keyed by machine class and holds for every target of the machine alike,
-  so the `avx2` and `avx512` targets of one machine never split on it; that is DESIGN 6.2's
-  concern with per-target thresholds where the chain pair fuses the kernel (5.2f's review).
+  its time). The rule is keyed by the machine: its cache class and the processor's best target
+  (`pipeline_lanes_isa`: avx2 on Zen 3, avx512 on the Xeon), not the plan's target, so every target
+  of one machine takes it alike and the `avx2` and `avx512` targets never split on it where the
+  chain pair would fuse the kernel (DESIGN 6.2; 5.2f's review). An Intel core of the Xeon's cache
+  class without avx512 keeps the chain pair (the rule does not cross the instruction set).
 
 `<T, C, T>` and `<C, T, C>` keep the real chain pairs. The new profile fields sit in the
 padding after existing `bool` fields, so the profile's size and its other fields' offsets are
@@ -5417,7 +5424,7 @@ to change before a release.
 | 2026-11-27 | Split complex in the C API (section 5.9, "Split complex"; provisional, 18.2 Q28–Q31 for the maintainer): `fftn_split_ptr` and `fftn_split_const_ptr` (`void*` pairs, a real side's array in `re`), `fftn_shape::split`, the four executions with a `_split` suffix; a layout mismatch at execution ends the program; edges, stored runs, in-place r2c and c2r and `fftn_wisdom_add` refused as in C++. 6.9's structs unchanged | The C form of 5.8 under 6.8's and 6.9's conventions: one plan type and `void*` data, a flag that mirrors `shape_view::split`, a suffix as 6.9's `_args`. C++ refuses edges on split plans and has no split pipelines, so the imaginary arrays need no place in `fftn_exec_args` yet |
 | 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 | 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
-| 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. Keyed by machine class, every target alike, so the two targets of one machine never split (DESIGN 6.2) |
+| 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
 
 ---
 

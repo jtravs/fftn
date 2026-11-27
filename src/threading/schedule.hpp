@@ -464,9 +464,15 @@ struct machine_profile {
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
   bool c2r_paired_gather = false;
-  // The target and upper limit of pipeline_depth_min_kib's rule (X67: the longest line measured,
-  // 131072 points in double). In the padding after the bool above, as that field.
+  // The target and upper limit of pipeline_depth_min_kib's rule: the plan's target (so that a
+  // machine's avx2 and avx512 targets may split, as its depth-first rows and Bluestein
+  // convolutions do, DESIGN.md 6.2), and the longest line measured, given in double (131072
+  // points; float lines up to the same number of points, the longest measured in float too).
+  // pipeline_lanes_isa: the processor's best target that pipeline_lanes_adjacent_max's rule needs
+  // (best: any), a property of the machine, not of the plan's target, so that every target of a
+  // machine takes that rule alike. In the padding after the bool above, as those fields.
   fftn::isa pipeline_depth_isa = fftn::isa::best;
+  fftn::isa pipeline_lanes_isa = fftn::isa::best;
   std::uint32_t pipeline_depth_max_kib = 0;
   // A c2r plane out of place builds its intermediate packed in the output (core/plan_core.cpp,
   // c2r_packed) where one transform's half spectrum exceeds this many bytes, and keeps it in the

@@ -27,7 +27,7 @@
 // c2r_line, the middle on the spectrum's n/2 + 1 bins, and every factor in a separate pass
 // (pipeline.cpp, build_real_pair).
 //
-// The lanes pair (task 5.2f), forced only until experiment X67: a <C, C, C> line's blocks of lines
+// The lanes pair (task 5.2f), forced or by X67's rule: a <C, C, C> line's blocks of lines
 // as a lanes program, chain_builder::c2c_lanes from the input to a tile and from the tile to the
 // output, the middle on the tile between (pipeline.cpp, build_lanes_pair).
 #pragma once
