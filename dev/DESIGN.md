@@ -1060,7 +1060,11 @@ Points that matter:
   - *Errors*: refusals made in C name the C function and the field
     (`fftn_pipeline_create: desc.middle.mul.kind is 7, not an fftn_factor_kind`); the C++
     constructors' refusals come through with their own messages, which name the C++ fields
-    (`edges.in.accumulate`, `desc.group`).
+    (`edges.in.accumulate`, `desc.group`), as `fftn_plan_create` passes them (6.8).
+  - *No growth room*: `fftn_exec_args`, `fftn_edge` and `fftn_pipeline_desc` are plain structs
+    without size or version fields (Q21), so split complex (5.8, step 6.10) will change them
+    (the second array of a split factor or side, say), as Q21 allows before 1.0; C callers
+    rebuild against the new header.
 
 ---
 

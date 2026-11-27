@@ -23,16 +23,22 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
 
 // ---- Callbacks ----
 
-enum class cb : unsigned char { none, modify, produce, consume };
+enum class cb : unsigned char { none, modify, produce, consume, record };
 
 fftn_block_fn c_fn(cb c) {
   switch (c) {
@@ -42,6 +48,8 @@ fftn_block_fn c_fn(cb c) {
     return cfuse_produce;
   case cb::consume:
     return cfuse_consume;
+  case cb::record:
+    return cfuse_record;
   case cb::none:
     break;
   }
@@ -90,6 +98,8 @@ template <class T> fftn::block_fn<T> cpp_fn(cb c) {
     return &cpp_call<T, cb::produce>;
   case cb::consume:
     return &cpp_call<T, cb::consume>;
+  case cb::record:
+    return &cpp_call<T, cb::record>;
   case cb::none:
     break;
   }
@@ -231,6 +241,9 @@ struct plan_case {
   std::size_t count{};
   edge_spec in{};
   edge_spec out{};
+  std::vector<fftn_r2r_kind> r2r{}; // FFTN_R2R: one kind per axis
+  bool in_place = false;
+  fftn_planning effort = FFTN_PLANNING_RULES;
 };
 
 int direction_of(fftn_kind k) { return k == FFTN_C2R ? FFTN_BACKWARD : FFTN_FORWARD; }
@@ -251,12 +264,6 @@ std::size_t product(const std::vector<std::size_t>& v) {
   }
   return p;
 }
-
-// What one execution of a case gives, from C or from C++.
-template <class R> struct outcome {
-  std::vector<R> out;
-  std::vector<R> sink;
-};
 
 // The arrays of a case's execution: one set for C++, a fresh one per C run.
 template <class In, class Out, class R> struct plan_arrays {
@@ -310,7 +317,14 @@ template <class In, class Out, class R> struct plan_arrays {
     return c.in.call == cb::produce ? nullptr : in.data();
   }
   [[nodiscard]] void* out_ptr(const plan_case& c) {
+    if (c.in_place) {
+      return in.data();
+    }
     return c.out.call == cb::consume ? nullptr : out.data();
+  }
+  // The output's values: the input's array in place.
+  [[nodiscard]] const std::vector<R>& result(const plan_case& c) const {
+    return c.in_place ? in : out;
   }
   [[nodiscard]] fftn_exec_args c_args() {
     return {.in_factor = in_factor.empty() ? nullptr : in_factor.data(),
@@ -331,7 +345,58 @@ template <class In, class Out, class R> void check_plan(const plan_case& c) {
     s.axes.push_back({.n = n});
   }
   s.batches.push_back({.count = c.count});
-  const fftn::plan<In, Out> p(s, {}, {.in = cpp_edge<In>(c.in), .out = cpp_edge<Out>(c.out)});
+  if constexpr (std::is_same_v<In, Out>) {
+    for (const fftn_r2r_kind k : c.r2r) {
+      s.kinds.push_back(static_cast<fftn::r2r_kind>(k));
+    }
+  }
+
+  // The C description.
+  std::vector<fftn_axis> axes;
+  for (const std::size_t n : c.n) {
+    axes.push_back({.n = n, .in_stride = 0, .out_stride = 0});
+  }
+  const fftn_batch batch = {.count = c.count, .in_dist = 0, .out_dist = 0};
+  const fftn_shape shape = {
+      .kind = c.kind,
+      .precision = c.precision,
+      .direction = direction_of(c.kind),
+      .rank = axes.size(),
+      .axes = axes.data(),
+      .batch_rank = 1,
+      .batches = &batch,
+      .r2r_kinds = c.r2r.empty() ? nullptr : c.r2r.data(),
+      .run_count = 0,
+      .runs = nullptr,
+  };
+  const fftn_plan_edges edges = {.in = c_edge(c.in), .out = c_edge(c.out)};
+  fftn_options options = fftn_options_default();
+  options.in_place = c.in_place ? 1 : 0;
+  options.effort = c.effort;
+
+  // With measured planning the C plan's program is recorded in C wisdom, from which the C++
+  // object and every C execution rebuild it: measurement may choose differently each time.
+  std::optional<fftn::wisdom> cpp_wisdom;
+  fftn_wisdom* c_wisdom = nullptr;
+  if (c.effort != FFTN_PLANNING_RULES) {
+    c_wisdom = fftn_wisdom_create(nullptr);
+    ASSERT_NE(c_wisdom, nullptr);
+    fftn_plan* measured = fftn_plan_create_edges(&shape, &options, &edges, nullptr);
+    ASSERT_NE(measured, nullptr);
+    ASSERT_EQ(fftn_wisdom_add(c_wisdom, measured, nullptr), FFTN_OK);
+    fftn_plan_release(measured);
+    std::string text(fftn_wisdom_text(c_wisdom, nullptr, 0), '\0');
+    fftn_wisdom_text(c_wisdom, text.data(), text.size() + 1);
+    cpp_wisdom.emplace(text);
+    options.use = c_wisdom;
+  }
+
+  // C++.
+  const fftn::plan<In, Out> p(s,
+                              {.in_place = c.in_place,
+                               .effort = static_cast<fftn::planning>(c.effort),
+                               .use = cpp_wisdom ? &*cpp_wisdom : nullptr},
+                              {.in = cpp_edge<In>(c.in), .out = cpp_edge<Out>(c.out)});
   plan_arrays<In, Out, R> expected(c);
   {
     fftn::workspace ws(p);
@@ -347,26 +412,7 @@ template <class In, class Out, class R> void check_plan(const plan_case& c) {
   }
 
   // C, built from the same description.
-  std::vector<fftn_axis> axes;
-  for (const std::size_t n : c.n) {
-    axes.push_back({.n = n, .in_stride = 0, .out_stride = 0});
-  }
-  const fftn_batch batch = {.count = c.count, .in_dist = 0, .out_dist = 0};
-  const fftn_shape shape = {
-      .kind = c.kind,
-      .precision = c.precision,
-      .direction = direction_of(c.kind),
-      .rank = axes.size(),
-      .axes = axes.data(),
-      .batch_rank = 1,
-      .batches = &batch,
-      .r2r_kinds = nullptr,
-      .run_count = 0,
-      .runs = nullptr,
-  };
-  const fftn_plan_edges edges = {.in = c_edge(c.in), .out = c_edge(c.out)};
-
-  fftn_plan* plan = fftn_plan_create_edges(&shape, nullptr, &edges, nullptr);
+  fftn_plan* plan = fftn_plan_create_edges(&shape, &options, &edges, nullptr);
   ASSERT_NE(plan, nullptr);
   EXPECT_EQ(c_text(
                 [](const void* o, char* b, std::size_t n) {
@@ -383,12 +429,13 @@ template <class In, class Out, class R> void check_plan(const plan_case& c) {
     plan_arrays<In, Out, R> got(c);
     const fftn_exec_args args = got.c_args();
     fftn_error error{};
-    const int status = cfuse_run_plan(&shape, nullptr, &edges, f.form, f.lanes, f.group_size,
+    const int status = cfuse_run_plan(&shape, &options, &edges, f.form, f.lanes, f.group_size,
                                       c.count, got.in_ptr(c), got.out_ptr(c), &args, &error);
     ASSERT_EQ(status, FFTN_OK) << error.message;
-    EXPECT_TRUE(same_bits(got.out, expected.out));
+    EXPECT_TRUE(same_bits(got.result(c), expected.result(c)));
     EXPECT_TRUE(same_bits(got.sink, expected.sink));
   }
+  fftn_wisdom_destroy(c_wisdom);
 }
 
 template <class R> void check_plan_kind(const plan_case& c) {
@@ -495,6 +542,231 @@ TEST(CFusion, CallbackModesMatchCpp) {
                    .count = 2,
                    .in = {.call = cb::modify},
                    .out = {.scale = 0.125}});
+}
+
+TEST(CFusion, InPlaceRealToRealAndMeasuredPlansMatchCpp) {
+  check_plan_case({.name = "c2c rows in place: a complex factor and modify in, modify out",
+                   .kind = FFTN_C2C,
+                   .precision = FFTN_DOUBLE,
+                   .n = {32},
+                   .count = 4,
+                   .in = {.mul = complex_rows, .call = cb::modify},
+                   .out = {.scale = 0.5, .call = cb::modify},
+                   .in_place = true});
+  check_plan_case({.name = "c2c planes in float in place: modify out",
+                   .kind = FFTN_C2C,
+                   .precision = FFTN_FLOAT,
+                   .n = {6, 10},
+                   .count = 3,
+                   .out = {.call = cb::modify},
+                   .in_place = true});
+  // Real-to-real plans take the vocabulary (callbacks are refused: cfuse_refusals).
+  check_plan_case({.name = "DCT-II rows: a real factor in, a scale and accumulation out",
+                   .kind = FFTN_R2R,
+                   .precision = FFTN_DOUBLE,
+                   .n = {24},
+                   .count = 3,
+                   .in = {.mul = {.kind = FFTN_FACTOR_REAL, .axis = {1}, .batch = {0}}},
+                   .out = {.scale = 0.25, .accumulate = true},
+                   .r2r = {FFTN_DCT2}});
+  check_plan_case({.name = "DST-III by DHT planes in float in place: a real factor out",
+                   .kind = FFTN_R2R,
+                   .precision = FFTN_FLOAT,
+                   .n = {8, 12},
+                   .count = 2,
+                   .out = {.mul = {.kind = FFTN_FACTOR_REAL, .axis = {12, 1}, .batch = {}}},
+                   .r2r = {FFTN_DST3, FFTN_DHT},
+                   .in_place = true});
+  // Measured planning times stand-ins, never the C callbacks; the program is then rebuilt
+  // from the C plan's wisdom.
+  check_plan_case({.name = "c2c rows, quick measurement: modify in, consume out",
+                   .kind = FFTN_C2C,
+                   .precision = FFTN_DOUBLE,
+                   .n = {64},
+                   .count = 8,
+                   .in = {.call = cb::modify},
+                   .out = {.call = cb::consume},
+                   .effort = FFTN_PLANNING_QUICK});
+  check_plan_case({.name = "r2c rows in float, quick measurement: a factor and modify in",
+                   .kind = FFTN_R2C,
+                   .precision = FFTN_FLOAT,
+                   .n = {96},
+                   .count = 5,
+                   .in = {.mul = {.kind = FFTN_FACTOR_REAL, .axis = {1}, .batch = {0}},
+                          .call = cb::modify,
+                          .scratch = 64},
+                   .effort = FFTN_PLANNING_QUICK});
+}
+
+// ---- What a C callback is told: member, scratch and scratch_bytes ----
+
+// A call's place: transform, origin, length, lines, scratch bytes, and the scratch's offset in
+// the workspace's memory.
+using place = std::tuple<std::size_t, std::size_t, std::size_t, std::size_t, std::size_t,
+                         std::size_t, std::size_t, std::ptrdiff_t>;
+
+// Each member's places, sorted, after checking the scratch: the bytes asked for, one address
+// per member, the members' areas disjoint, no call counted bad by cfuse_record. `base` is the
+// workspace's memory.
+std::vector<std::vector<place>> places_of(const cfuse_log& log, std::size_t bytes,
+                                          const std::byte* base) {
+  std::vector<std::vector<place>> out(CFUSE_LOG_MEMBERS);
+  std::vector<std::pair<const char*, const char*>> areas;
+  for (std::size_t m = 0; m < CFUSE_LOG_MEMBERS; ++m) {
+    EXPECT_EQ(log.bad[m], 0) << "member " << m;
+    EXPECT_LE(log.count[m], static_cast<std::size_t>(CFUSE_LOG_CALLS));
+    const std::size_t logged = std::min<std::size_t>(log.count[m], CFUSE_LOG_CALLS);
+    const void* first = logged != 0 ? log.calls[m][0].scratch : nullptr;
+    for (std::size_t k = 0; k < logged; ++k) {
+      const cfuse_call& c = log.calls[m][k];
+      EXPECT_EQ(c.scratch_bytes, bytes);
+      EXPECT_EQ(c.scratch, first) << "member " << m << " call " << k;
+      out[m].emplace_back(c.transform, c.origin[0], c.origin[1], c.origin[2], c.length, c.lines,
+                          c.scratch_bytes, static_cast<const std::byte*>(c.scratch) - base);
+    }
+    std::sort(out[m].begin(), out[m].end());
+    if (first != nullptr) {
+      areas.emplace_back(static_cast<const char*>(first), static_cast<const char*>(first) + bytes);
+    }
+  }
+  for (std::size_t a = 0; a < areas.size(); ++a) {
+    for (std::size_t b = a + 1; b < areas.size(); ++b) {
+      EXPECT_TRUE(areas[a].second <= areas[b].first || areas[b].second <= areas[a].first);
+    }
+  }
+  return out;
+}
+
+struct record_case {
+  const char* name{};
+  fftn_kind kind{};
+  fftn_precision precision{};
+  std::vector<std::size_t> n{};
+  std::size_t count{};
+  std::size_t scratch{};
+};
+
+// Both edges of a plan record their calls (cfuse_record), from C and from the C++ object, serially
+// and by a team of 3 with completion::own (whose members run their own transforms' blocks): the
+// same outputs, the same places per member, the scratch as the C++ object hands it.
+template <class In, class Out, class R> void check_record(const record_case& c) {
+  SCOPED_TRACE(c.name);
+  const plan_case pc{
+      .name = c.name, .kind = c.kind, .precision = c.precision, .n = c.n, .count = c.count};
+  fftn::shape<In, Out> s;
+  s.dir = static_cast<fftn::direction>(direction_of(c.kind));
+  for (const std::size_t n : c.n) {
+    s.axes.push_back({.n = n});
+  }
+  s.batches.push_back({.count = c.count});
+  const edge_spec e{.call = cb::record, .scratch = c.scratch};
+  const fftn::plan<In, Out> p(s, {}, {.in = cpp_edge<In>(e), .out = cpp_edge<Out>(e)});
+
+  std::vector<fftn_axis> axes;
+  for (const std::size_t n : c.n) {
+    axes.push_back({.n = n, .in_stride = 0, .out_stride = 0});
+  }
+  const fftn_batch batch = {.count = c.count, .in_dist = 0, .out_dist = 0};
+  const fftn_shape shape = {.kind = c.kind,
+                            .precision = c.precision,
+                            .direction = direction_of(c.kind),
+                            .rank = axes.size(),
+                            .axes = axes.data(),
+                            .batch_rank = 1,
+                            .batches = &batch,
+                            .r2r_kinds = nullptr,
+                            .run_count = 0,
+                            .runs = nullptr};
+  const fftn_plan_edges edges = {.in = c_edge(e), .out = c_edge(e)};
+
+  for (const int lanes : {1, 3}) {
+    SCOPED_TRACE(lanes == 1 ? "serial" : "team of 3, own");
+    // One workspace memory, on a 4096-byte boundary, for both executions in turn: the C
+    // callback's scratch must be where the C++ object's block_info puts it.
+    const std::size_t bytes = p.workspace_bytes(lanes);
+    std::vector<std::byte> memory(bytes + 4096);
+    std::byte* const base =
+        memory.data() + (4096 - reinterpret_cast<std::uintptr_t>(memory.data()) % 4096) % 4096;
+    const auto run = [&](bool from_c, std::vector<R>& out, cfuse_log& in_log, cfuse_log& out_log) {
+      const plan_arrays<In, Out, R> a(pc);
+      out = a.out;
+      in_log.type = type_of<In>();
+      out_log.type = type_of<Out>();
+      if (from_c) {
+        const fftn_exec_args args = {.in_factor = nullptr,
+                                     .mid_factor = nullptr,
+                                     .out_factor = nullptr,
+                                     .in_user = &in_log,
+                                     .mid_user = nullptr,
+                                     .out_user = &out_log};
+        fftn_error error{};
+        EXPECT_EQ(cfuse_run_plan_on(&shape, nullptr, &edges,
+                                    lanes == 1 ? CTEST_SERIAL : CTEST_TEAM_OWN, lanes, 0, c.count,
+                                    a.in.data(), out.data(), &args, base, bytes, &error),
+                  FFTN_OK)
+            << error.message;
+        return;
+      }
+      fftn::workspace ws(std::span<std::byte>(base, bytes));
+      const fftn::exec_args cpp_args{.in_user = &in_log, .out_user = &out_log};
+      const auto* in = reinterpret_cast<const In*>(a.in.data());
+      auto* o = reinterpret_cast<Out*>(out.data());
+      if (lanes == 1) {
+        p.execute(in, o, ws, cpp_args);
+        return;
+      }
+      std::vector<std::thread> members;
+      for (int r = 1; r < lanes; ++r) {
+        members.emplace_back([&, r] {
+          p.execute(in, o, {.rank = r, .size = lanes}, ws, fftn::completion::own, cpp_args);
+        });
+      }
+      p.execute(in, o, {.rank = 0, .size = lanes}, ws, fftn::completion::own, cpp_args);
+      for (std::thread& t : members) {
+        t.join();
+      }
+    };
+    // The logs are large, so on the heap; zeroed.
+    const auto c_in = std::make_unique<cfuse_log>();
+    const auto c_outlog = std::make_unique<cfuse_log>();
+    const auto cpp_in = std::make_unique<cfuse_log>();
+    const auto cpp_outlog = std::make_unique<cfuse_log>();
+    std::vector<R> c_out;
+    std::vector<R> cpp_out;
+    run(true, c_out, *c_in, *c_outlog);
+    run(false, cpp_out, *cpp_in, *cpp_outlog);
+    EXPECT_TRUE(same_bits(c_out, cpp_out));
+    EXPECT_EQ(places_of(*c_in, c.scratch, base), places_of(*cpp_in, c.scratch, base));
+    EXPECT_EQ(places_of(*c_outlog, c.scratch, base), places_of(*cpp_outlog, c.scratch, base));
+    for (std::size_t m = 0; m < CFUSE_LOG_MEMBERS; ++m) {
+      if (static_cast<int>(m) >= lanes) {
+        EXPECT_EQ(c_in->count[m] + c_outlog->count[m], 0U) << "member " << m;
+      } else {
+        EXPECT_NE(c_in->count[m], 0U) << "member " << m;
+      }
+    }
+  }
+}
+
+TEST(CFusion, CallbacksSeeTheirMemberAndScratch) {
+  check_record<std::complex<double>, std::complex<double>, double>({.name = "c2c rows",
+                                                                    .kind = FFTN_C2C,
+                                                                    .precision = FFTN_DOUBLE,
+                                                                    .n = {48},
+                                                                    .count = 6,
+                                                                    .scratch = 256});
+  check_record<std::complex<double>, std::complex<double>, double>({.name = "c2c planes",
+                                                                    .kind = FFTN_C2C,
+                                                                    .precision = FFTN_DOUBLE,
+                                                                    .n = {8, 12},
+                                                                    .count = 3,
+                                                                    .scratch = 128});
+  check_record<float, std::complex<float>, float>({.name = "r2c rows in float",
+                                                   .kind = FFTN_R2C,
+                                                   .precision = FFTN_FLOAT,
+                                                   .n = {40},
+                                                   .count = 5,
+                                                   .scratch = 64});
 }
 
 // ---- Pipelines ----

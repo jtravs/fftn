@@ -39,6 +39,8 @@
 
 /* NOLINTNEXTLINE(modernize-deprecated-headers): the header is C as well as C++ */
 #include <stddef.h>
+/* NOLINTNEXTLINE(modernize-deprecated-headers): the header is C as well as C++ */
+#include <stdint.h>
 
 /* NOLINTBEGIN(modernize-use-using,modernize-redundant-void-arg,performance-enum-size): C */
 
@@ -448,7 +450,7 @@ typedef struct fftn_factor {
  * fftn::along_transforms: fftn_block_info::line_axis when the lines of a block are consecutive
  * transforms of the batch.
  */
-#define FFTN_ALONG_TRANSFORMS ((size_t)-1)
+#define FFTN_ALONG_TRANSFORMS SIZE_MAX
 
 /**
  * Where a block lies, fftn::block_info, handed to a C callback with each call and valid during
@@ -602,7 +604,7 @@ typedef struct fftn_middle {
 } fftn_middle;
 
 /** fftn::no_group: fftn_pipeline_desc::group without a group. */
-#define FFTN_NO_GROUP ((size_t)-1)
+#define FFTN_NO_GROUP SIZE_MAX
 
 /**
  * A row pipeline's description, fftn::pipeline_desc, field by field; the arrays (batches,

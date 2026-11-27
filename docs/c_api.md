@@ -241,6 +241,11 @@ if (plan == NULL) {
   return 1;
 }
 ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), &error);
+if (ws == NULL) {
+  fprintf(stderr, "fftn: %s\n", error.message);
+  fftn_plan_release(plan);
+  return 1;
+}
 args.in_factor = window; // the window's address comes with each execution
 fftn_execute_args(plan, rows, sum, ws, &args);
 fftn_execute_args(plan, rows, sum, ws, &args); // sum holds twice the windowed spectra
@@ -255,9 +260,14 @@ A callback is an ordinary C function. It receives the user pointer of the execut
 `block_info` holds, with the origin and the scratch as a pointer and a count:
 
 ```c file=examples/c_api_fusion.c region=callback
-// What the epilogue's callback is given: the largest magnitude each member has seen.
+#define LANES 1 // the members an execution has: this program executes serially
+
+// What the epilogue's callback is given: the largest magnitude each member has seen, one slot
+// per member, since a team's members (up to the lanes the workspace was sized for) run blocks
+// at the same time; and a flag for a failure.
 typedef struct peaks {
-  double largest[8]; // one slot per member: members run blocks at the same time
+  double largest[LANES];
+  int failed;
 } peaks;
 
 // A block callback in C: it reads the block where the plan holds it, between the pipeline's
@@ -267,6 +277,10 @@ static void record_peak(void* user, const fftn_block_info* info, void* data) {
   const double* x = (const double*)data; // the epilogue of real rows: doubles
   size_t k;
   size_t i;
+  if (info->member < 0 || info->member >= LANES) {
+    p->failed = 1; // a callback cannot stop the execution: it records the failure and returns
+    return;
+  }
   for (k = 0; k < info->lines; ++k) {
     for (i = 0; i < info->length; ++i) {
       const double v =
@@ -284,7 +298,7 @@ static void record_peak(void* user, const fftn_block_info* info, void* data) {
 // factor, one line for every row), c2r, scaled by 1/n; then the C callback on each block.
 const fftn_batch batch = {COUNT, 0, 0};
 const ptrdiff_t along_bins = 1;
-peaks seen = {{0}};
+peaks seen = {{0}, 0};
 fftn_pipeline_desc desc = fftn_pipeline_desc_default(); // not {0}: scales of 1, fan-out 1
 fftn_exec_args args = {0};
 fftn_pipeline* conv;
@@ -304,12 +318,20 @@ if (conv == NULL) {
   fprintf(stderr, "fftn: %s\n", error.message);
   return 1;
 }
-ws = fftn_workspace_create(fftn_pipeline_workspace_bytes(conv, 1), &error);
+ws = fftn_workspace_create(fftn_pipeline_workspace_bytes(conv, LANES), &error);
+if (ws == NULL) {
+  fprintf(stderr, "fftn: %s\n", error.message);
+  fftn_pipeline_release(conv);
+  return 1;
+}
 
 // The data of this execution: the kernel's spectrum and the callback's argument.
 args.mid_factor = spectrum;
 args.out_user = &seen;
 fftn_pipeline_execute(conv, rows, out, ws, &args);
+if (seen.failed) {
+  fprintf(stderr, "the callback failed\n"); // the output is then discarded
+}
 printf("largest output value: %g\n", seen.largest[0]); // serial: member 0 only
 
 fftn_workspace_destroy(ws);

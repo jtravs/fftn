@@ -51,6 +51,34 @@ void cfuse_produce(void* user, const fftn_block_info* info, void* data);
 /* consume: each element into the user's sink at its coordinates. */
 void cfuse_consume(void* user, const fftn_block_info* info, void* data);
 
+enum { CFUSE_LOG_MEMBERS = 8, CFUSE_LOG_CALLS = 512 };
+
+/* One call of cfuse_record: the place it was given. */
+typedef struct cfuse_call {
+  size_t transform;
+  size_t origin[3];
+  size_t length;
+  size_t lines;
+  const void* scratch;
+  size_t scratch_bytes;
+} cfuse_call;
+
+/* What cfuse_record is given: the element type, and a log per member, each member writing only
+ * its own (`bad` counts calls whose member is out of range, which are not logged). */
+typedef struct cfuse_log {
+  cfuse_type type;
+  size_t count[CFUSE_LOG_MEMBERS];
+  cfuse_call calls[CFUSE_LOG_MEMBERS][CFUSE_LOG_CALLS];
+  int bad[CFUSE_LOG_MEMBERS];
+} cfuse_log;
+
+/* modify, with a log: records the block's place, member, scratch and scratch_bytes; fills the
+ * scratch with the block's first values and adds them back from it, so that a scratch that is
+ * not the member's own area (the block itself, another member's) changes the output; then
+ * cfuse_modify's arithmetic. Also counts as bad a scratch that overlaps the block or is not on
+ * a 128-byte boundary. */
+void cfuse_record(void* user, const fftn_block_info* info, void* data);
+
 /* Builds the plan of `shape`, `options` and `edges` in C, runs it once in `form` on `in` and
  * `out` with `args` (by `lanes` members or pool threads, `group_size` per cache group), and
  * releases it. `transforms` is the batch's count, for the pieces. Returns FFTN_OK or the first
@@ -59,6 +87,13 @@ int cfuse_run_plan(const fftn_shape* shape, const fftn_options* options,
                    const fftn_plan_edges* edges, ctest_form form, int lanes, int group_size,
                    size_t transforms, const void* in, void* out, const fftn_exec_args* args,
                    fftn_error* error);
+
+/* cfuse_run_plan on a workspace over the caller's `bytes` at `memory` (NULL: one of its own);
+ * FFTN_ERROR_INVALID_ARGUMENT when they are fewer than the plan needs. */
+int cfuse_run_plan_on(const fftn_shape* shape, const fftn_options* options,
+                      const fftn_plan_edges* edges, ctest_form form, int lanes, int group_size,
+                      size_t transforms, const void* in, void* out, const fftn_exec_args* args,
+                      void* memory, size_t bytes, fftn_error* error);
 
 /* The same for the pipeline `desc`; the pieces and the team's coverage follow
  * fftn_pipeline_transform_count. */

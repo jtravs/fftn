@@ -11,6 +11,7 @@
 #include "fftn/c_api.h"
 
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 /* ---- The callbacks ---- */
@@ -163,6 +164,77 @@ void cfuse_consume(void* user, const fftn_block_info* info, void* data) {
   }
 }
 
+static size_t cfuse_element_bytes(cfuse_type t) {
+  switch (t) {
+  case CFUSE_DOUBLE:
+    return sizeof(double);
+  case CFUSE_FLOAT:
+    return sizeof(float);
+  case CFUSE_CDOUBLE:
+    return 2 * sizeof(double);
+  case CFUSE_CFLOAT:
+    return 2 * sizeof(float);
+  }
+  return 1;
+}
+
+void cfuse_record(void* user, const fftn_block_info* info, void* data) {
+  cfuse_log* log = (cfuse_log*)user;
+  cfuse_user u;
+  const int m = info->member;
+  size_t i;
+  size_t d;
+  size_t held;
+  memset(&u, 0, sizeof u);
+  u.type = log->type;
+  if (m < 0 || m >= CFUSE_LOG_MEMBERS) {
+    return; /* not logged: the log's counts then differ from the C++ object's */
+  }
+  if (log->count[m] < CFUSE_LOG_CALLS) {
+    cfuse_call* c = &log->calls[m][log->count[m]];
+    c->transform = info->transform;
+    c->origin[0] = c->origin[1] = c->origin[2] = 0;
+    for (d = 0; d < info->rank && d < 3; ++d) {
+      c->origin[d] = info->origin[d];
+    }
+    c->length = info->length;
+    c->lines = info->lines;
+    c->scratch = info->scratch;
+    c->scratch_bytes = info->scratch_bytes;
+  }
+  ++log->count[m];
+  if (info->scratch_bytes != 0) {
+    /* The block's extent in bytes, from its lowest to its highest element (strides >= 0 in
+     * the plans the tests give it). */
+    const char* lo = (const char*)data;
+    const char* hi = lo + ((size_t)info->element_stride * (info->length - 1) +
+                           (size_t)info->line_stride * (info->lines - 1) + 1) *
+                              cfuse_element_bytes(u.type);
+    const char* s = (const char*)info->scratch;
+    if (s == NULL || (uintptr_t)s % 128 != 0 || (s < hi && s + info->scratch_bytes > lo)) {
+      log->bad[m] += 1;
+    }
+  }
+  /* Through the scratch: line 0's first values into it, then each added back from it. */
+  held = info->scratch_bytes / (2 * sizeof(double));
+  if (held > info->length) {
+    held = info->length;
+  }
+  for (i = 0; i < held; ++i) {
+    double* s = (double*)info->scratch + 2 * i;
+    cfuse_load(u.type, data, (ptrdiff_t)i * info->element_stride, &s[0], &s[1]);
+  }
+  for (i = 0; i < held; ++i) {
+    const double* s = (const double*)info->scratch + 2 * i;
+    double re;
+    double im;
+    cfuse_load(u.type, data, (ptrdiff_t)i * info->element_stride, &re, &im);
+    cfuse_store(u.type, data, (ptrdiff_t)i * info->element_stride, re + 0.5 * s[0],
+                im + 0.5 * s[1]);
+  }
+  cfuse_modify(&u, info, data);
+}
+
 /* ---- Running plans and pipelines in every form ---- */
 
 /* What a team member or a pool's task needs: one of the two objects and the execution. */
@@ -236,6 +308,14 @@ int cfuse_run_plan(const fftn_shape* shape, const fftn_options* options,
                    const fftn_plan_edges* edges, ctest_form form, int lanes, int group_size,
                    size_t transforms, const void* in, void* out, const fftn_exec_args* args,
                    fftn_error* error) {
+  return cfuse_run_plan_on(shape, options, edges, form, lanes, group_size, transforms, in, out,
+                           args, NULL, 0, error);
+}
+
+int cfuse_run_plan_on(const fftn_shape* shape, const fftn_options* options,
+                      const fftn_plan_edges* edges, ctest_form form, int lanes, int group_size,
+                      size_t transforms, const void* in, void* out, const fftn_exec_args* args,
+                      void* memory, size_t bytes, fftn_error* error) {
   cfuse_job j;
   int status;
   fftn_plan* plan = fftn_plan_create_edges(shape, options, edges, error);
@@ -249,7 +329,12 @@ int cfuse_run_plan(const fftn_shape* shape, const fftn_options* options,
   j.args = args;
   j.lanes = lanes;
   j.group_size = group_size;
-  j.ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, lanes), error);
+  if (memory != NULL && bytes < fftn_plan_workspace_bytes(plan, lanes)) {
+    fftn_plan_release(plan);
+    return FFTN_ERROR_INVALID_ARGUMENT;
+  }
+  j.ws = memory != NULL ? fftn_workspace_borrow(memory, bytes, error)
+                        : fftn_workspace_create(fftn_plan_workspace_bytes(plan, lanes), error);
   if (j.ws == NULL) {
     fftn_plan_release(plan);
     return error != NULL ? error->code : FFTN_ERROR_INTERNAL;
@@ -460,6 +545,30 @@ int cfuse_refusals(void) {
   /* The shape is still checked, under this function's name. */
   if (!cfuse_plan_refused(NULL, &good, "fftn_plan_create_edges: shape")) {
     return 12;
+  }
+  /* A consumed output on an in-place plan, and a callback on a real-to-real plan: the C++
+   * constructor's refusals. */
+  {
+    fftn_options in_place = fftn_options_default();
+    fftn_shape r2r = shape;
+    const fftn_r2r_kind kinds[1] = {FFTN_DCT2};
+    in_place.in_place = 1;
+    edges = good;
+    edges.out.call.fn = cfuse_nothing;
+    edges.out.call.mode = FFTN_CALLBACK_CONSUME;
+    error.code = -1;
+    if (fftn_plan_create_edges(&shape, &in_place, &edges, &error) != NULL ||
+        error.code != FFTN_ERROR_INVALID_ARGUMENT ||
+        strstr(error.message, "edges.out.call.mode") == NULL) {
+      return 31;
+    }
+    r2r.kind = FFTN_R2R;
+    r2r.r2r_kinds = kinds;
+    edges = good;
+    edges.in.call.fn = cfuse_nothing;
+    if (!cfuse_plan_refused(&r2r, &edges, "edges.in.call.fn")) {
+      return 32;
+    }
   }
 
   /* Pipelines. */
