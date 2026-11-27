@@ -561,8 +561,8 @@ bands of the half spectrum's bins.
 
 Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` and
 `pipeline<C, T, C>`, with stored runs on either side, fan-out, block callbacks and groups, planned
-by the rules (`options::effort` is ignored, and
-`pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
+by the rules or, with `options::effort`, by timing the pairs of transforms the description can take
+([planning](planning.md), "Pipelines"; provisional). Refused at construction, naming the field, until their steps:
 `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
 factor; a middle callback in another mode than `modify`, and `consume` in place, are refused too.
 On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the neighbouring

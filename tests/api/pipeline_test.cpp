@@ -673,7 +673,7 @@ TEST(Pipelines, Helpers) {
 }
 
 // transforms_of deals lines as a plan of the same batch deals transforms; workspace_bytes grows
-// with the team; options::effort is ignored, and describe() says so.
+// with the team; options::effort measures (task 5.2g), and describe() says so.
 TEST(Pipelines, DealingWorkspaceAndPlanning) {
   using C = std::complex<double>;
   const auto d = fftn::complex_convolution_rows<double>(64, 10);
@@ -687,9 +687,9 @@ TEST(Pipelines, DealingWorkspaceAndPlanning) {
   EXPECT_GT(p.workspace_bytes(), 64 * sizeof(C));
   EXPECT_GE(p.workspace_bytes(4), p.workspace_bytes());
   EXPECT_EQ(fftn::workspace(p, 4).size(), p.workspace_bytes(4));
+  // Measured planning (task 5.2g; pipeline_planning_test.cpp tests the candidates).
   const fftn::pipeline<C, C, C> measured(d, {.effort = fftn::planning::quick});
-  EXPECT_NE(measured.describe().find("options.effort and options.use are ignored"),
-            std::string::npos)
+  EXPECT_NE(measured.describe().find("planning: measured"), std::string::npos)
       << measured.describe();
   EXPECT_EQ(p.describe().find("planning:"), std::string::npos) << p.describe();
 }

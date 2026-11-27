@@ -167,7 +167,8 @@ std::vector<std::complex<double>> y(n * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_factor = kernel.data()});
 ```
 
-Built, all planned by the rules (`options::effort` is ignored, and `describe()` says so):
+Built, planned by the rules or, with `options::effort`, by timing the pairs of transforms a
+description can take, and recorded with `wisdom::add` ([planning](planning.md), "Pipelines"):
 
 - **Kinds.** `pipeline<C, C, C>` with the forward transform first (a convolution:
   `complex_convolution_rows`) or the inverse first (a spectral pair: `spectral_pair_rows` with
@@ -177,9 +178,9 @@ Built, all planned by the rules (`options::effort` is ignored, and `describe()` 
 - **Pairs.** Each line runs as the chain pair (for the real kinds, the real chain pair): the
   two transforms' chains on a line held in the workspace, a `<C, C, C>` pipeline's complex
   factors of stride 1 fused into the neighbouring pass, every other operation a pass over the
-  line in cache. A depth-first pair for long `<C, C, C>` lines is built too, but no pipeline
-  takes it yet: only an internal build setting of the tests reaches it, until the rules learn
-  where it pays.
+  line in cache. A depth-first pair for long `<C, C, C>` lines and a lanes pair for batches of
+  short `<C, C, C>` lines are built too; the rules take neither yet, measured planning times
+  them where they apply.
 - **Stored runs** on the line, both sides (the valid half of a zero-padded convolution, a
   band of bins of a `<C, T, C>` half spectrum).
 - **Fan-out:** several inverses per forward transform, each with its own middle factor and

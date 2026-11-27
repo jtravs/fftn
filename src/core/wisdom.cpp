@@ -5,6 +5,7 @@
 
 #include "core/build_id.hpp"
 #include "core/candidates.hpp"
+#include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/runs.hpp"
 #include "core/wisdom_access.hpp"
@@ -209,6 +210,35 @@ std::string shape_key(const shape_view& s, const options& opts) {
     for (const r2r_kind k : s.kinds) {
       o << ' ' << static_cast<unsigned>(k);
     }
+  }
+  return o.str();
+}
+
+std::string pipeline_key(const pipeline_view& d, const options& opts) {
+  const std::array<axis, 1> line{d.line};
+  shape_view s;
+  s.kind = transform_kind::c2c;
+  s.prec = d.prec;
+  s.dir = d.first;
+  s.axes = line;
+  s.batches = d.batches;
+  s.runs = d.runs;
+  std::ostringstream o;
+  o << "pipeline "
+    << (d.kind == pipeline_kind::complex_pair       ? "c2c-c2c"
+        : d.kind == pipeline_kind::real_convolution ? "r2c-c2r"
+                                                    : "c2r-r2c")
+    << ' ' << shape_key(s, opts) << " fanout " << d.fanout << '/' << d.fanout_out_dist << '/'
+    << d.fanout_factor_dist << " group "
+    << (d.group == static_cast<std::size_t>(-1) ? std::string("none") : std::to_string(d.group))
+    << " prologue-epilogue" << edges_key({.in = d.prologue, .out = d.epilogue}, opts.scale)
+    << " middle" << edges_key({.in = d.middle, .out = {}}, 1.0);
+  // The three scales always: edges_key writes nothing for an edge with only a scale, and the
+  // scales change the results (shape_key holds options::scale).
+  std::array<char, 64> scale{};
+  for (const double v : {d.prologue.scale, d.middle.scale, d.epilogue.scale}) {
+    std::snprintf(scale.data(), scale.size(), "%a", v);
+    o << " scale " << scale.data();
   }
   return o.str();
 }

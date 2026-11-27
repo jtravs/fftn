@@ -3277,6 +3277,23 @@ in and start from a tile). Teams and executors share the blocks as tasks, as for
 lanes. Pipelines and plans without the forced pair keep their programs and bits (`describe()`,
 `workspace_bytes()` and output bits of 1,824 probes against `main`, the lanes plans among them).
 
+**As built (task 5.2g, planning, 2026-11-27).** `options::effort` and `options::use` reach
+pipelines as they reach plans (`plan_pipeline_with_effort`, `core/measure.cpp`). The candidates are
+the rules' pair and the chain, depth-first and lanes pairs forced, each only where the description
+takes it (a forced pair that builds another pair is not a candidate, and the chain pair forced
+builds the rules' program, so it is timed once). They are timed on scratch data and scratch factor
+arrays (the kernel's among them, its values scaled by 1/n so that repetitions in place stay bounded;
+callbacks as stand-ins), with plans' budgets, rounds and 1 % rule; `measure()` takes its candidates,
+builders and factor arrays from a `measure_job`, so plans and pipelines share the timing and plans'
+measured planning is unchanged. A wisdom entry is keyed by the description (`pipeline_key`: the
+line's shape key, which holds the first direction, line, batches and runs; the fan-out and group;
+the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed, a callback by its
+mode and scratch) and rebuilt only where its program's fingerprint matches. `wisdom::add` takes a
+pipeline (a new overload, provisional; no API block existed, so it is the plan overload's twin).
+fbench's `PIPELINE` arms build through `make_pipeline_core` with the build settings and `PLANNING`,
+so `STRATEGY` forces the pair, and gain the valid halves (`PIPE_RUNS`), fan-out (`PIPE_FANOUT`),
+interleaved lines and FFTW's arm (`fbench-fftw PIPELINE=separate`) for X67.
+
 ### 12.3 Block callbacks
 
 ```cpp
@@ -5371,6 +5388,7 @@ to change before a release.
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 | 2026-11-27 | Split complex in the C API (section 5.9, "Split complex"; provisional, 18.2 Q28–Q31 for the maintainer): `fftn_split_ptr` and `fftn_split_const_ptr` (`void*` pairs, a real side's array in `re`), `fftn_shape::split`, the four executions with a `_split` suffix; a layout mismatch at execution ends the program; edges, stored runs, in-place r2c and c2r and `fftn_wisdom_add` refused as in C++. 6.9's structs unchanged | The C form of 5.8 under 6.8's and 6.9's conventions: one plan type and `void*` data, a flag that mirrors `shape_view::split`, a suffix as 6.9's `_args`. C++ refuses edges on split plans and has no split pipelines, so the imaginary arrays need no place in `fftn_exec_args` yet |
 | 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
+| 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
 
 ---
 

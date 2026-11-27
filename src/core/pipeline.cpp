@@ -4,12 +4,14 @@
 #include "core/pipeline.hpp"
 
 #include "core/callbacks.hpp"
+#include "core/candidates.hpp"
 #include "core/driver.hpp"
 #include "core/edge_driver.hpp"
 #include "core/edges.hpp"
 #include "core/plan_core.hpp"
 #include "core/program.hpp"
 #include "core/runs.hpp"
+#include "core/wisdom_entry.hpp"
 #include "fftn/detail/core.hpp"
 #include "fftn/edges.hpp"
 #include "fftn/options.hpp"
@@ -1488,10 +1490,10 @@ group_marks group_lines(plan_core& c, const pipeline_view& d, const row_layout& 
   return marks;
 }
 
-} // namespace
-
-std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, const options& opts,
-                                                    const build_settings& settings) {
+// The pipeline the settings describe, ignoring options::effort and options::use (measured
+// planning and wisdom, plan_pipeline_with_effort, choose the settings).
+std::shared_ptr<plan_core> build_pipeline_core(const pipeline_view& d, const options& opts,
+                                               const build_settings& settings) {
   // <T, C, T>: an r2c then a c2r transform, and <C, T, C> (task 5.3e) a c2r then an r2c
   // transform, whichever direction `first` names (pipeline_desc). <C, C, C> runs its first
   // transform in `first`'s direction: direction::backward is a spectral pair inverse first (task
@@ -1974,11 +1976,24 @@ std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, cons
       }
     }
   }
-  if (opts.effort != planning::rules || opts.use != nullptr) {
-    c->planning_note = "by the rules: options.effort and options.use are ignored for pipelines "
-                       "until task 5.2g";
-  }
+  // Keyed for wisdom by the description (task 5.2g), the program by the settings that took
+  // effect (pinned_choice), as a plan's.
+  c->shape_key = pipeline_key(d, opts);
+  const plan_choice chosen{.strategy = settings.strategy,
+                           .radices = settings.radices,
+                           .grid_factors = settings.grid_factors,
+                           .grid_phases = settings.grid_phases,
+                           .rader = settings.rader,
+                           .depth_tops = settings.depth_tops};
+  c->program_text = choice_text(pinned_choice(chosen, *c));
   return c;
+}
+
+} // namespace
+
+std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& d, const options& opts,
+                                                    const build_settings& settings) {
+  return plan_pipeline_with_effort(d, opts, settings, &build_pipeline_core);
 }
 
 std::shared_ptr<const plan_core> make_pipeline_core(const pipeline_view& desc,

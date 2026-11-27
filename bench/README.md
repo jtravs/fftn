@@ -60,6 +60,7 @@ other arm is compared with it. The label may be omitted (it defaults to the libr
 | `WISDOM=run\|none\|<file>` | fftw | wisdom: fresh per run and shared by that run's processes with the same binary and planner (default), none at all, or imported read-only from a file |
 | `PLAN_NOTE=0\|1` | fftw | write the plan FFTW chose (`fftw_sprint_plan`, one line) into each case's note (default 0) |
 | `THREADS=N` | fftw, mkl_omp | plan and execute with N threads (default 1): FFTW through `fftw_plan_with_nthreads` and its POSIX-threads library (linked when the installation has `libfftw3_threads`; no OpenMP runtime joins the process), each thread count with its own wisdom; oneMKL through `mkl_set_num_threads` in `fbench-mkl_omp` (see "Intel oneMKL") |
+| `PIPELINE=separate`, `PIPE_RUNS`, `PIPE_FANOUT` | fftw | a convolution of every row as a user writes it with FFTW, for comparison with FFTN's `PIPELINE` arms (below; [X67](../dev/experiments/X67-row-pipelines.md)'s W arm): the forward plan, the user's multiply loop (cloned as FFTN's separate arm's) and the inverse plan; with `PIPE_RUNS=valid` the user's zero-padding loop (the input's m points copied into a line whose zeros were written once) and cropping loop around them, with `PIPE_FANOUT=F` (valid halves only) a second spectrum buffer and an inverse per copy. The loops run on the calling thread |
 | `API=dft\|interleaved` | accelerate | vDSP's split-complex DFT with conversions (default) or its interleaved DFT (see below) |
 | `DELAY=<fraction>` | any (test only) | spin for that fraction of every measured batch: a seeded slowdown that proves the statistics |
 | `PERTURB=<eps>` | any (test only) | multiply every output value by 1 ± eps before the check: proves the correctness guard |
@@ -143,7 +144,9 @@ one; its arms are written `fftn_omp`.
 | `CALL_BUILD=clones\|base\|avx2` | fftn, fftn_omp (with `EDGE_CALL`) | how the callback is compiled: as the user's loops (`target_clones` for AVX2 and AVX-512 on x86-64 Linux; the default), for the baseline target only, or with `target("avx2,fma")`; the last two on x86-64 Linux only. Not with `EDGE_ARM=loop` |
 | `CALL_LOOP=memory\|lines` | fftn, fftn_omp (with `EDGE_CALL`) | how the callback walks its block: in memory order (default: along the lines in the inner loop where they lie closer together than the elements, as on a plane's columns), or line by line whatever the strides. Not with `EDGE_ARM=loop` |
 | `CALLBACK_BLOCK_BYTES=B` | fftn, fftn_omp | the machine profile's `callback_block_bytes`: the most bytes of a callback's block (lines up to it whole, several short lines a call; longer lines in element ranges of about this size) |
-| `PIPELINE=fused\|separate` | fftn, fftn_omp | a convolution of every row instead of the case's transform ([DESIGN 12.2](../dev/DESIGN.md), `fftn/pipeline.hpp`): the rows of a c2c forward case through `pipeline<C, C, C>`, of an r2c case through `pipeline<T, C, T>` (the output rows real, each at the start of its row of n/2 + 1 complex values), with one kernel spectrum for every row that delays it by one element, 1/n folded in. `fused` is the row pipeline; `separate` the same work as a user writes it with plans and no buffer of their own, the unfused baseline: the forward plan into the output, a multiply loop there (plain C++, cloned as the edge loops, shared over the executor's lanes with `THREADS`) and the inverse plan in place. Both are planned by the rules with `ISA`'s instruction set, since pipelines are (`PLANNING` and the build settings reach neither). `describe` says `"output":"delay"`, so the check compares each row with its input delayed by one ([The correctness check](#the-correctness-check)), and lists c2c and r2c as `partial`: forward rows out of place only, other cases unsupported. Serial or with `THREADS`, not with `CALL=team`, `EDGE_IN`, `EDGE_OUT` or `RADICES`. Each case's `note` is the pipeline's `describe` or the two plans' axis lines. Catalogue `pipelines`, for example `fbench run S=fftn+PIPELINE=separate P=fftn+PIPELINE=fused --catalogue pipelines` |
+| `PIPELINE=fused\|separate` | fftn, fftn_omp | a convolution of every row instead of the case's transform ([DESIGN 12.2](../dev/DESIGN.md), `fftn/pipeline.hpp`): the rows of a c2c forward case through `pipeline<C, C, C>`, of an r2c case through `pipeline<T, C, T>` (the output rows real, each at the start of its row of n/2 + 1 complex values), with one kernel spectrum for every row that delays it by one element, 1/n folded in; an interleaved c2c case is the lines of a plane's strided axis. `fused` is the row pipeline, built with the build settings (`STRATEGY=chain\|depth\|lanes` forces the pair, [X67](../dev/experiments/X67-row-pipelines.md)) and `PLANNING`'s effort; `separate` the same work as a user writes it with plans by the rules, the unfused baseline: without runs and fan-out with no buffer of their own (the forward plan into the output, a multiply loop there, plain C++ cloned as the edge loops and shared over the executor's lanes with `THREADS`, and the inverse plan in place), else with a spectrum buffer of their own (`backends/convolution.hpp`). `describe` says `"output":"delay"`, so the check compares each row with its input delayed by one ([The correctness check](#the-correctness-check)), and lists c2c and r2c as `partial`: forward rows out of place only, other cases unsupported. Serial or with `THREADS`, not with `CALL=team`, `EDGE_IN`, `EDGE_OUT` or `RADICES`. Each case's `note` is the pipeline's `describe` or the two plans' axis lines. Catalogues `pipelines` and `x67`, for example `fbench run S=fftn+PIPELINE=separate P=fftn+PIPELINE=fused --catalogue pipelines` |
+| `PIPE_RUNS=full\|valid` | fftn, fftn_omp, fftw (with `PIPELINE`) | whole lines (default), or the valid halves of a zero-padded convolution as stored runs: the input's m = n/2 points from logical 0 and the output's m points from logical m/2, each at the start of its row (n a multiple of 4) |
+| `PIPE_FANOUT=F` | fftn, fftn_omp, fftw (with `PIPELINE`) | F inverses per forward, each copy with its own kernel array; the case's batch counts the copies (F divides it): line r is read from input row r F and copy k written to output row r F + k |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
 | `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to, or real rows whose half length they do (see below) |
@@ -261,10 +264,13 @@ reference transforms the rounded values. Accuracy is stored with every timing.
 
 A backend whose `describe` says `"output":"delay"` times a convolution rather than the
 transform (FFTN's `PIPELINE` arms): each row's output is then its input delayed by one
-element, and the check compares every output of the first and last row with the input so
-delayed, and their energies, within twice the transform's tolerance (two transforms). Rows of
-c2c and r2c cases only; for r2c the output rows are real, n values at the start of each row
-of n/2 + 1 complex values.
+element, and the check compares every output of the first and last row (and of the first
+line's last copy) with the input so delayed, and their energies, within twice the transform's
+tolerance (two transforms). With `"delay_fanout":F` output row b is a copy of input row
+(b / F) F's line, and with `"delay_runs":"valid"` the line is the input row's first n/2
+values and zeros, and each output row holds the n/2 values from logical n/4 at its start. Rows
+of c2c (also interleaved) and r2c cases only; for r2c the output rows are real, n values at the
+start of each row of n/2 + 1 complex values.
 
 ## `smoke`
 
@@ -328,7 +334,8 @@ rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) a
 The `threads` catalogue holds the shapes that exercise threading's rules (single long rows,
 few rows, leftover rows after whole rounds, many rows, small jobs, planes and volumes), for
 threaded arms; its groups are named after the rule they exercise. The `pipelines` catalogue
-holds convolution rows for the FFTN backend's `PIPELINE` arms.
+holds convolution rows for the FFTN backend's `PIPELINE` arms, and `x67` experiment X67's
+(its header names the options and filter of each group).
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
 
