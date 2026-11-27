@@ -14,7 +14,10 @@ from pathlib import Path
 
 CATALOGUE_DIR = Path(__file__).resolve().parent.parent / "catalogues"
 TIERS = ("smoke", "quick", "tracking", "full")
-KINDS = ("c2c", "r2c", "c2r")
+KINDS = ("c2c", "r2c", "c2r", "r2r")
+# The real-to-real kinds (FFTW's REDFT00 ... RODFT11 and DHT, by FFTN's names): a group of kind
+# r2r lists them under `r2r`, each applied to every axis of the case.
+R2R_KINDS = ("dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht")
 PRECISIONS = ("f64", "f32")
 GROUP_KEYS = {
     "name",
@@ -26,6 +29,7 @@ GROUP_KEYS = {
     "precision",
     "layout",
     "outer",
+    "r2r",
     "weight",
     "tiers",
     "note",
@@ -45,6 +49,7 @@ class Case:
     precision: str = "f64"
     layout: str = "tight"  # or "interleaved": transforms one element apart (bench/README.md)
     outer: int = 1  # blocks of interleaved transforms
+    r2r: str = ""  # kind r2r: the real-to-real kind of every axis (R2R_KINDS)
 
     @property
     def id(self) -> str:
@@ -53,7 +58,8 @@ class Case:
         tail += "-f32" if self.precision == "f32" else ""
         if self.layout == "interleaved":
             tail += f"-il-o{self.outer}"
-        return f"{self.kind}-{shape}-b{self.batch}-{'ip' if self.place == 'in' else 'op'}{tail}"
+        kind = f"r2r-{self.r2r}" if self.kind == "r2r" else self.kind
+        return f"{kind}-{shape}-b{self.batch}-{'ip' if self.place == 'in' else 'op'}{tail}"
 
     @property
     def points(self) -> int:
@@ -61,7 +67,8 @@ class Case:
 
     @property
     def flops(self) -> float:
-        """The benchFFT convention: 5 n log2 n per complex transform, half that for real."""
+        """The benchFFT convention: 5 n log2 n per complex transform, half that for real (and
+        real-to-real, counted on n whatever the kind's logical length)."""
         n = self.points
         per = (5.0 if self.kind == "c2c" else 2.5) * n * math.log2(n) if n > 1 else 0.0
         return per * self.batch * self.outer
@@ -72,9 +79,10 @@ class Case:
         dims = "x".join(str(d) for d in self.dims)
         prec = " prec=f32" if self.precision == "f32" else ""
         layout = f" layout=interleaved outer={self.outer}" if self.layout == "interleaved" else ""
+        r2r = f" r2r={self.r2r}" if self.kind == "r2r" else ""
         return (
             f"id={self.id} kind={self.kind} dims={dims} batch={self.batch} "
-            f"place={self.place} sign={self.sign}{prec}{layout}"
+            f"place={self.place} sign={self.sign}{prec}{layout}{r2r}"
         )
 
 
@@ -154,13 +162,20 @@ def load(name_or_path: str) -> Catalogue:
             _as_list(group.get("direction", "fwd")),
             _as_list(group.get("precision", "f64")),
             _as_list(group.get("outer", 1)),
+            _as_list(group.get("r2r", "")),
         )
         layout = str(group.get("layout", "tight"))
         if layout not in ("tight", "interleaved"):
             raise ValueError(f"{where}: layout is tight or interleaved")
-        for kind, dims, batch, place, direction, precision, outer in product:
+        for kind, dims, batch, place, direction, precision, outer, r2r in product:
             if kind not in KINDS or place not in ("in", "out") or direction not in ("fwd", "bwd"):
                 raise ValueError(f"{where}: bad kind, place or direction")
+            if (kind == "r2r") != (r2r != ""):
+                raise ValueError(f"{where}: r2r names the kinds of kind r2r, and only of it")
+            if kind == "r2r" and r2r not in R2R_KINDS:
+                raise ValueError(f"{where}: r2r kinds are among {R2R_KINDS}")
+            if r2r == "dct1" and min(dims) < 2:
+                raise ValueError(f"{where}: dct1 needs every length >= 2")
             if precision not in PRECISIONS:
                 raise ValueError(f"{where}: precision is one of {PRECISIONS}")
             if kind != "c2c" and direction != "fwd":
@@ -179,6 +194,7 @@ def load(name_or_path: str) -> Catalogue:
                 precision,
                 layout,
                 int(outer),
+                r2r,
             )
             old = cases.get(case.id)
             if old is not None:
@@ -196,6 +212,7 @@ def load(name_or_path: str) -> Catalogue:
                     precision,
                     layout,
                     int(outer),
+                    r2r,
                 )
             cases[case.id] = case
     return Catalogue(

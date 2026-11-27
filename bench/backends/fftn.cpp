@@ -369,6 +369,12 @@ template <class In, class Out> fftn::shape<In, Out> shape_of(const fbench_case& 
       .in_dist = static_cast<std::ptrdiff_t>(c.in_dist),
       .out_dist = static_cast<std::ptrdiff_t>(c.out_dist),
   });
+  if (c.kind == fbench_r2r) {
+    // fbench's kinds are fftn::r2r_kind's values (harness/backend.hpp).
+    for (std::size_t d = 0; d < rank; ++d) {
+      s.kinds.push_back(static_cast<fftn::r2r_kind>(c.r2r_kinds[d]));
+    }
+  }
   return s;
 }
 
@@ -386,6 +392,9 @@ std::shared_ptr<const detail::plan_core> make_core(const fbench_case& c, const f
   }
   if (c.kind == fbench_r2c) {
     return make_core<T, cplx>(c, o);
+  }
+  if (c.kind == fbench_r2r) {
+    return make_core<T, T>(c, o);
   }
   return make_core<cplx, T>(c, o);
 }
@@ -444,14 +453,15 @@ std::string radix_list(const std::vector<std::size_t>& radices) {
   return text;
 }
 
-// The plan's per-axis lines of its describe, joined by "; ".
+// The plan's per-axis lines of its describe (a real-to-real plan's per-phase lines), joined by
+// "; ".
 std::string axis_lines(const std::string& describe) {
   std::string out;
   std::size_t at = 0;
   while (at < describe.size()) {
     const std::size_t end = std::min(describe.find('\n', at), describe.size());
     const std::string_view line = std::string_view(describe).substr(at, end - at);
-    if (line.starts_with("axis ")) {
+    if (line.starts_with("axis ") || line.starts_with("phase ")) {
       out += (out.empty() ? "" : "; ") + std::string(line);
     }
     at = end + 1;
@@ -2194,7 +2204,7 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         .str("isa", fftn::isa_name(probe.instruction_set()))
         .boolean("isa_forced", s.isa != fftn::isa::best)
         // PIPELINE takes forward c2c and r2c rows out of place only: those kinds are partial.
-        .raw("supports", s.pipeline != pipe_arm::none ? "[]" : R"(["c2c","r2c","c2r"])")
+        .raw("supports", s.pipeline != pipe_arm::none ? "[]" : R"(["c2c","r2c","c2r","r2r"])")
         .raw("precisions", R"(["f64","f32"])")
         .str("planning", s.planning)
         .str("rader", s.rader)
@@ -2316,6 +2326,13 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
         .measure_seconds = s.measure_seconds,
         .measure_scratch_bytes = s.measure_scratch,
     };
+    const bool calls = s.work != call_work::none;
+    const bool edges = s.edge_in.any() || s.edge_out.any() || calls;
+    if (c->kind == fbench_r2r && (s.pipeline != pipe_arm::none || edges || forced)) {
+      say(message, message_size,
+          "real-to-real cases take no PIPELINE, EDGE_IN, EDGE_OUT, EDGE_CALL or RADICES");
+      return fbench_unsupported;
+    }
     if (s.pipeline != pipe_arm::none) {
       record->mode = call::pipeline;
       std::string why;
@@ -2329,8 +2346,6 @@ std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* out, void**
       *plan = record.release();
       return fbench_ok;
     }
-    const bool calls = s.work != call_work::none;
-    const bool edges = s.edge_in.any() || s.edge_out.any() || calls;
     if (calls) {
       record->edge_mode = s.mode;
       record->mode = call::edges;

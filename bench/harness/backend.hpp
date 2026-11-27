@@ -23,6 +23,22 @@
 inline constexpr std::int32_t fbench_c2c = 0;
 inline constexpr std::int32_t fbench_r2c = 1;
 inline constexpr std::int32_t fbench_c2r = 2;
+/// Real-to-real: n reals in, n reals out per axis, the kind of each axis in
+/// fbench_case::r2r_kinds (task 6.12).
+inline constexpr std::int32_t fbench_r2r = 3;
+
+/// Real-to-real kinds (fbench_case::r2r_kinds), with FFTW's definitions (unnormalised): in the
+/// order of FFTN's fftn::r2r_kind, FFTW's REDFT00, REDFT10, REDFT01, REDFT11, RODFT00, RODFT10,
+/// RODFT01, RODFT11 and DHT.
+inline constexpr std::int32_t fbench_dct1 = 0;
+inline constexpr std::int32_t fbench_dct2 = 1;
+inline constexpr std::int32_t fbench_dct3 = 2;
+inline constexpr std::int32_t fbench_dct4 = 3;
+inline constexpr std::int32_t fbench_dst1 = 4;
+inline constexpr std::int32_t fbench_dst2 = 5;
+inline constexpr std::int32_t fbench_dst3 = 6;
+inline constexpr std::int32_t fbench_dst4 = 7;
+inline constexpr std::int32_t fbench_dht = 8;
 
 /// Precisions (fbench_case::precision).
 inline constexpr std::int32_t fbench_f64 = 0;
@@ -41,7 +57,7 @@ extern "C" {
 /// are in elements: complex elements for complex arrays, real values for real arrays. The
 /// harness gives a backend f32 cases only when its describe lists "f32" in "precisions".
 struct fbench_case {
-  std::int32_t kind;        ///< fbench_c2c, fbench_r2c or fbench_c2r
+  std::int32_t kind;        ///< fbench_c2c, fbench_r2c, fbench_c2r or fbench_r2r
   std::int32_t rank;        ///< 1, 2 or 3
   const std::int64_t* dims; ///< `rank` logical lengths, slowest-varying first
   std::int64_t batch;       ///< number of transforms
@@ -54,14 +70,17 @@ struct fbench_case {
   std::int32_t precision;   ///< fbench_f64 or fbench_f32
   /// 1, or the interleaved layout (chosen axes of a strided array): the `batch` transforms lie
   /// one element apart, every element of a transform `interleave` (= `batch`) apart, so the
-  /// array's fastest dimension is not transformed. Backends other than FFTN's, FFTW's and
-  /// oneMKL's answer fbench_unsupported.
+  /// array's fastest dimension is not transformed. Backends other than FFTN's, FFTW's, pocketfft's
+  /// and oneMKL's answer fbench_unsupported.
   std::int64_t interleave;
   /// 1, or the number of blocks of `batch` interleaved transforms one after another, each
   /// `outer_in_dist` and `outer_out_dist` elements apart: a middle dimension of an array.
   std::int64_t outer;
   std::int64_t outer_in_dist;
   std::int64_t outer_out_dist;
+  /// fbench_r2r: `rank` kinds (fbench_dct1 ... fbench_dht), slowest axis first; otherwise null.
+  /// Both sides of a real-to-real case hold n reals per axis (in place too: no padding).
+  const std::int32_t* r2r_kinds;
 };
 
 /// Starts the session. `options` is the arm's backend options as space-separated
@@ -76,7 +95,7 @@ void fbench_end();
 /// "library", "version" and "isa" (the instruction set actually selected), and
 /// "loaded_from" with "expected_root" when the library is a shared library, so that the
 /// driver can refuse a binary that resolved the wrong one; and "supports", the list of kinds
-/// ("c2c", "r2c", "c2r") the backend claims, for which smoke fails on an unsupported case;
+/// ("c2c", "r2c", "c2r", "r2r") the backend claims, for which smoke fails on an unsupported case;
 /// optionally "precisions", the list of precisions ("f64", "f32") it takes (default f64
 /// only); and optionally "output":"delay" when the session times a convolution instead of the
 /// case's transform (FFTN's pipeline options): each row's output is then its input delayed by one

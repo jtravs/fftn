@@ -40,10 +40,11 @@ struct side {
 struct layout {
   std::int32_t kind = fbench_c2c;
   int rank = 1;
-  std::array<std::int64_t, 3> dims{}; // logical transform lengths
-  std::int64_t batch = 1;             // all transforms (blocks times `interleave`)
-  std::int64_t interleave = 1;        // fbench_case::interleave
-  std::int64_t outer = 1;             // fbench_case::outer
+  std::array<std::int64_t, 3> dims{};      // logical transform lengths
+  std::array<std::int32_t, 3> r2r_kinds{}; // fbench_r2r: the kind of each axis (fbench_dct1 ...)
+  std::int64_t batch = 1;                  // all transforms (blocks times `interleave`)
+  std::int64_t interleave = 1;             // fbench_case::interleave
+  std::int64_t outer = 1;                  // fbench_case::outer
   int sign = -1;
   bool in_place = false;
   std::int32_t precision = fbench_f64;
@@ -65,13 +66,16 @@ struct layout {
 };
 
 // Builds a layout with FFTW's conventions: rows contiguous, transforms contiguous, r2c
-// output of n/2+1 complex values in the last dimension, in-place real arrays padded to
-// 2(n/2+1) reals. With `interleaved`, the layout of fbench_case::interleave instead (not for
-// in-place real transforms): `batch` transforms per block, `outer` blocks. Throws
-// std::invalid_argument for an impossible case.
+// output of n/2+1 complex values in the last dimension, in-place r2c and c2r arrays padded to
+// 2(n/2+1) reals, real-to-real arrays of n reals on both sides (in place too). With
+// `interleaved`, the layout of fbench_case::interleave instead (not for in-place r2c and c2r):
+// `batch` transforms per block, `outer` blocks. `r2r_kinds` gives each axis's kind for
+// fbench_r2r (lengths up to 2^27, dct1 from 2). Throws std::invalid_argument for an impossible
+// case.
 layout make_layout(std::int32_t kind, int rank, const std::array<std::int64_t, 3>& dims,
                    std::int64_t batch, int sign, bool in_place, std::int32_t precision,
-                   bool interleaved = false, std::int64_t outer = 1);
+                   bool interleaved = false, std::int64_t outer = 1,
+                   const std::array<std::int32_t, 3>& r2r_kinds = {});
 
 // The functions below read and write arrays of double whatever the case's precision:
 // reals_in() or reals_out() values at the case's element offsets. The harness converts
@@ -99,7 +103,10 @@ struct check_result {
 // Compares the output with a double-double direct DFT of the pristine input at sampled
 // outputs (all outputs when n * outputs fits `budget`), and checks Parseval's identity
 // over the whole of each checked row. The tolerance takes the epsilon of the case's
-// precision.
+// precision. A real-to-real case is compared with the direct sum of each axis's definition
+// (FFTW's, the separable product over the axes) and checked by the energy identity of its
+// kinds (the weighted sums of squares of the two sides differ by the product of the axes'
+// logical lengths N).
 check_result check_output(const layout& l, const void* in, const void* out, std::int64_t budget,
                           std::uint64_t seed);
 

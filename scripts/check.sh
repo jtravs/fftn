@@ -220,6 +220,7 @@ if stage bench; then
   say "fbench smoke (correctness only)"
   if [[ -f bench/fbench.py ]] && have_preset check-release; then
     py bench/fbench.py smoke --build build/check-release --strict
+    py bench/fbench.py smoke --build build/check-release --strict --catalogue r2r --tier smoke
   else skip "no fbench"; fi
 fi
 

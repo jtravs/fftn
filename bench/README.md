@@ -262,6 +262,15 @@ It reports relative RMS and maximum errors; the case passes when both are within
 precision. A single-precision input is the double-precision one rounded to float, and the
 reference transforms the rounded values. Accuracy is stored with every timing.
 
+A real-to-real case (kind `r2r`) is compared with the direct sum of each axis's definition
+(FFTW's REDFT00 … RODFT11 and DHT, the separable product over the axes, in double-double with
+the angles reduced exactly), and Parseval's identity becomes the kinds' energy identity: the
+sums of squares of the output and the input, each weighted by ½ at the ends the orthonormal
+form scales by √2, differ by the product of the axes' logical lengths N (2(n − 1) for DCT-I,
+2(n + 1) for DST-I, n for the DHT, 2n otherwise), which also replaces n in the tolerance.
+`smoke --catalogue r2r --tier smoke` (CTest `bench.r2r_smoke`, the gate's `bench` stage)
+checks every backend that declares `r2r`.
+
 A backend whose `describe` says `"output":"delay"` times a convolution rather than the
 transform (FFTN's `PIPELINE` arms): each row's output is then its input delayed by one
 element, and the check compares every output of the first and last row (and of the first
@@ -299,7 +308,7 @@ name = "example"
 
 [[group]]
 name = "rows"
-kind = ["c2c", "r2c", "c2r"]   # default c2c
+kind = ["c2c", "r2c", "c2r"]   # default c2c; or "r2r" with the key r2r below
 dims = [64, 1000, "64x48"]       # lengths, or "n0xn1[xn2]" for planes and volumes
 batch = [1, 256]                 # default 1
 place = ["out", "in"]            # default out
@@ -307,16 +316,17 @@ direction = "fwd"                # c2c only: fwd or bwd
 precision = ["f64", "f32"]       # default f64
 layout = "interleaved"           # default "tight" (below)
 outer = [1, 16]                  # interleaved blocks one after another (default 1)
+r2r = ["dct2", "dht"]            # kind r2r only: dct1 ... dct4, dst1 ... dst4, dht, each for every axis
 weight = 1.0                     # share in the weighted geomean (default 1)
 tiers = ["quick", "tracking"]    # every case is also in "full"
 ```
 
 Case IDs are `kind-dims-bBATCH-op|ip[-bwd][-f32]`, for example `r2c-64x48-b256-ip` or
-`c2c-1024-b1-op-f32`. A case listed by several groups is one case with the union of their
+`c2c-1024-b1-op-f32`; a real-to-real case's kind part is `r2r-KIND`, as in `r2r-dct2-64x48-b1-op`. A case listed by several groups is one case with the union of their
 tiers (its weight must agree).
 A backend takes single-precision cases only when its `describe` lists `"f32"` under
-`precisions` (FFTN does, and FFTW when its installation has `libfftw3f`; the other
-competitors do not yet); for the others the harness reports them unsupported, and `smoke`
+`precisions` (FFTN and pocketfft do, and FFTW when its installation has `libfftw3f`; the
+other competitors do not yet); for the others the harness reports them unsupported, and `smoke`
 does not count that as a failure. `--precision f32` (on `run`, `smoke` and `list`) takes
 every selected case of a catalogue in single precision, so `--catalogue standard --precision
 f32` is the standard catalogue in float (a case the catalogue already lists in float is kept
@@ -326,8 +336,9 @@ last dimension, in-place real arrays padded to 2(n/2+1). With `layout = "interle
 `batch` transforms lie one element apart and every element of a transform `batch` elements
 from the next, in `outer` such blocks one after another (`-il-oOUTER` in the case ID): the
 transformed dimensions of a strided array whose fastest dimension is not transformed, in
-FFTN's general shape, FFTW's guru interface and oneMKL's strides (the other backends answer
-unsupported). Not for in-place real transforms.
+FFTN's general shape, FFTW's guru interface, oneMKL's and pocketfft's strides (the other
+backends answer unsupported). Not for in-place r2c and c2r. Real-to-real arrays hold n reals per
+axis on both sides, in place too (no padding).
 
 The standard catalogue has tiers `smoke` (seconds, correctness, every kind, placement and
 rank), `quick` (an A/B in a few minutes), `tracking` (a fixed set for history) and `full`.
@@ -336,6 +347,9 @@ few rows, leftover rows after whole rounds, many rows, small jobs, planes and vo
 threaded arms; its groups are named after the rule they exercise. The `pipelines` catalogue
 holds convolution rows for the FFTN backend's `PIPELINE` arms, and `x67` experiment X67's
 (its header names the options and filter of each group).
+The `r2r` catalogue (task 6.12) holds every real-to-real kind on rows of the standard and the
+client catalogues' lengths, batches, planes, volumes and strided axes, in both precisions,
+against FFTW's r2r and pocketfft's `dct`/`dst`.
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
 
@@ -377,17 +391,23 @@ Each configured backend is smoke-tested by `bench.smoke` and has its own CTest
 **FFTW 3.3.11**: an installation built with the SIMD and FMA options for the machine (NEON
 on Apple silicon, whose `fftw_version` ends in `-neon`; SSE2 to AVX-512 and FMA on x86-64),
 never Homebrew's (no SIMD on arm64). MEASURE by default, wisdom fresh per run; `describe`
-reports the SIMD extensions FFTW was built with.
+reports the SIMD extensions FFTW was built with. Real-to-real cases go through
+`fftw_plan_many_r2r` (the interleaved layout through `fftw_plan_guru64_r2r`) with FFTW's
+REDFT00 … RODFT11 and DHT kinds and `fftw_execute_r2r`.
 
 **pocketfft** (the C++ header-only version, `pocketfft_hdronly.h` of
 [mreineck/pocketfft](https://github.com/mreineck/pocketfft), branch `cpp`, commit
 `4d865cb`): fetched by CMake pinned by SHA-256; offline, set
 `FETCHCONTENT_SOURCE_DIR_FBENCH_POCKETFFT` to a directory holding the header. It is compiled
 into the backend as SciPy uses it: the high-level `c2c`/`r2c`/`c2r` over byte-strided arrays,
-with a plan cache of 16 (`POCKETFFT_CACHE_SIZE`), one thread, FMA contraction allowed
-(`-ffp-contract=fast`), and on x86-64 `-march=native` (`FFTN_BENCH_POCKETFFT_ARCH_FLAGS`
-overrides; the binary is run where it is built). `fbench_create` fetches each axis's plan
-from the cache, so twiddle computation is plan time.
+and for real-to-real cases `dct` and `dst` (types 1 to 4, unnormalised, not orthonormal:
+FFTW's REDFT and RODFT definitions) and `r2r_separable_fht` (FFTW's separable DHT; pocketfft's
+`r2r_separable_hartley` is the transform with cos − sin), one kind for every axis (mixed kinds
+are unsupported); with a plan cache of 16 (`POCKETFFT_CACHE_SIZE`), one thread, FMA contraction
+allowed (`-ffp-contract=fast`), and on x86-64 `-march=native` (`FFTN_BENCH_POCKETFFT_ARCH_FLAGS`
+overrides; the binary is run where it is built). Double and single precision, and the
+interleaved layout through its byte strides. `fbench_create` fetches each axis's plan from the
+cache, so twiddle computation is plan time.
 
 **KFR 7.2.0**, from KFR's own CMake build with Clang, installed:
 

@@ -1,0 +1,185 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# The real-to-real catalogue (task 6.12, DESIGN.md 5.7; Q15 of DESIGN.md 18.2 proposes judging
+# FFTN's r2r speed on it against FFTW's r2r and pocketfft): every kind, DCT-I to IV, DST-I to IV
+# and the DHT (FFTW's REDFT00 ... RODFT11 and DHT; `r2r` names them by FFTN's names), on rows at
+# the standard catalogue's lengths and at the row lengths of the client catalogues (the
+# transverse and spectral grids of a propagation code), batches of rows, planes, volumes and the
+# strided axes of the interleaved layout, in double and single precision. Each `r2r` kind applies
+# to every axis of its case. Format in bench/README.md; weights are equal. Case IDs read
+# r2r-KIND-dims-bBATCH-op|ip[-f32][-il-oOUTER].
+
+[catalogue]
+name = "r2r"
+
+# ---- smoke: correctness of every kind, length class, placement, rank and layout -------------
+
+[[group]]
+name = "smoke-rows"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [2, 3, 5, 8, 15, 16, 64, 97, 1024]
+batch = 2
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-planes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["8x6", "5x7", "4x6x8"]
+batch = 2
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-strided"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [12, "6x5"]
+batch = 4
+layout = "interleaved"
+place = ["out", "in"]
+tiers = ["smoke"]
+
+[[group]]
+name = "smoke-single"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [8, 15, 64, "8x6"]
+batch = 2
+precision = "f32"
+tiers = ["smoke"]
+
+# ---- rows ---------------------------------------------------------------------------------
+
+[[group]]
+name = "pow2-rows"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [16, 64, 256, 1024, 4096, 16384, 65536, 262144]
+
+[[group]]
+name = "pow2-rows-quick"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [64, 1024, 16384]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "smooth-rows"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [12, 60, 100, 384, 1000, 3000, 10000]
+
+[[group]]
+name = "odd-rows"
+note = "odd and prime lengths: the odd routes (the DCT-IV's zero-padded 2n) and Bluestein"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [15, 45, 97, 243, 1001, 2187, 4093]
+
+[[group]]
+name = "client-like-rows"
+note = "the row lengths of the client catalogues"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [3072, 5120, 6144, 9216, 10240, 18432, 20480, 32768, 40960]
+
+[[group]]
+name = "row-batches"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [32, 64, 128, 256, 1024]
+batch = [64, 1024]
+
+[[group]]
+name = "row-batches-quick"
+kind = "r2r"
+r2r = ["dct2", "dct3", "dct4", "dht"]
+dims = [64, 256]
+batch = 1024
+tiers = ["quick", "tracking"]
+
+# ---- planes and volumes -------------------------------------------------------------------
+
+[[group]]
+name = "planes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["32x32", "64x64", "128x128", "192x192", "256x256", "384x384", "1024x1024", "60x40"]
+
+[[group]]
+name = "planes-quick"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dht"]
+dims = ["64x64", "256x256"]
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "planes-in-place"
+kind = "r2r"
+r2r = ["dct2", "dct3", "dht"]
+dims = ["128x128", "384x384"]
+place = "in"
+
+[[group]]
+name = "volumes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["32x32x32", "64x64x64"]
+
+# ---- strided axes: the interleaved layout -------------------------------------------------
+
+[[group]]
+name = "columns"
+note = "the columns of an n x batch array"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [64, 256, 1024]
+batch = [16, 256]
+layout = "interleaved"
+
+[[group]]
+name = "columns-quick"
+kind = "r2r"
+r2r = ["dct2", "dct3", "dct4", "dht"]
+dims = [256]
+batch = 256
+layout = "interleaved"
+tiers = ["quick", "tracking"]
+
+[[group]]
+name = "strided-planes"
+note = "the planes (y, x) of a y x x x batch array"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["32x32", "64x64"]
+batch = 64
+layout = "interleaved"
+
+# ---- single precision ---------------------------------------------------------------------
+
+[[group]]
+name = "single-rows"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [64, 256, 1024, 4096, 16384, 65536, 97, 1000, 6144, 20480]
+precision = "f32"
+
+[[group]]
+name = "single-batches-planes"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = ["64x64", "256x256", "1024x1024"]
+precision = "f32"
+
+[[group]]
+name = "single-strided"
+kind = "r2r"
+r2r = ["dct2", "dct3", "dct4", "dht"]
+dims = [256]
+batch = 256
+layout = "interleaved"
+precision = "f32"
