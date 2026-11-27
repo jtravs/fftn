@@ -12,6 +12,7 @@
 #include "fftn/isa.hpp"
 #include "fftn/options.hpp"
 #include "fftn/shape.hpp"
+#include "fftn/split.hpp"
 #include "fftn/team.hpp"
 #include "fftn/workspace.hpp"
 
@@ -46,6 +47,13 @@ namespace fftn::inline v0 {
 ///   moving a plan copies it, so the source of a move stays a valid plan too.
 template <class In, class Out> class plan {
 public:
+  /// What an execution passes for the input: `const In*`, or for split-complex data
+  /// (fftn/split.hpp) `split_ptr<const T>`, its two arrays. Provisional (task 6.10).
+  using in_data = detail::in_data<In>;
+  /// What an execution passes for the output: `Out*`, or for split-complex data `split_ptr<T>`.
+  /// Provisional (task 6.10).
+  using out_data = detail::out_data<Out>;
+
   /// Builds the plan of `s` with options `opts`.
   ///
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
@@ -57,16 +65,19 @@ public:
   /// 6.3), `shape::kinds` without one kind per axis, `r2r_kind::dct1` on an axis of one point,
   /// scales whose product with the factor of the axes of one point (2 for each `dct2`, `dst2`
   /// or `dst1`, sqrt 2 for each `dct4` or `dst4`) is outside the precision's range, or stored
-  /// runs; for any other shape, `shape::kinds` not empty.
+  /// runs; for any other shape, `shape::kinds` not empty; for a split-complex shape
+  /// (fftn/split.hpp, provisional, task 6.10), stored runs, or `options::in_place` on r2c or c2r.
   /// Throws `std::bad_alloc` when memory runs out, including the scratch memory of measured
-  /// planning (`options::effort`). Real-to-real plans are built by the rules whatever
-  /// `options::effort` and `options::use` say (describe() says so).
+  /// planning (`options::effort`). Real-to-real and split-complex plans are built by the rules
+  /// whatever `options::effort` and `options::use` say (describe() says so).
   explicit plan(const shape<In, Out>& s, const options& opts = {})
       : core_(detail::make_plan_core(detail::view_of(s), opts)) {}
 
   /// Builds the plan of `s` with options `opts` and edges `edges` (fftn/edges.hpp): pointwise
   /// work on the input before the transform and on the output after it, fused into the
   /// plan's passes where the plan can.
+  ///
+  /// Not offered for split-complex shapes (fftn/split.hpp), whose edges are not built yet.
   ///
   /// Provisional (task 5.1): see fftn/edges.hpp. An edge whose factor the plan's usual
   /// strategy cannot apply makes the plan take another strategy or a separate pass rather
@@ -81,6 +92,7 @@ public:
   /// on a real side, or a factor on a shape with stored runs (not built yet). Throws
   /// `std::bad_alloc` when memory runs out.
   plan(const shape<In, Out>& s, const options& opts, const plan_edges<In, Out>& edges)
+    requires(!detail::split_kind<In, Out>)
       : core_(detail::make_plan_core_with_edges(detail::view_of(s), opts, detail::view_of(edges))) {
   }
 
@@ -108,7 +120,9 @@ public:
   ///
   /// Guarantees: the input is preserved unless the plan is in place; nothing outside the
   /// described output elements is written. Never allocates, locks, throws or does I/O.
-  void execute(const In* in, Out* out, workspace& ws) const noexcept {
+  void execute(const In* in, Out* out, workspace& ws) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_all(*core_, in, out, ws);
   }
 
@@ -119,7 +133,9 @@ public:
   ///
   /// Provisional (task 5.1). Preconditions: those of `execute` and of `exec_args`.
   /// Guarantees: those of `execute`; the factor arrays are only read.
-  void execute(const In* in, Out* out, workspace& ws, const exec_args& args) const noexcept {
+  void execute(const In* in, Out* out, workspace& ws, const exec_args& args) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_all(*core_, in, out, ws, args);
   }
 
@@ -137,7 +153,9 @@ public:
   /// Guarantees: as for `execute`; each transform's result is bitwise identical to what
   /// `execute` gives it.
   void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
-                          workspace& ws) const noexcept {
+                          workspace& ws) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_core(*core_, first, count, in, out, ws);
   }
 
@@ -147,7 +165,9 @@ public:
   /// Provisional (task 5.1). Preconditions and guarantees: those of `execute_transforms` and
   /// of `exec_args`.
   void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
-                          workspace& ws, const exec_args& args) const noexcept {
+                          workspace& ws, const exec_args& args) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_core(*core_, first, count, in, out, ws, args);
   }
 
@@ -183,7 +203,9 @@ public:
   /// spinning briefly, then yielding, then blocking in `std::atomic::wait`; it never
   /// waits for a member that has not arrived.
   void execute(const In* in, Out* out, const team& t, workspace& ws,
-               completion done = completion::all) const noexcept {
+               completion done = completion::all) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_team(*core_, in, out, t, ws, done);
   }
 
@@ -193,7 +215,9 @@ public:
   /// Provisional (task 5.1). Preconditions: those of the team `execute` and of `exec_args`;
   /// every member passes the same `args` values. Guarantees: those of the team `execute`.
   void execute(const In* in, Out* out, const team& t, workspace& ws, completion done,
-               const exec_args& args) const noexcept {
+               const exec_args& args) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_team(*core_, in, out, t, ws, done, args);
   }
 
@@ -202,14 +226,18 @@ public:
   ///
   /// Provisional (task 5.1). Preconditions and guarantees: those of the overload above.
   void execute(const In* in, Out* out, const team& t, workspace& ws,
-               const exec_args& args) const noexcept {
+               const exec_args& args) const noexcept
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_team(*core_, in, out, t, ws, completion::all, args);
   }
 
   /// Deleted: it makes `execute(in, out, t, ws, {})` ambiguous, so that it fails to compile
   /// instead of meaning `completion{}` without the execution's data. Write `exec_args{}`, or
   /// name the `completion`.
-  void execute(const In* in, Out* out, const team& t, workspace& ws, std::nullptr_t) const = delete;
+  void execute(const In* in, Out* out, const team& t, workspace& ws, std::nullptr_t) const
+    requires(!detail::split_kind<In, Out>)
+  = delete;
 
   /// Transforms every transform of the batch on executor `ex`: anything that can run n
   /// tasks and return when they are done (`fftn::executor`), such as `fftn::thread_pool`,
@@ -234,7 +262,9 @@ public:
   /// never allocates, locks, throws or does I/O here; the executor may. If `ex.concurrency()`
   /// or `ex.bulk` throws, the exception propagates, the output is unspecified and the
   /// workspace is left ready for its next execution.
-  void execute(const In* in, Out* out, executor_ref ex, workspace& ws) const {
+  void execute(const In* in, Out* out, executor_ref ex, workspace& ws) const
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_on(*core_, in, out, ex, ws);
   }
 
@@ -242,9 +272,66 @@ public:
   ///
   /// Provisional (task 5.1). Preconditions, exceptions and guarantees: those of the executor
   /// `execute` and of `exec_args`.
-  void execute(const In* in, Out* out, executor_ref ex, workspace& ws,
-               const exec_args& args) const {
+  void execute(const In* in, Out* out, executor_ref ex, workspace& ws, const exec_args& args) const
+    requires(!detail::split_kind<In, Out>)
+  {
     detail::execute_on(*core_, in, out, ex, ws, args);
+  }
+
+  /// Split-complex data (fftn/split.hpp; provisional, task 6.10): the serial `execute` of a plan
+  /// whose shape has a split side, `in` and `out` the arrays of each side (a `split_ptr` on a
+  /// split side, a pointer to the reals on a real one), each addressing element 0 of the first
+  /// transform. The plan reads the input's two arrays into the interleaved form in the workspace
+  /// block, transforms it there and writes the result into the output's two arrays (describe()
+  /// names the two passes).
+  ///
+  /// Preconditions: those of `execute` above for each array, and those of `split_ptr`.
+  ///
+  /// Guarantees: those of `execute` above; the input's arrays are only read unless the plan is
+  /// in place.
+  void execute(in_data in, out_data out, workspace& ws) const noexcept
+    requires detail::split_kind<In, Out>
+  {
+    detail::execute_all(*core_, detail::slot_array(in), detail::slot_array(out), ws,
+                        detail::split_args(in, out));
+  }
+
+  /// `execute_transforms` on split-complex data: transforms [first, first + count) of the batch,
+  /// with `in` and `out` as for the split `execute`, addressing element 0 of transform 0.
+  ///
+  /// Provisional (task 6.10). Preconditions and guarantees: those of `execute_transforms` and
+  /// of the split `execute`.
+  void execute_transforms(std::size_t first, std::size_t count, in_data in, out_data out,
+                          workspace& ws) const noexcept
+    requires detail::split_kind<In, Out>
+  {
+    detail::execute_core(*core_, first, count, detail::slot_array(in), detail::slot_array(out), ws,
+                         detail::split_args(in, out));
+  }
+
+  /// The team `execute` on split-complex data, with `in` and `out` as for the split `execute`.
+  ///
+  /// Provisional (task 6.10). Preconditions and guarantees: those of the team `execute` and of
+  /// the split `execute`; the output is bitwise identical to the serial split execution.
+  void execute(in_data in, out_data out, const team& t, workspace& ws,
+               completion done = completion::all) const noexcept
+    requires detail::split_kind<In, Out>
+  {
+    detail::execute_team(*core_, detail::slot_array(in), detail::slot_array(out), t, ws, done,
+                         detail::split_args(in, out));
+  }
+
+  /// The executor `execute` on split-complex data, with `in` and `out` as for the split
+  /// `execute`.
+  ///
+  /// Provisional (task 6.10). Preconditions, exceptions and guarantees: those of the executor
+  /// `execute` and of the split `execute`; the output is bitwise identical to the serial split
+  /// execution.
+  void execute(in_data in, out_data out, executor_ref ex, workspace& ws) const
+    requires detail::split_kind<In, Out>
+  {
+    detail::execute_on(*core_, detail::slot_array(in), detail::slot_array(out), ex, ws,
+                       detail::split_args(in, out));
   }
 
   /// The transforms a member of team `t` owns: those it transforms with `completion::own`.

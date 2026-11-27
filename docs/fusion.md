@@ -7,7 +7,8 @@ together and what is built. The exact rules (orders, layouts, refusals, accuracy
 declarations, preconditions and guarantees are in the public headers, the API reference:
 `include/fftn/edges.hpp`, `include/fftn/callback.hpp`, `include/fftn/pipeline.hpp`,
 `include/fftn/shape.hpp` (stored runs) and the team overloads of `plan::execute`. The design
-and its reasons are in [DESIGN section 12](../dev/DESIGN.md#12-fusion-and-pipelines).
+and its reasons are in [DESIGN section 12](../dev/DESIGN.md#12-fusion-and-pipelines). C
+programs have the same objects through `fftn/c_api.h` ([c_api.md](c_api.md#fusion)).
 
 **Provisional.** Everything on this page except `completion::own` and `transforms_of` on plans
 is provisional, as its headers say: edges, the vocabulary, stored runs, block callbacks and
@@ -111,7 +112,9 @@ is pure per element keeps every determinism guarantee. Callbacks are taken by c2
 c2r plans of every rank; on planes and volumes inside the line bodies of the first and last
 phases, so they cost no pass of their own. Only a consumed output changes a strategy (some
 strategies use the output as their working memory), and `describe()` then says so.
-Real-to-real plans, and planes and volumes with stored runs, refuse callbacks.
+Beside stored runs a callback runs in the runs' pass, on each run of a row at its logical
+place: `produce` writes only the runs (the plan writes the zeros) and `consume` takes only the
+output's runs. Real-to-real plans refuse callbacks.
 
 **What a callback costs, and how to write one** (measured by experiment
 [X66](../dev/experiments/X66-block-callbacks.md) on an AMD EPYC 7763 and an Intel Xeon Gold 6240,

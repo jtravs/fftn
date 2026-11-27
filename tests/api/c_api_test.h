@@ -56,6 +56,17 @@ int ctest_refusals(void);
  * returns 0, or the number of the first check that failed. */
 int ctest_wisdom(const char* path, char* text, size_t size);
 
+/* Runs `fn(arg, rank)` for every rank of `lanes` (at most 8): rank 0 on the calling thread and
+ * the others on threads of their own where there are threads. Returns 0, or nonzero when a
+ * thread could not start (the ranks that started have returned). For c_fusion_test.c. */
+int ctest_parallel(int lanes, void (*fn)(void* arg, int rank), void* arg);
+
+/* Starts a C pool of `lanes` (with group_size 2 when `group_size` is not 0), calls
+ * `fn(arg, executor)` with the pool's fftn_executor, stops the pool and returns fn's status, or
+ * FFTN_ERROR_INTERNAL when the pool could not start. For c_fusion_test.c. */
+int ctest_with_pool(int lanes, int group_size, int (*fn)(void* arg, const fftn_executor* executor),
+                    void* arg);
+
 /* The length queries from C, with their status in `error`. */
 size_t ctest_next_fast_length(size_t n, fftn_length_kind kind, fftn_error* error);
 double ctest_relative_cost(size_t n, fftn_precision precision, fftn_error* error);
