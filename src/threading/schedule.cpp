@@ -201,16 +201,17 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // measured), from 288 KiB of the line to 2 MiB (18432 to 131072 points in double: 0.64-0.81
   // of the chain pair's time; float from 36864 points, where 32768 to 131072 took 0.66-0.94).
   // The EPYC 7763's class keeps the chain pair (the pair took 1.0-3.4 of its time there).
-  // Experiment X67 (machine_profile::pipeline_lanes_adjacent_max): a plane's strided lines on the
-  // lanes pair from 64 to 512 points, where it was measured: Zen 3's class, AMD's cores only (the lines
-  // of 64 x 512 and 512 x 512 planes took 0.46-0.96 of the chain pair's time, float most).
-  if (zen3_like && p.vendor == cpu_vendor::amd) {
-    p.pipeline_lanes_adjacent_max = 512;
-  }
   if (xeon6240_like) {
     p.pipeline_depth_min_kib = 288;
     p.pipeline_depth_max_kib = 2048;
     p.pipeline_depth_isa = fftn::isa::avx512;
+  }
+  // Experiment X67 (machine_profile::pipeline_lanes_adjacent_max): a plane's strided lines on the
+  // lanes pair from 64 to 512 points, where it was measured: Zen 3's class, AMD's cores only, and
+  // the Xeon 6240's (the lines of 64 x 512 and 512 x 512 planes took 0.46-0.96 of the chain pair's
+  // time on the EPYC 7763, float most, and 0.58-0.72 on the Xeon).
+  if ((zen3_like && p.vendor == cpu_vendor::amd) || xeon6240_like) {
+    p.pipeline_lanes_adjacent_max = 512;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
