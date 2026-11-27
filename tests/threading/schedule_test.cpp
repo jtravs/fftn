@@ -783,6 +783,16 @@ TEST(Schedule, GridSizesFromCaches) {
                   .edge_batched_forms,
               edge_forms_reach::none);
   }
+  // Block callbacks' blocks (X66's rule 3): a quarter of L2 on the Xeon 6240's class (Intel's
+  // cores only), half the L1 data cache elsewhere.
+  EXPECT_EQ(xeon86.callback_block_bytes, 256U * 1024U);
+  EXPECT_EQ(
+      x86("linux-intel-xeon-gold-6240.sysfs", fftn::detail::cpu_vendor::amd).callback_block_bytes,
+      16U * 1024U);
+  EXPECT_EQ(epyc86.callback_block_bytes, 16U * 1024U);
+  EXPECT_EQ(
+      x86("linux-gcp-n2-ice-lake.sysfs", fftn::detail::cpu_vendor::intel).callback_block_bytes,
+      24U * 1024U);
   // The team state on pages of its own on the Xeon 6240's class only (X79, narrowed to it by the
   // maintainer): the EPYC 7763, the M5 Max, Granite Rapids, the Ice Lake VM, Zen 5 and Axion keep
   // it on its 128-byte lines.

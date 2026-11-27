@@ -3564,7 +3564,8 @@ measured planning or a test choose (planes and volumes from 5.3c, below). Where 
 place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
 values):
 - **Chain** (c2c): as 5.3a, the copy into the workspace block by default, into the output with
-  `build_settings::callback_copy_out` (X66's arm), the chain then in place there. The edge
+  `build_settings::callback_copy_out` (X66's arm), the chain then in place there (removed by
+  X66's rule 4, task 5.3g: the copy now always goes to the block; "As measured" below). The edge
   driver's batched forms (5.2a) take callback stages as they take separate edge passes, under the
   same reach (`machine_profile::edge_batched_forms`; `leaf_rows`: rows whose transform is one
   leaf): the flat form runs a callback stage's blocks per transform, the row-block form (batch
@@ -3750,6 +3751,21 @@ middle's. `execute_transforms` and `transforms_of` count groups, as many as the 
 dimension, no `middle.call`, `fanout` above 1. The lanes and the depth-first pairs, forced, give way
 to the chain pair with a group, which `describe()` says. 18.2's "Callbacks" proposals 15 and 16 as written. Pipelines without
 a group keep their programs (the probes of 5.2f).
+
+As measured (task 5.3g, experiment [X66](experiments/X66-block-callbacks.md), the EPYC 7763 and
+the Xeon 6240; the Mac to follow):
+- **Block size.** `callback_block_bytes` is a quarter of L2 on the Xeon 6240's class (Intel's
+  cores; per precision over the cases it changes, double 0.952 on the deciding re-run and float
+  0.839, a plane's lanes column block in one call instead of 3–6) and stays half the L1
+  elsewhere (the EPYC 7763: double 0.979, short of the bar). The gain assumes a callback that
+  walks its block in memory order.
+- **The modifying-edge copy** goes to the workspace block on every target: the copy into the
+  output with the chain in place there lost on both machines (1.043, 1.065) and was deleted
+  (`build_settings::callback_copy_out`).
+- The stage costs 1–3 % on rows of 1024 points and more and on planes; against the user's own
+  loop a callback is about even on rows, and slower on short batched rows (the walked form),
+  planes (narrow column blocks), the free-space layout (one column a call) and out-of-place
+  input callbacks (the copy and the stage are two sweeps). X66's verdict lists these as leads.
 
 ### 12.4 Owner-computes
 
@@ -5354,6 +5370,7 @@ to change before a release.
 | 2026-11-27 | Block callbacks beside stored runs on planes and volumes (follow-up of 5.3c, section 12.3, "As built (task 5.3c)"): the side's callback in its runs' edge phase, on each run of a row at its logical place, in 12.1's order; the refusal lifted. The DCT and DST kinds I to IV are also checked against an independent direct sum of conventions.md's formulas (test-only `reference::r2r_from_definition`) | The runs' phase already holds each run in cache at its logical place, so the callback costs no sweep; "a block never crosses a gap" and logical coordinates as on rows. The direct sums share no table or kernel with `reference::r2r`, which the r2r suites use |
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 | 2026-11-27 | Split complex in the C API (section 5.9, "Split complex"; provisional, 18.2 Q28–Q31 for the maintainer): `fftn_split_ptr` and `fftn_split_const_ptr` (`void*` pairs, a real side's array in `re`), `fftn_shape::split`, the four executions with a `_split` suffix; a layout mismatch at execution ends the program; edges, stored runs, in-place r2c and c2r and `fftn_wisdom_add` refused as in C++. 6.9's structs unchanged | The C form of 5.8 under 6.8's and 6.9's conventions: one plan type and `void*` data, a flag that mirrors `shape_view::split`, a suffix as 6.9's `_args`. C++ refuses edges on split plans and has no split pipelines, so the imaginary arrays need no place in `fftn_exec_args` yet |
+| 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 
 ---
 

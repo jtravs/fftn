@@ -1123,6 +1123,21 @@ the forms paid on both machines (0.39–0.76; geometric means EPYC 0.549, Xeon 0
 else moved: a change judged over a mixed target set can hide a clear win in a subset its
 mechanism names in advance. [X65](experiments/X65-edges.md).
 
+4.30 **A user callback inside a library costs what its blocks' shape costs, not the call.**
+FFTN's block callbacks (a function of the application's, called between passes on data in
+cache) were timed against the plain plan plus the user's own loop on the EPYC 7763 and the Xeon
+6240. A callback that returns at once cost 1–3 % over the plain plan on rows of 1024 points and
+more and on planes, so the indirect call is cheap. A cubic term per element was about even with
+the user's loop on rows, but 1.08–1.66 on planes: there the callback received a lanes column
+block's columns cut into calls of 3–5 columns, so its inner run was 3–5 elements long; passing
+the block's 16 columns in one call took 0.61–0.77 of that on the Xeon. A callback that walked
+each column in turn instead of the lines in its inner loop cost 1.06–5.1 times as much. And an
+`exp` per element through scalar libm cost 2.5–38 times the transform: a precomputed factor
+array took 0.07–0.40 of its time. Expected savings from "fusing" (one sweep fewer beyond L2,
+0.75–0.90) did not appear: the user's extra sweep from L3 cost little next to the arithmetic.
+Give a callback long contiguous runs, and say in the documentation how to walk them.
+[X66](experiments/X66-block-callbacks.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
