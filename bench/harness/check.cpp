@@ -620,23 +620,23 @@ std::string check_delays() {
     const layout v = make_layout(kind, 1, {12, 1, 1}, 4, -1, false, fbench_f64);
     std::vector<double> xv(v.reals_in());
     fill_input(v, xv.data(), 9);
-    // Copy b's output from input row `from(b)`, its line delayed by `delay`.
+    // Copy b's output from its line's input row (or its own row), delayed by `delay`.
     const auto halves = [&](std::int64_t delay, bool own_row) {
-      std::vector<double> y(v.reals_out(), 0.0);
+      std::vector<double> out(v.reals_out(), 0.0);
       for (std::int64_t b = 0; b < v.batch; ++b) {
         const std::int64_t line = own_row ? b : b / 2 * 2;
         for (std::int64_t j = 0; j < 6; ++j) {
           const std::int64_t i = 3 + j - delay;
           const value w = i < 6 ? load(v.in, xv.data(), line, i) : value{0.0, 0.0};
           if (kind == fbench_r2c) {
-            y[idx(2 * v.out.offset(b, 0) + j)] = w.re;
+            out[idx(2 * v.out.offset(b, 0) + j)] = w.re;
           } else {
-            y[idx(2 * v.out.offset(b, j))] = w.re;
-            y[idx(2 * v.out.offset(b, j) + 1)] = w.im;
+            out[idx(2 * v.out.offset(b, j))] = w.re;
+            out[idx(2 * v.out.offset(b, j) + 1)] = w.im;
           }
         }
       }
-      return y;
+      return out;
     };
     if (!check_delay(v, xv.data(), halves(1, false).data(), 2, true).pass) {
       return "the delayed check rejects exact valid halves of copies (kind " +
