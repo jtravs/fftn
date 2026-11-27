@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: 2026 John C. Travers and contributors
 # SPDX-License-Identifier: Apache-2.0
 #
-# The real-to-real catalogue (task 6.12, DESIGN.md 5.7; Q15 of DESIGN.md 18.2 proposes judging
-# FFTN's r2r speed on it against FFTW's r2r and pocketfft): every kind, DCT-I to IV, DST-I to IV
+# The real-to-real catalogue (task 6.12, DESIGN.md 5.7; DESIGN.md 18.2, real-to-real Q15 (speed
+# target), proposes judging FFTN's r2r speed on it against FFTW's r2r and pocketfft): every kind,
+# DCT-I to IV, DST-I to IV
 # and the DHT (FFTW's REDFT00 ... RODFT11 and DHT; `r2r` names them by FFTN's names), on rows at
 # the standard catalogue's lengths and at the row lengths of the client catalogues (the
 # transverse and spectral grids of a propagation code), batches of rows, planes, volumes and the
 # strided axes of the interleaved layout, in double and single precision. Each `r2r` kind applies
-# to every axis of its case. Format in bench/README.md; weights are equal. Case IDs read
-# r2r-KIND-dims-bBATCH-op|ip[-f32][-il-oOUTER].
+# to every axis of its case, or one kind per axis joined by "." (the mixed group). Format in
+# bench/README.md; weights are equal. Case IDs read r2r-KIND-dims-bBATCH-op|ip[-f32][-il-oOUTER].
 
 [catalogue]
 name = "r2r"
@@ -85,7 +86,44 @@ name = "client-like-rows"
 note = "the row lengths of the client catalogues"
 kind = "r2r"
 r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
-dims = [3072, 5120, 6144, 9216, 10240, 18432, 20480, 32768, 40960]
+dims = [576, 750, 864, 1152, 1296, 1728, 3072, 5120, 6144, 6400, 9216, 10240, 18432, 20480, 32768,
+        36864, 40960, 73728]
+
+[[group]]
+name = "client-like-batches"
+note = "large batches of the client catalogues' short rows"
+kind = "r2r"
+r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
+dims = [864, 1728]
+batch = [1024, 4469]
+
+[[group]]
+name = "natural-dct1-rows"
+note = "DCT-I at 2^k + 1 points (Chebyshev grids)"
+kind = "r2r"
+r2r = "dct1"
+dims = [17, 65, 257, 1025, 4097, 16385, 65537]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "natural-dst1-rows"
+note = "DST-I at 2^k - 1 points (the interior of a grid of 2^k + 1)"
+kind = "r2r"
+r2r = "dst1"
+dims = [15, 63, 255, 1023, 4095, 16383, 65535]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "natural-planes"
+kind = "r2r"
+r2r = "dct1"
+dims = ["65x65", "257x257"]
+
+[[group]]
+name = "natural-planes-dst1"
+kind = "r2r"
+r2r = "dst1"
+dims = ["63x63", "255x255"]
 
 [[group]]
 name = "row-batches"
@@ -158,6 +196,15 @@ r2r = ["dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht"]
 dims = ["32x32", "64x64"]
 batch = 64
 layout = "interleaved"
+outer = [1, 16]
+
+[[group]]
+name = "mixed-planes"
+note = "a kind per axis, slowest first"
+kind = "r2r"
+r2r = ["dct2.dst2", "dct1.dst1", "dct3.dht", "dct4.dct2"]
+dims = ["64x64", "65x63", "128x96"]
+tiers = ["smoke"]
 
 # ---- single precision ---------------------------------------------------------------------
 

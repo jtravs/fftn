@@ -123,6 +123,13 @@ check_result check_output(const layout& l, const void* in, const void* out, std:
 check_result check_delay(const layout& l, const void* in, const void* out, std::int64_t fanout = 1,
                          bool valid = false);
 
+// The check of a backend whose output is its input (FFTN's STAGE option, "output":"identity" in
+// its describe: a stage whose work is the identity in exact arithmetic). c2c cases of any rank:
+// every value of every transform is compared, and the energies; the tolerance is four times the
+// transform's (the stage's two transforms each way and its pointwise passes). Any other kind never
+// passes.
+check_result check_identity(const layout& l, const void* in, const void* out);
+
 // Self-test of the reference and the check (the `selftest` command); returns an empty
 // string on success, else what failed.
 std::string selftest();

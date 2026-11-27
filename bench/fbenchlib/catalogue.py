@@ -16,7 +16,8 @@ CATALOGUE_DIR = Path(__file__).resolve().parent.parent / "catalogues"
 TIERS = ("smoke", "quick", "tracking", "full")
 KINDS = ("c2c", "r2c", "c2r", "r2r")
 # The real-to-real kinds (FFTW's REDFT00 ... RODFT11 and DHT, by FFTN's names): a group of kind
-# r2r lists them under `r2r`, each applied to every axis of the case.
+# r2r lists them under `r2r`, each applied to every axis of the case, or one per axis joined by
+# "." (slowest axis first).
 R2R_KINDS = ("dct1", "dct2", "dct3", "dct4", "dst1", "dst2", "dst3", "dst4", "dht")
 PRECISIONS = ("f64", "f32")
 GROUP_KEYS = {
@@ -172,9 +173,16 @@ def load(name_or_path: str) -> Catalogue:
                 raise ValueError(f"{where}: bad kind, place or direction")
             if (kind == "r2r") != (r2r != ""):
                 raise ValueError(f"{where}: r2r names the kinds of kind r2r, and only of it")
-            if kind == "r2r" and r2r not in R2R_KINDS:
-                raise ValueError(f"{where}: r2r kinds are among {R2R_KINDS}")
-            if r2r == "dct1" and min(dims) < 2:
+            # One kind for every axis, or one per axis, slowest first: "dct2.dst3".
+            axis_kinds = r2r.split(".") if r2r else []
+            if kind == "r2r" and (
+                any(k not in R2R_KINDS for k in axis_kinds) or len(axis_kinds) not in (1, len(dims))
+            ):
+                raise ValueError(
+                    f"{where}: r2r is one of {R2R_KINDS}, or one per axis joined by '.'"
+                )
+            per_axis = axis_kinds * len(dims) if len(axis_kinds) == 1 else axis_kinds
+            if per_axis and any(k == "dct1" and d < 2 for k, d in zip(per_axis, dims, strict=True)):
                 raise ValueError(f"{where}: dct1 needs every length >= 2")
             if precision not in PRECISIONS:
                 raise ValueError(f"{where}: precision is one of {PRECISIONS}")

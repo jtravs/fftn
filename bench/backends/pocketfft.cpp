@@ -14,8 +14,10 @@
 // values), so nothing is converted. Real-to-real cases (task 6.12) go through its dct and dst
 // (types 1 to 4, unnormalised, fct 1 and ortho off: FFTW's REDFT and RODFT definitions, as SciPy
 // documents for the same calls) and r2r_separable_fht (FFTW's separable DHT, sum of x cas; its
-// r2r_separable_hartley is the transform with cos - sin), one kind for every axis; their plans
-// are cached and fetched at plan time too. The interleaved layout (fbench_case::interleave) is
+// r2r_separable_hartley is the transform with cos - sin): one call over every axis when the
+// axes share a kind, else one call per axis, the first from the input to the output and the
+// others in place there (as a user mixing kinds calls it); their plans are cached and fetched at
+// plan time too. The interleaved layout (fbench_case::interleave) is
 // pocketfft's byte strides: the batch one element apart, each axis `interleave` times its tight
 // stride, and the blocks (`outer`) a dimension of their own. Double and single precision.
 //
@@ -28,6 +30,7 @@
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -49,7 +52,7 @@ struct plan_record {
   std::int32_t kind = fbench_c2c;
   bool single = false;
   bool forward = true;
-  std::int32_t r2r = fbench_dct2; // the kind of every axis of an r2r case
+  std::vector<std::int32_t> r2r; // the kind of each axis of an r2r case
   pf::shape_t shape; // [outer,] batch, then the logical dimensions (r2c/c2r: the real array's)
   pf::stride_t in;   // byte strides
   pf::stride_t out;
@@ -101,7 +104,8 @@ template <class T> void plan_axes(const fbench_case& c, plan_record& r) {
                        real_out ? real_size : complex_size);
   if (c.kind == fbench_r2r) {
     for (int d = 0; d < c.rank; ++d) {
-      r.plans.push_back(r2r_plan<T>(r.r2r, static_cast<std::size_t>(c.dims[d])));
+      r.plans.push_back(
+          r2r_plan<T>(r.r2r.at(static_cast<std::size_t>(d)), static_cast<std::size_t>(c.dims[d])));
     }
     return;
   }
@@ -136,14 +140,24 @@ template <class T> void run(const plan_record& r, void* in, void* out) {
   default:
     break;
   }
+  const auto call = [&](std::int32_t kind, const pf::shape_t& axes, const T* x, T* y,
+                        const pf::stride_t& sx) {
+    if (kind == fbench_dht) {
+      pocketfft::r2r_separable_fht(r.shape, sx, r.out, axes, x, y, one, 1);
+    } else if (kind <= fbench_dct4) {
+      pocketfft::dct(r.shape, sx, r.out, axes, kind - fbench_dct1 + 1, x, y, one, false, 1);
+    } else {
+      pocketfft::dst(r.shape, sx, r.out, axes, kind - fbench_dst1 + 1, x, y, one, false, 1);
+    }
+  };
   const auto* x = static_cast<const T*>(in);
   auto* y = static_cast<T*>(out);
-  if (r.r2r == fbench_dht) {
-    pocketfft::r2r_separable_fht(r.shape, r.in, r.out, r.axes, x, y, one, 1);
-  } else if (r.r2r <= fbench_dct4) {
-    pocketfft::dct(r.shape, r.in, r.out, r.axes, r.r2r - fbench_dct1 + 1, x, y, one, false, 1);
-  } else {
-    pocketfft::dst(r.shape, r.in, r.out, r.axes, r.r2r - fbench_dst1 + 1, x, y, one, false, 1);
+  if (std::ranges::all_of(r.r2r, [&](std::int32_t k) { return k == r.r2r.front(); })) {
+    call(r.r2r.front(), r.axes, x, y, r.in);
+    return;
+  }
+  for (std::size_t d = 0; d < r.axes.size(); ++d) {
+    call(r.r2r[d], {r.axes[d]}, d == 0 ? x : y, y, d == 0 ? r.in : r.out);
   }
 }
 
@@ -177,20 +191,14 @@ const char* fbench_describe() { return description().c_str(); }
 
 std::int32_t fbench_create(const fbench_case* c, void* /*in*/, void* /*out*/, void** plan,
                            char* message, std::size_t message_size) {
-  if (c->kind == fbench_r2r) {
-    for (int d = 1; d < c->rank; ++d) {
-      if (c->r2r_kinds[d] != c->r2r_kinds[0]) {
-        fbench::backends::say(message, message_size, "one r2r kind for every axis only");
-        return fbench_unsupported;
-      }
-    }
-  }
   try {
     auto r = std::make_unique<plan_record>();
     r->kind = c->kind;
     r->single = c->precision == fbench_f32;
     r->forward = c->sign < 0;
-    r->r2r = c->kind == fbench_r2r ? c->r2r_kinds[0] : fbench_dct2;
+    if (c->kind == fbench_r2r) {
+      r->r2r.assign(c->r2r_kinds, c->r2r_kinds + c->rank);
+    }
     if (c->outer > 1) {
       r->shape.push_back(static_cast<std::size_t>(c->outer));
     }

@@ -1154,7 +1154,24 @@ yet whole lines stayed at 1.09–1.23, the plans' own chains having measured top
 pipeline must carry every strategy and vectorised kernel its separate parts reach before its saved
 sweep can show. [X67](experiments/X67-row-pipelines.md).
 
-4.32 **A half-cost transform whose outputs are running sums of a spectrum is accurate only for
+4.32 **A fused route is as fast as its slowest object, whatever traffic it saves; time each object
+against the step it replaces.** The free-space stage as three objects (planes with a prologue
+callback, a spectral pair on the frequency pencils, planes with an epilogue) read a quarter of the
+DRAM lines of the route it replaced (transposes into a plane-major scratch, row chunks, transposes
+back) on an EPYC 7763 and half on a Xeon 6240 at one thread, and still took 1.17–2.59 times its
+time at 384² × 750 on both, from one thread to a full socket (0.79–2.59 over all sizes); at a full
+Xeon socket it even read more lines than the old route (17.6 sweeps of the field against 16.1). A
+per-step profile on the EPYC found the main cause: the (y, x) planes over the field's own layout
+(the frequency axis a stride-1 batch, so lines of 16 adjacent transforms are 256 bytes read from
+rows 12 KB and 4.6 MB apart) took about 5 times the tight planes' time, and 2.4–3 times the tight
+planes plus the transposes the old route paid to make them tight, while the pencils' pair took
+0.17–0.33 of the rows route. Strides that are multiples of 2 KiB (192² × 384) cost the Xeon most.
+The same objects run slab by slab (the y axis alone, then x and the pencils per y slab while it is
+in cache) took 0.31–0.52 of the three objects' time at 384² at full width (0.80–0.96 at one thread),
+mostly by running the x axis in cache rather than over the whole field. Traffic counts said fusion
+would win; only the profile said where it lost. [X68](experiments/X68-free-space-stage.md).
+
+4.33 **A half-cost transform whose outputs are running sums of a spectrum is accurate only for
 short lines.** The DCT-I and DST-I of odd n by a real DFT of n ∓ 1 points (Numerical Recipes'
 cosft1 and sinft; FFTW's documentation calls its REDFT00 by an r2hc of n − 1 less accurate) halve
 the chain of the even and odd extensions and took 0.78–0.79 of their time on the EPYC over the cases
@@ -1169,14 +1186,14 @@ bound a round trip's largest error, and the adopted limit fell to 129. Judge suc
 metrics, on round trips and on many inputs, and expect a length limit, not a yes or no.
 [X85](experiments/X85-r2r-speed.md).
 
-4.33 **Batching lines into vector lanes pays only when the per-line work around the transform
+4.34 **Batching lines into vector lanes pays only when the per-line work around the transform
 batches too.** Real-to-real planes whose strided axis ran as lanes over blocks of adjacent lines
 (the read stage of each line into a tile, the chain as lanes passes, the store stage of each line
-back), with the read and store stages still scalar per line, took 1.021 of the per-line plans'
-time over 270 planes and volumes on the EPYC (100 slower, up to 1.16; 27 faster): the scalar
+back), with the read and store stages still scalar per line, took 1.022 of the per-line plans'
+time over 270 planes and volumes on the EPYC (106 slower, up to 1.16; 29 faster): the scalar
 stages and the tile's strided writes cost what the shared chain saved. And a runtime stride added
 to those scalar stages' scratch indexing (1 in every per-line plan) cost 5–15 % on small planes
-by itself against the base commit (68 of 340 cases past the band; not diagnosed further, the stride was
+by itself against the base commit (76 of 340 cases past the band; not diagnosed further, the stride was
 deleted with the lanes). pocketfft, which runs several lines of a multi-dimensional transform at
 once in vector lanes, pre- and post-processing included, took 0.56 of FFTN's time on the same
 planes and volumes on the Xeon (AVX-512): batch the whole line's work, not only its FFT. [X85](experiments/X85-r2r-speed.md).

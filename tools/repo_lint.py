@@ -8,6 +8,7 @@
     tools/repo_lint.py docs    relative links in tracked Markdown resolve; PLAN.md has
                                its status section; no file is referenced that is ignored
     tools/repo_lint.py knobs   experimental switches are registered and not expired
+    tools/repo_lint.py markers no file holds a merge's conflict markers
     tools/repo_lint.py snippets  code blocks in docs/ and README.md are quoted from files in
                                  examples/
 
@@ -50,6 +51,9 @@ SOURCE_NAMES = {"CMakeLists.txt", ".clang-format", ".clang-tidy"}
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 KNOB_FILE = ROOT / "dev" / "KNOBS.toml"
 KNOB_USE = re.compile(r"\bFFTN_X_[A-Z0-9_]+\b")
+# A merge's conflict markers at the start of a line (the "=======" separator alone is a
+# Markdown heading underline, so the outer markers decide).
+MARKER = re.compile(r"^(<{7}|>{7}|\|{7})( |$)")
 
 
 def repo_files() -> list[Path]:
@@ -134,6 +138,19 @@ def check_docs(files: list[Path]) -> list[str]:
         for heading in ("## Status", "## Phases"):
             if heading not in text:
                 problems.append(f"dev/PLAN.md: missing section '{heading}'")
+    return problems
+
+
+def check_markers(files: list[Path]) -> list[str]:
+    problems = []
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except UnicodeDecodeError, OSError:
+            continue  # binary or unreadable: not a merge's text
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if MARKER.match(line):
+                problems.append(f"{f.relative_to(ROOT)}:{lineno}: a merge's conflict marker")
     return problems
 
 
@@ -245,6 +262,7 @@ def main() -> int:
         "spdx": check_spdx,
         "docs": check_docs,
         "knobs": check_knobs,
+        "markers": check_markers,
         "snippets": check_snippets,
     }
     wanted = sys.argv[1:] or list(checks)

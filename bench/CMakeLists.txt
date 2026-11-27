@@ -46,6 +46,8 @@ fbench_add_backend(fftn fftn::fftn)
 # build settings (the machine profile, chunking, for the threading experiments; forced
 # radices, for experiment X2).
 target_include_directories(fbench-fftn PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# The free-space stage of the STAGE option (experiment X68).
+target_sources(fbench-fftn PRIVATE backends/fftn_stage.cpp)
 
 # fbench-fftn_omp: the same backend with THREADS through fftn::omp::executor (fftn/omp.hpp),
 # linked with the compiler's OpenMP runtime and nothing else that brings one (one runtime per
@@ -64,7 +66,7 @@ function(fbench_link_openmp target)
   endif()
 endfunction()
 if(TARGET OpenMP::OpenMP_CXX AND NOT FFTN_SANITIZE MATCHES "thread")
-  add_executable(fbench-fftn_omp backends/fftn.cpp)
+  add_executable(fbench-fftn_omp backends/fftn.cpp backends/fftn_stage.cpp)
   fftn_configure_target(fbench-fftn_omp)
   target_include_directories(fbench-fftn_omp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                                      ${PROJECT_SOURCE_DIR}/src)
@@ -391,6 +393,26 @@ if(FFTN_BUILD_TESTS)
   set_tests_properties(bench.fftn_callback_consume PROPERTIES
     PASS_REGULAR_EXPRESSION "\"id\":\"4\",\"status\":\"unsupported\".*\"id\":\"6\",\"status\":\"ok\",[^\n]*\"pass\":true"
     FAIL_REGULAR_EXPRESSION "\"pass\":false;\"status\":\"error\"")
+  # The FFTN backend's free-space stage (STAGE, experiment X68): every arm passes the identity
+  # check on envelopes and real time lines, one and two components, serial and threaded, and the
+  # self-check (work that is not the identity, run by the arm and by T, compared) holds; other
+  # cases are unsupported.
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/stage_option_cases.txt
+       "id=1 kind=c2c dims=8x6x10 batch=1 place=in sign=-1\nid=2 kind=c2c dims=7x9x10 batch=2 place=in sign=-1\n"
+       "id=3 kind=c2c dims=8x6x5 batch=1 place=in sign=-1\nid=4 kind=c2c dims=7x9x5 batch=2 place=in sign=-1\n"
+       "id=5 kind=c2c dims=64 batch=2 place=out sign=-1\n")
+  foreach(_opts IN ITEMS "STAGE=T" "STAGE=O+STAGE_SELFCHECK=1" "STAGE=Of+STAGE_SELFCHECK=1"
+                         "STAGE=G+STAGE_SELFCHECK=1" "STAGE=C" "STAGE=G+STAGE_SELFCHECK=1+THREADS=3"
+                         "STAGE=O+STAGE_SELFCHECK=1+THREADS=3")
+    string(REPLACE "+" " " _spaced "${_opts}")
+    string(REPLACE "=" "_" _name "${_opts}")
+    add_test(NAME bench.fftn_stage_${_name}
+             COMMAND fbench-fftn run --cases ${CMAKE_CURRENT_BINARY_DIR}/stage_option_cases.txt
+                     --options "${_spaced} STAGE_TIME=5.16.2" --check-only)
+    set_tests_properties(bench.fftn_stage_${_name} PROPERTIES
+      PASS_REGULAR_EXPRESSION "\"id\":\"4\",\"status\":\"ok\",[^\n]*\"pass\":true.*\"id\":\"5\",\"status\":\"unsupported\""
+      FAIL_REGULAR_EXPRESSION "\"pass\":false;\"status\":\"error\"")
+  endforeach()
   if(TARGET fbench-fftw)
     # Includes the check that describe names the real FFTW library, not this executable.
     add_test(NAME bench.harness_selftest_fftw COMMAND fbench-fftw selftest)

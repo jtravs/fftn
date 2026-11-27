@@ -3913,6 +3913,23 @@ That is what a multi-axis pipeline would do, less its per-call overhead. Fusing 
 into one is worth microseconds against a stage of hundreds of milliseconds, and the client's
 volumes (226 MB and up) never fit a cache, so neither is a reason to build it.
 
+**As measured (task 5.3h, experiment X68, 2026-11-27).** fbench's `STAGE` option builds the stage
+from public objects only (bench/backends/fftn_stage.cpp): today's route (T), the three objects
+above (O; Of with the propagator as a factor), the slab grouping (G). The pencils behaved as
+designed: the spectral pair took 0.17–0.33 of the old route's pack, rows, response, rows and crop.
+The planes did not: over the field's own layout (y and x at strides n_x n_ω and n_ω, ω a stride-1
+batch run as lanes over blocks of 16 adjacent transforms) they took about 5 times the time of the
+same planes stored tight, and 2.4–3 times the tight planes plus the old route's transposes, so O
+took 1.17–2.59 times T's time at 384² × 750 (0.79–2.59 over all sizes; EPYC 7763 and Xeon 6240,
+one thread to a socket) while reading a quarter (EPYC) to a half (Xeon) of its DRAM lines at one
+thread; at a full Xeon socket the planes re-read the field and O read more than T. 5.3's acceptance is
+therefore not met until those planes are fixed (X68's lead 1, a step of its own). G, the same
+objects per y slab, took 0.31–0.52 of O's time at 384² at full width (0.80–0.96 at one thread);
+by X68's rule 4 a multi-axis pipeline is proposed to the maintainer, not built, behind lead 1. G's
+own y plan over the (x, ω) batch is as slow as lead 1's planes; it gains by running the x axis per
+slab in cache instead of over the whole field, so the y axis at its 4.6 MB stride is lead 1's main
+target, and G/O is to be measured again once the planes are fixed.
+
 ---
 
 ## 13. Threading and execution
@@ -5455,6 +5472,7 @@ to change before a release.
 | 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 | 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
 | 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
+| 2026-11-27 | Experiment X68 (task 5.3h, section 12.5, "As measured"): fbench's `STAGE` option (today's route, the three objects, the factor variant, the slab grouping, one sweep), catalogue `x68`, the DRAM traffic campaign; no library change | X68's rules on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): 5.3's acceptance not met (O/T at 384² at full width 2.59 and 1.89; 1.32 with two components on the EPYC), the planes over a stride-1 batch about 5 times the tight planes' time (lead 1, for the maintainer); the multi-axis pipeline proposed by rule 4 (G/O 0.305 and 0.519), behind lead 1, not built |
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 
 ---
