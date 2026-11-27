@@ -22,6 +22,12 @@ fftn_configure_target(fftn_example_c_api)
 set_target_properties(fftn_example_c_api PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
 target_link_libraries(fftn_example_c_api PRIVATE fftn::fftn)
 add_test(NAME example.c_api COMMAND fftn_example_c_api)
+# The fusion part of the C API (step 6.9): edges, a pipeline and a C callback.
+add_executable(fftn_example_c_api_fusion c_api_fusion.c)
+fftn_configure_target(fftn_example_c_api_fusion)
+set_target_properties(fftn_example_c_api_fusion PROPERTIES C_STANDARD 99 C_EXTENSIONS OFF)
+target_link_libraries(fftn_example_c_api_fusion PRIVATE fftn::fftn)
+add_test(NAME example.c_api_fusion COMMAND fftn_example_c_api_fusion)
 # The same program on the C API's shared library, when it is built (FFTN_BUILD_C_SHARED).
 if(TARGET fftn_c)
   add_executable(fftn_example_c_api_shared c_api.c)

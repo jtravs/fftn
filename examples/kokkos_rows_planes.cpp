@@ -3,8 +3,8 @@
 
 // A small Kokkos program: real rows forward and back through the Kokkos-FFT spellings, in-place
 // batched planes through the adapter's own names, then core plans on Kokkos' threads, through
-// the executor and in a team kernel. The example quoted in docs/kokkos.md. Exits with 0 when
-// every round trip gives back its input.
+// the executor and in a team kernel, and planes through the one-shot functions. The example quoted
+// in docs/kokkos.md. Exits with 0 when every round trip gives back its input.
 
 #include <fftn/fftn.hpp>
 #include <fftn/kokkos.hpp>
@@ -52,6 +52,36 @@ double rows_round_trip(const host& exec) {
   for (std::size_t r = 0; r < rows; ++r) {
     for (std::size_t j = 0; j < n; ++j) {
       error = std::max(error, std::abs(z(r, j) - x(r, j)));
+    }
+  }
+  return error;
+}
+
+// The largest error of a round trip of planes through the one-shot functions.
+double one_shot_round_trip(const host& exec) {
+  const std::size_t ny = 12;
+  const std::size_t nx = 20;
+  // snippet-begin: one-shot
+  namespace kfft = fftn::kokkos::compat;
+  const Kokkos::View<double**, Kokkos::HostSpace> a("a", ny, nx);
+  const Kokkos::View<complex**, Kokkos::HostSpace> spectrum("spectrum", ny, nx / 2 + 1);
+  const Kokkos::View<double**, Kokkos::HostSpace> back("back", ny, nx);
+  for (std::size_t i = 0; i < ny; ++i) {
+    for (std::size_t j = 0; j < nx; ++j) {
+      a(i, j) = std::sin(0.3 * static_cast<double>(i * nx + j));
+    }
+  }
+  // A plan per layout is built on the first call and kept in this thread's convenience context
+  // (fftn/easy.hpp); the second round trip finds both.
+  for (int round = 0; round < 2; ++round) {
+    kfft::rfft2(exec, a, spectrum);
+    kfft::irfft2(exec, spectrum, back); // backward scaled by 1/(ny nx), as Kokkos-FFT
+  }
+  // snippet-end: one-shot
+  double error = 0;
+  for (std::size_t i = 0; i < ny; ++i) {
+    for (std::size_t j = 0; j < nx; ++j) {
+      error = std::max(error, std::abs(back(i, j) - a(i, j)));
     }
   }
   return error;
@@ -151,9 +181,10 @@ int main(int argc, char** argv) {
     const double rows = rows_round_trip(exec);
     const double planes = planes_round_trip(exec);
     const double threaded = threaded_round_trip(exec);
-    std::printf("largest round-trip errors: rows %.3g, planes %.3g, threaded %.3g\n", rows, planes,
-                threaded);
-    return rows < 1e-14 && planes < 1e-13 && threaded < 1e-13 ? 0 : 1;
+    const double one_shot = one_shot_round_trip(exec);
+    std::printf("largest round-trip errors: rows %.3g, planes %.3g, threaded %.3g, one-shot %.3g\n",
+                rows, planes, threaded, one_shot);
+    return rows < 1e-14 && planes < 1e-13 && threaded < 1e-13 && one_shot < 1e-14 ? 0 : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

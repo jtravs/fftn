@@ -624,7 +624,15 @@ Points that matter:
   edges built by hand along one axis, against the quadruple-precision reference over several,
   and for the allocation of no weight array beyond one axis.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
-  `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
+  `rfft` and the rest, 5.5) are built over the same context. *As built (step 6.7;
+  provisional):* the header-only adapter reaches it through one internal entry,
+  `easy::detail::run_shape` (declared in `fftn/easy.hpp`, a friend of `context`): the plan of
+  exactly the Views' `shape_of` with `options::in_place`, keyed by every field of the shape,
+  found or built in `thread_context()` and executed on the caller's Kokkos executor with the
+  context's workspace. The normalisation stays the adapter's separate pass (`view_plan`'s,
+  now a shared helper), so each one-shot is bitwise the `view_plan` of the same Views. The
+  shape's vectors are built on every call, so a one-shot allocates even when it finds its
+  plan.
 
 ### 5.5 Other interfaces
 
@@ -694,8 +702,15 @@ the header and the docs until it happens.
   the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
   application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
-- *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
-  a plan per call and belong with the convenience layer of 5.4, step 6.7); `DynPlan`.
+- *The one-shot functions* (`KokkosFFT::fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, the
+  `2` and `n` forms; step 6.7, provisional) take Kokkos-FFT's signatures and compute what a
+  plan of the same Views computes, keeping the plan in the calling thread's convenience
+  context (5.4, "Kokkos"). As Kokkos-FFT: a real input to `fft`, `fft2` and `fftn` goes through
+  a complex temporary, `hfft` is `irfft` of the conjugate with the normalisation's direction
+  swapped, and `ihfft` is `rfft` so swapped, then conjugated. One deliberate difference: `hfft`
+  conjugates into a temporary and never modifies its input, which Kokkos-FFT does to a
+  non-const one.
+- *Not provided yet:* the helpers (`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -1017,10 +1032,10 @@ Points that matter:
   one core.
 - **Strings** (`describe`, wisdom text) are copied into the caller's buffer and the full length
   is returned, as `snprintf` does.
-- **Later in phase 6.** Edges (`fftn_edge`, `fftn_factor` with strides as a pointer and a count,
-  `fftn_exec_args`, `fftn_plan_create_edges` and execute forms with arguments) once 12.1's API
-  is confirmed; block callbacks (12.3) and pipelines (12.2) once theirs is (step 6.9);
-  split-complex kinds with 5.8.
+- **Fusion** (step 6.9, built: "As built (step 6.9)" below). Edges (`fftn_edge`, `fftn_factor`
+  with strides as a pointer and a count, `fftn_exec_args`, `fftn_plan_create_edges` and execute
+  forms with arguments), block callbacks (12.3) and pipelines (12.2), after the maintainer
+  accepted 12's C++ APIs as built (2026-11-26). Split-complex kinds come with 5.8.
 - **As built (step 6.8; `include/fftn/c_api.h`, `src/c_api/c_api.cpp`, `docs/c_api.md`).** The
   block above, with Q17–Q22's proposals taken as written, and these choices where it was silent
   (each provisional, for the maintainer's review):
@@ -1058,6 +1073,51 @@ Points that matter:
   - *Building*: the tests and examples enable C, with the C++ compiler's sibling when `CC` is
     unset (`cmake/FftnCCompiler.cmake`), so that sanitizer runtimes do not mix; a C program
     links the static library with the C++ driver.
+- **As built (step 6.9; the same files, `tests/api/c_fusion_test.*`, `examples/c_api_fusion.c`).**
+  The C form of 12's C++ APIs, which the block above only names, following 6.8's conventions;
+  each choice provisional, for the maintainer's review:
+  - *Types*: `fftn_factor_kind` (`FFTN_FACTOR_NONE`, `_REAL`, `_COMPLEX`), `fftn_factor`
+    (`axis_stride_count` and `axis_strides`, `batch_stride_count` and `batch_strides`; a batch
+    count of 0 broadcasts, as the empty vector), `fftn_edge` (`int accumulate`),
+    `fftn_plan_edges`, `fftn_exec_args` (the six pointers), `fftn_callback_mode`
+    (`FFTN_CALLBACK_MODIFY`, `_PRODUCE`, `_CONSUME`), `fftn_callback`, `fftn_block_info`
+    (`block_info`'s fields, the origin as `rank` and `origin`, the scratch as `scratch` and
+    `scratch_bytes`), `fftn_pipeline_kind` (`FFTN_PIPELINE_CCC`, `_TCT`, `_CTC`, after the
+    documents' `<C, C, C>` notation), `fftn_middle`, one `fftn_pipeline_desc` for every kind and
+    precision (`kind` and `precision` fields, `first` read for `_CCC` only), and the size
+    constants as macros, `FFTN_ALONG_TRANSFORMS` and `FFTN_NO_GROUP` (a C enumerator is an
+    `int`).
+  - *Defaults*: `fftn_edge_default()` and `fftn_pipeline_desc_default()`, because a zeroed
+    struct is not the C++ default (a scale of 0 is a valid scale, a fan-out of 0 is refused, a
+    group of 0 names batch dimension 0).
+  - *Plans with edges*: `fftn_plan_create_edges(shape, options, edges, error)`, NULL edges for
+    none; the execute forms with arguments are the four executions with an `_args` suffix and a
+    trailing `const fftn_exec_args*`, NULL for a zeroed one (the team form keeps the explicit
+    `fftn_completion`, as `fftn_execute_team` does).
+  - *Callbacks*: `fftn_block_fn` is `void (*)(void* user, const fftn_block_info* info, void*
+    data)`, returning nothing, as `block_fn`. The core holds one `noexcept` C++ function per
+    element type in the callback's place (`call_c`, called through its own type); each C
+    execution passes it, as the user pointer, a thunk of the C function and the caller's pointer
+    on the caller's stack (no allocation; a team member's callbacks read its own call's, and an
+    executor's tasks run within the call). A callback's failure is recorded through its user
+    pointer and checked by the caller after the execution; `longjmp` out of a callback is
+    undefined; a C++ exception from a callback written in C++ ends the program at the boundary
+    (`std::terminate`), tested by a death test.
+  - *Pipelines*: an opaque `fftn_pipeline` of its own, reference counted as `fftn_plan`, rather
+    than pipelines under `fftn_plan` (the C++ types differ, and wisdom does not take pipelines):
+    `fftn_pipeline_create`, `_ref`, `_release`, `_workspace_bytes`, `_describe`,
+    `_instruction_set`, `_transform_count` (groups counted, 5.3f), `_execute`,
+    `_execute_transforms`, `_execute_team`, `_transforms_of`, `_execute_on`, every execution
+    with a `const fftn_exec_args*` (NULL for none). The C++ helpers (`complex_convolution_rows`
+    and the others) are not mirrored.
+  - *Errors*: refusals made in C name the C function and the field
+    (`fftn_pipeline_create: desc.middle.mul.kind is 7, not an fftn_factor_kind`); the C++
+    constructors' refusals come through with their own messages, which name the C++ fields
+    (`edges.in.accumulate`, `desc.group`), as `fftn_plan_create` passes them (6.8).
+  - *No growth room*: `fftn_exec_args`, `fftn_edge` and `fftn_pipeline_desc` are plain structs
+    without size or version fields (Q21), so split complex (5.8, step 6.10) will change them
+    (the second array of a split factor or side, say), as Q21 allows before 1.0; C callers
+    rebuild against the new header.
 
 ---
 
@@ -5187,7 +5247,9 @@ to change before a release.
 | 2026-11-26 | Groups on pipelines (task 5.3f, section 12.3, "As built"): `pipeline_desc::group`, provisional; the group's dimension a task, two members loops around one middle callback over the G spectra, which `block_info::group` and `group_stride` describe; `execute_transforms` and `transforms_of` count groups; refused without a middle callback, with fan-out and for no such dimension; 18.2's "Callbacks" proposals 15 and 16. Awaits the maintainer's review of the API | A coupled middle (polarisations) needs every member's spectrum at once, and one task per group keeps the callback whole under teams and executors |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
+| 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
+| 2026-11-26 | The C API for fusion (step 6.9, section 5.9, "As built (step 6.9)"; provisional, second reader to come): edges and `fftn_exec_args`, block callbacks as C function pointers with a `void*` user argument behind one `noexcept` C++ function per element type, and pipelines of every built kind (fan-out, runs, groups) as an opaque `fftn_pipeline`; default functions for the structs whose zero is not the C++ default; a callback's failure goes through its user pointer | The maintainer accepted 12's C++ APIs as built (2026-11-26); the C interface follows 6.8's conventions so that C, Fortran, Python and Julia callers get fusion too |
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 
 ---
