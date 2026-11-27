@@ -147,6 +147,7 @@ one; its arms are written `fftn_omp`.
 | `PIPELINE=fused\|separate` | fftn, fftn_omp | a convolution of every row instead of the case's transform ([DESIGN 12.2](../dev/DESIGN.md), `fftn/pipeline.hpp`): the rows of a c2c forward case through `pipeline<C, C, C>`, of an r2c case through `pipeline<T, C, T>` (the output rows real, each at the start of its row of n/2 + 1 complex values), with one kernel spectrum for every row that delays it by one element, 1/n folded in; an interleaved c2c case is the lines of a plane's strided axis. `fused` is the row pipeline, built with the build settings (`STRATEGY=chain\|depth\|lanes` forces the pair, [X67](../dev/experiments/X67-row-pipelines.md)) and `PLANNING`'s effort; `separate` the same work as a user writes it with plans by the rules, the unfused baseline: without runs and fan-out with no buffer of their own (the forward plan into the output, a multiply loop there, plain C++ cloned as the edge loops and shared over the executor's lanes with `THREADS`, and the inverse plan in place), else with a spectrum buffer of their own (`backends/convolution.hpp`). `describe` says `"output":"delay"`, so the check compares each row with its input delayed by one ([The correctness check](#the-correctness-check)), and lists c2c and r2c as `partial`: forward rows out of place only, other cases unsupported. Serial or with `THREADS`, not with `CALL=team`, `EDGE_IN`, `EDGE_OUT` or `RADICES`. Each case's `note` is the pipeline's `describe` or the two plans' axis lines. Catalogues `pipelines` and `x67`, for example `fbench run S=fftn+PIPELINE=separate P=fftn+PIPELINE=fused --catalogue pipelines` |
 | `PIPE_RUNS=full\|valid` | fftn, fftn_omp, fftw (with `PIPELINE`) | whole lines (default), or the valid halves of a zero-padded convolution as stored runs: the input's m = n/2 points from logical 0 and the output's m points from logical m/2, each at the start of its row (n a multiple of 4) |
 | `PIPE_FANOUT=F` | fftn, fftn_omp, fftw (with `PIPELINE`) | F inverses per forward, each copy with its own kernel array; the case's batch counts the copies (F divides it): line r is read from input row r F and copy k written to output row r F + k |
+| `STAGE=T\|O\|Of\|G\|C`, `STAGE_TIME=STORED.NT.FIRST[,...]`, `STAGE_SELFCHECK=1`, `STAGE_PROFILE=1` | fftn, fftn_omp | the free-space stage of [DESIGN 12.5](../dev/DESIGN.md) instead of the case's transform (experiment [X68](../dev/experiments/X68-free-space-stage.md), `backends/fftn_stage.hpp`): a case is a field of `batch` components (1, or 2 coupled), each (y, x, ω) with ω the stored frequencies, c2c rank 3 in place in double; the stage applies a propagator computed per element, the inverse (y, x) planes, along ω the time line (an envelope of n_t = stored points, or with `STAGE_TIME` naming the stored count a real line of NT points whose stored bins are a band from FIRST), a cubic term (coupled across components), back, the forward planes and a finish. Its constants make it the identity in exact arithmetic while every element pays the work, so `describe` says `"output":"identity"` and the check compares the output with the input. `T` is today's route (plain plans and the application's loops in the client application's order: a plane-major scratch volume, rows in node chunks, transposing crossings), `O` the three objects (planes with a prologue callback, a spectral pair on the ω pencils with a middle callback, planes with an epilogue callback), `Of` O with the propagator as a complex factor array, `G` the (x, ω) slab grouping (the y plans around per-slab x plans and pairs, each slab run whole by one member), `C` one in-place sweep of the field (the bandwidth reference). `STAGE_SELFCHECK=1` (a test) first runs the arm and T with work that is not the identity and refuses the case unless they agree; `STAGE_PROFILE=1` (a diagnosis) starts each case's note with the mean time of each of the arm's steps over three runs. Serial or with `THREADS`; not with `CALL=team`, `EDGE_*`, `PIPELINE` or `RADICES`. Catalogue `x68`; campaign `x68/x68.py`, which also counts DRAM traffic |
 | `CHUNK_POINTS=P` | fftn, fftn_omp | points per chunk of a stage (the plan's chunking) |
 | `NS_PER_WORK`, `DISPATCH_NS`, `INLINE_MULTIPLE`, `SYNC_NS`, `MIN_POINTS_PER_MEMBER`, `SPLIT_MIN_POINTS`, `SPLIT_MIN_POINTS_MESH`, `MESH_GROUP_LANES`, `REMAINDER_SPLIT_MIN_POINTS`, `SPIN_NS`, `YIELD_NS`, `CLAIM_DIVISOR` | fftn, fftn_omp | the machine profile's field of that name (`src/threading/schedule.hpp`); a size threshold may be `never` |
 | `RADICES=r1.r2...` | fftn, fftn_omp | the chain's radices in pass order (`build_settings::radices`), for c2c rows whose length they multiply to, or real rows whose half length they do (see below) |
@@ -270,7 +271,9 @@ tolerance (two transforms). With `"delay_fanout":F` output row b is a copy of in
 (b / F) F's line, and with `"delay_runs":"valid"` the line is the input row's first n/2
 values and zeros, and each output row holds the n/2 values from logical n/4 at its start. Rows
 of c2c (also interleaved) and r2c cases only; for r2c the output rows are real, n values at the
-start of each row of n/2 + 1 complex values.
+start of each row of n/2 + 1 complex values. A backend whose `describe` says `"output":"identity"` (FFTN's
+`STAGE` arms) returns its input: the check compares every value of every transform with the
+input, and their energies, within four times the transform's tolerance (c2c cases only).
 
 ## `smoke`
 
@@ -335,7 +338,8 @@ The `threads` catalogue holds the shapes that exercise threading's rules (single
 few rows, leftover rows after whole rounds, many rows, small jobs, planes and volumes), for
 threaded arms; its groups are named after the rule they exercise. The `pipelines` catalogue
 holds convolution rows for the FFTN backend's `PIPELINE` arms, and `x67` experiment X67's
-(its header names the options and filter of each group).
+(its header names the options and filter of each group). The `x68` catalogue holds
+the free-space stage's fields for its `STAGE` arms.
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
 
@@ -490,6 +494,14 @@ count FFTW, plan once with `--options WISDOM_OUT=<file>` and pass `WISDOM_IN=<fi
 every later process, because MEASURE plans differ between processes. The case file has one case per line in
 the harness's `key=value` form (`id=c2c-64 kind=c2c dims=64 batch=1 place=out sign=-1`).
 Experiment [X25](../dev/experiments/X25-x86-diagnosis.md) used it.
+
+`--perf-ctl CTL,ACK` hands the counting to `perf stat` instead, started around the process as
+`perf stat -D -1 --control fifo:CTL,ACK -e EVENTS -- fbench-<lib> run ... --perf-ctl CTL,ACK`:
+the harness enables perf's counters over the same executes (every thread of the process, and any
+event perf takes) and reports how many it counted (`"pmu":{"calls":N}`); perf's totals divided by
+N are per call. Run one case per process, since perf counts the whole process.
+`x68/x68.py --traffic perf` counts DRAM lines this way (experiment
+[X68](../dev/experiments/X68-free-space-stage.md)).
 
 ## The T1 harness
 
