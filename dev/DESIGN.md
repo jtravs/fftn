@@ -656,6 +656,35 @@ the header and the docs until it happens.
   their identical layout, which `data_of` checks, and on the library touching the data only
   through `void*` and `T` scalars in its own translation units, as Kokkos-FFT does with
   FFTW's complex type.
+- *`array_of(in, out)` and `array_of(in, out, halved)`* give a pair of Views as the core's
+  array description, so edges, callbacks, stored runs and pipelines (section 12) work over
+  Views (18.2, "Pipelines" 10, settled as proposed). **As built (task 5.5;
+  `include/fftn/kokkos.hpp`, `tests/kokkos/kokkos_array_test.cpp`, the `pipeline` region of
+  `examples/kokkos_rows_planes.cpp`).** The result is a `std::array<axis, rank>`, one entry per
+  dimension in the Views' order: `n` the extent (on the halved dimension the real side's),
+  `in_stride` and `out_stride` the Views' strides in elements. It is the `array` argument of
+  `axes_c2c`, `axes_r2c`, `axes_c2r` and `axes_r2r` (the selected dimensions then chosen by
+  index, stored runs included), and a pipeline's `line` and `batches` are written from its
+  entries. The pair forms c2c, r2c, c2r or, both real, the r2r kind (`axes_r2r`, a `<T, C, T>`
+  pipeline's input and output), in one precision. The two-argument form takes the last
+  dimension as the halved one of r2c and c2r, the proposal's `halved = -1`; the three-argument
+  form names it (negative counting from the end; refused naming `halved` outside the rank) and
+  does not compile for c2c and real pairs: the kind is a property of the types, so the
+  proposal's refusal is a `static_assert`, as for the adapter's other type checks, and two
+  overloads keep a default `-1` from reaching a pair that has no halved dimension. The checks
+  that a list of axes can carry are `shape_of`'s, made by one shared function
+  (`detail::view_axes`) so that the two refuse the same Views with the same errors: types,
+  ranks, host access and a writable `out` at compile time; extents not 0 (checked over every
+  dimension before any stride, since a `LayoutRight` or `LayoutLeft` View with an extent of 0
+  reports strides of 0 for the dimensions that span it, which are not broadcast); extents
+  against the kind; a stride of 0 only at extent 1, where `array_of` gives 1, so every stride
+  is explicit (0 means the tight default to `axes_*` and a pipeline, and `padded` then does not
+  matter). The address checks are dropped: overlap and in place are the
+  caller's (`options::in_place`), and plan or pipeline construction checks the in-place strides
+  and the output's overlap from the axes, as for any shape. `docs/kokkos.md` ("Fusion over
+  Views") and `docs/fusion.md` show it with a pipeline over a View's strided columns on the
+  executor, rather than the proposal's plan with edges, since pipelines gain most on strided
+  lines (X67). `compat` gains nothing (Kokkos-FFT has no fusion).
 - *`view_plan<ExecutionSpace, InView, OutView, Dim = 1>`* has the constructors (`axis` with
   optional `n`; `axis_type<Dim>` with optional lengths `s`) and `execute(in, out, norm)` of
   Kokkos-FFT 2.0's `Plan`, plus the free `execute(plan, in, out, norm)`, `fftn_plan()` and
@@ -4843,8 +4872,9 @@ do not depend on the direction, and a workspace is plain bytes sized by
 12.2's API block. Each has a proposal, which is used until the maintainer settles it:
 
 *Settled 2026-11-26 (the maintainer): every proposal below is accepted as built (tasks 5.2b to
-5.2f and 5.3d to 5.3f), so step 6.9 can carry the API into C. Item 10 (`array_of`, not built)
-stays open. The headers keep "provisional" until step 6.20 confirms the APIs for the release.*
+5.2f and 5.3d to 5.3f), so step 6.9 can carry the API into C. Item 10 (`array_of`) was settled
+on 2026-11-27, as proposed, and built in task 5.5's follow-up (section 5.5). The headers keep
+"provisional" until step 6.20 confirms the APIs for the release.*
 
 1. **Names of the helpers.** A forward-first `<C, C, C>` convolution is made by
    `spectral_pair_rows(n, count, direction::forward)`, which reads oddly. Proposal: add
@@ -4870,7 +4900,8 @@ stays open. The headers keep "provisional" until step 6.20 confirms the APIs for
    PR 134 refuses them on plans, and both are lifted together.
 9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
    owner-computes work, since it is the plan's function on the same core.
-10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5; not built, no design yet). PLAN's 5.5 names
+10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5). *Settled 2026-11-27 (the maintainer): as
+    proposed; built (section 5.5, "As built").* PLAN's 5.5 names
     it, but neither 5.5 nor 12 describes it; the fusion proposal of 2026-11-24 had one line
     ("`array_of(view)`, which returns the `std::vector<axis>` that `shape_of` already
     computes"). Proposal: `array_of(in, out, halved = -1)`, two host Views of equal rank
@@ -5539,6 +5570,7 @@ to change before a release.
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
 | 2026-11-27 | Zen 3's class (x86-64, a private L2 under 1 MiB, at least 2 MiB of L3 per CPU) applies to AMD's processors only (`set_grid_sizes`, section 13.5): X51's tops of 4, X59's fair runs, X62's Bluestein limit and whole-line stages, X60's and X63's packed c2r intermediate, X72's depth-first half lengths and X73's anchored runs now read `machine_profile::vendor`, as X65's, X67's and X85's rules on the class already did. Another vendor's cores with those caches, unknown included, keep the large-L3 branch's fields (X29, X32, X36, X43, X57) and the defaults of the class's; Apple's and the Xeon 6240's halves of the shared fields stand. Not a performance change: every AMD recording (the EPYC 7763, the Zen 2 VM, now in the tests, and Zen 5) and every other recording keeps its whole profile, field for field | The maintainer's decision, applying the policy of 2026-11-25 ("a rule measured on only one vendor is keyed to that vendor") to the older Zen 3 rules: every one was measured on AMD's cores only (the EPYC 7763; Zen 2 in X64's and X81's screens), and an Intel core with a private L2 under 1 MiB and that much L3 per CPU (a four-core client part, a small VM) matches the cache key. The large-L3 branch stays unkeyed: it also reaches the recorded Ice Lake VM and the Axion VM, so keying it would change measured machines' plans |
 | 2026-11-27 | Two C API changes (section 5.9; the maintainer's decisions): `fftn_shape`'s last field is `fftn_layout layout` (`FFTN_INTERLEAVED = 0`, the default, and `FFTN_SPLIT = 1`; other values and `FFTN_SPLIT` with `FFTN_R2R` refused with `FFTN_ERROR_INVALID_ARGUMENT`) in place of `int split` (18.2 Q29, settled); the shared library `fftn_c` has the SOVERSION `0.<minor>` from the project version and its full version as VERSION while FFTN is 0.x (Q20) | An enumeration leaves room for other layouts and refuses stray values, as the C API's other enumerations do, at the same cost as the flag (the field was added the same day). A minor version may change the C API before 1.0 (Q21), so a program built against one minor version must not load another's library: the soname, and macOS's compatibility version, change with the minor version |
+| 2026-11-27 | `fftn::kokkos::array_of` (task 5.5, section 5.5, "As built"; 18.2 "Pipelines" 10 settled by the maintainer as proposed): `array_of(in, out)` and `array_of(in, out, halved)` return `std::array<axis, rank>`, one axis per View dimension with the extents (the real side's on the halved dimension) and the Views' strides; c2c, r2c, c2r and real pairs; the halved dimension the last unless named, a named one refused at compile time for c2c and real pairs; `shape_of`'s per-dimension checks shared, every zero extent now refused before any stride; a stride of 0 at extent 1 given as 1; no address checks | The maintainer accepted the proposal on 2026-11-27. Two overloads rather than one default argument, because a default `-1` cannot be told from an explicit one and a c2c pair must not take it; the kind is a type property, so its refusal is a compile-time one like the adapter's other type checks. Explicit strides, because 0 means the tight default to `axes_*` and pipelines |
 
 ---
 | 2026-11-27 | The maintainer settled the open list: the adoptions open to veto kept (X65's P1 narrowed, X67's two pipeline rules, X75's arm B narrowed, X78's B4n, X85's folded DCT-I/DST-I); the Zen 3-class profile rules measured only on AMD keyed to AMD's cores; X66's rule-1, X67's and X68's losses, X9's two leads and the r2r and float tails filed as performance leads, X68's multi-axis pipeline accepted behind the planes fix; 5.4 closed by reading; the provisional APIs of phases 5 and 6 confirmed as built (18.2), their add-ons to phase 7; `array_of` as proposed; the C API's fixed `fftn_error`, two extra codes, separate `fftn_pipeline`, `_args` forms and void callbacks kept, Q29 an `fftn_layout` enumeration, `fftn_c` a SOVERSION of 0.minor; Q15 a target for 1.0; no float tuning before a release; 6.17's four choices accepted. Not yet: no release tag, so Q26, Q27, the cloud steps and the daytime Mac legs wait | Features first, then performance (2026-11-25); the report should show where FFTN stands before the tuning; the release waits for the maintainer |

@@ -10,8 +10,9 @@
 ///
 /// - View-based construction: `shape_of` and `make_plan` turn a pair of Views and the axes to
 ///   transform into an ordinary `fftn::shape` or `fftn::plan`, and `data_of` gives the
-///   pointers to execute it with. Views of `LayoutRight`, `LayoutLeft` and `LayoutStride`
-///   are read through their extents and strides.
+///   pointers to execute it with; `array_of` gives a pair of Views as the `axis` list of the
+///   core's `axes_*` functions and of pipelines, for edges, callbacks and fusion. Views of
+///   `LayoutRight`, `LayoutLeft` and `LayoutStride` are read through their extents and strides.
 /// - Threads: `fftn::kokkos::executor` runs a plan's work on an execution-space instance, one
 ///   `Kokkos::parallel_for` per transform, and `fftn::kokkos::team_of` makes the members of a
 ///   `Kokkos::TeamPolicy` kernel an `fftn::team`.
@@ -458,6 +459,86 @@ template <class In, class Out> fftn::plan<In, Out> plan_of(const shape<In, Out>&
   }
 }
 
+// The compile-time checks of a pair of Views that shape_of and array_of share.
+template <class InView, class OutView> constexpr void check_view_pair() {
+  static_assert(Kokkos::is_view_v<InView> && Kokkos::is_view_v<OutView>,
+                "fftn::kokkos: in and out must be Kokkos::Views");
+  static_assert(host_accessible_view<InView>() && host_accessible_view<OutView>(),
+                "fftn::kokkos: the Views' memory must be accessible from the host");
+  using in_value = InView::non_const_value_type;
+  using out_value = OutView::non_const_value_type;
+  static_assert(is_element<in_value>::value && is_element<out_value>::value,
+                "fftn::kokkos: View values must be float, double, or Kokkos::complex or "
+                "std::complex of either");
+  static_assert(sizeof(in_value) == sizeof(typename element_of<in_value>::type) &&
+                    sizeof(out_value) == sizeof(typename element_of<out_value>::type),
+                "fftn::kokkos: a complex value must be two real values");
+  static_assert(!std::is_const_v<typename OutView::value_type>,
+                "fftn::kokkos: out must be writable");
+  static_assert(OutView::rank() == InView::rank(),
+                "fftn::kokkos: in and out must have the same rank");
+}
+
+// The Views' dimensions as axes, in the Views' order, with the per-dimension checks shape_of
+// documents: no extent 0, the extents against the kind, and no stride 0 except on a dimension of
+// extent 1 on both sides, which keeps the stride Kokkos reports (0 included). `halved` is the
+// halved dimension when R2c or C2r and is not read otherwise; `n` there is the real side's
+// extent. shape_of and array_of both call this, so they refuse the same Views with the same
+// messages.
+template <bool R2c, bool C2r, class InView, class OutView>
+std::array<axis, InView::rank()> view_axes(const InView& in, const OutView& out,
+                                           std::size_t halved) {
+  constexpr std::size_t rank = InView::rank();
+  // Zero extents first: a LayoutRight or LayoutLeft View with one reports a stride of 0 for each
+  // dimension that spans it, which would otherwise be refused as a broadcast stride.
+  for (std::size_t d = 0; d < rank; ++d) {
+    if (in.extent(d) == 0) {
+      reject(dim_name("in", d, "extent"), "is 0");
+    }
+    if (out.extent(d) == 0) {
+      reject(dim_name("out", d, "extent"), "is 0");
+    }
+  }
+  std::array<axis, rank> array{};
+  for (std::size_t d = 0; d < rank; ++d) {
+    const std::size_t ni = in.extent(d);
+    const std::size_t no = out.extent(d);
+    std::size_t n = ni;
+    std::size_t expected = ni;
+    if ((R2c || C2r) && d == halved) {
+      n = R2c ? ni : no;
+      expected = R2c ? ni / 2 + 1 : no;
+      if (C2r && ni != no / 2 + 1) {
+        reject(dim_name("in", d, "extent"),
+               "= " + std::to_string(ni) + " must be n/2 + 1 for out's n = " + std::to_string(no) +
+                   " along the halved axis");
+      }
+    }
+    if (no != expected) {
+      reject(dim_name("out", d, "extent"),
+             "= " + std::to_string(no) + " must be " + std::to_string(expected) +
+                 (d == halved && R2c ? " (n/2 + 1 along the halved axis)" : " (in's extent)"));
+    }
+    array[d] = axis{
+        .n = n,
+        .in_stride = signed_stride(in.stride(d)),
+        .out_stride = signed_stride(out.stride(d)),
+    };
+    // A dimension of extent 1 never steps, so its stride does not matter (Kokkos may report
+    // 0 for it in a LayoutStride View).
+    if (ni == 1 && no == 1) {
+      continue;
+    }
+    if (array[d].in_stride == 0) {
+      reject(dim_name("in", d, "stride"), "is 0 (broadcast Views are refused)");
+    }
+    if (array[d].out_stride == 0) {
+      reject(dim_name("out", d, "stride"), "is 0 (broadcast Views are refused)");
+    }
+  }
+  return array;
+}
+
 } // namespace detail
 
 /// The FFTN element type of a View's values: `std::complex<T>` for `Kokkos::complex<T>` and
@@ -519,22 +600,8 @@ template <class View> [[nodiscard]] auto data_of(const View& v) noexcept {
 template <class InView, class OutView, std::size_t Dim>
 [[nodiscard]] shape<element_t<InView>, element_t<OutView>>
 shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Dim>& axes) {
-  static_assert(Kokkos::is_view_v<InView> && Kokkos::is_view_v<OutView>,
-                "fftn::kokkos: in and out must be Kokkos::Views");
-  static_assert(detail::host_accessible_view<InView>() && detail::host_accessible_view<OutView>(),
-                "fftn::kokkos: the Views' memory must be accessible from the host");
-  using in_value = InView::non_const_value_type;
-  using out_value = OutView::non_const_value_type;
-  static_assert(detail::is_element<in_value>::value && detail::is_element<out_value>::value,
-                "fftn::kokkos: View values must be float, double, or Kokkos::complex or "
-                "std::complex of either");
-  static_assert(sizeof(in_value) == sizeof(element_t<InView>) &&
-                    sizeof(out_value) == sizeof(element_t<OutView>),
-                "fftn::kokkos: a complex value must be two real values");
-  static_assert(!std::is_const_v<typename OutView::value_type>,
-                "fftn::kokkos: out must be writable");
+  detail::check_view_pair<InView, OutView>();
   constexpr std::size_t rank = InView::rank();
-  static_assert(OutView::rank() == rank, "fftn::kokkos: in and out must have the same rank");
   static_assert(Dim >= 1 && Dim <= 3 && Dim <= rank,
                 "fftn::kokkos: one to three axes, at most the Views' rank");
   using In = element_t<InView>;
@@ -562,65 +629,27 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
   }
   const std::size_t halved = dims[Dim - 1];
 
-  std::array<std::size_t, rank> extent{};
-  std::array<std::ptrdiff_t, rank> in_stride{};
-  std::array<std::ptrdiff_t, rank> out_stride{};
-  for (std::size_t d = 0; d < rank; ++d) {
-    const std::size_t ni = in.extent(d);
-    const std::size_t no = out.extent(d);
-    if (ni == 0) {
-      detail::reject(detail::dim_name("in", d, "extent"), "is 0");
-    }
-    if (no == 0) {
-      detail::reject(detail::dim_name("out", d, "extent"), "is 0");
-    }
-    extent[d] = ni;
-    std::size_t expected = ni;
-    if ((r2c || c2r) && d == halved) {
-      extent[d] = r2c ? ni : no;
-      expected = r2c ? ni / 2 + 1 : no;
-      if (c2r && ni != no / 2 + 1) {
-        detail::reject(detail::dim_name("in", d, "extent"),
-                       "= " + std::to_string(ni) + " must be n/2 + 1 for out's n = " +
-                           std::to_string(no) + " along the halved axis");
-      }
-    }
-    if (no != expected) {
-      detail::reject(
-          detail::dim_name("out", d, "extent"),
-          "= " + std::to_string(no) + " must be " + std::to_string(expected) +
-              (d == halved && r2c ? " (n/2 + 1 along the halved axis)" : " (in's extent)"));
-    }
-    in_stride[d] = detail::signed_stride(in.stride(d));
-    out_stride[d] = detail::signed_stride(out.stride(d));
-    // A dimension of extent 1 never steps, so its stride does not matter (Kokkos may report
-    // 0 for it in a LayoutStride View).
-    if (extent[d] == 1 && ni == 1 && no == 1) {
-      continue;
-    }
-    if (in_stride[d] == 0) {
-      detail::reject(detail::dim_name("in", d, "stride"), "is 0 (broadcast Views are refused)");
-    }
-    if (out_stride[d] == 0) {
-      detail::reject(detail::dim_name("out", d, "stride"), "is 0 (broadcast Views are refused)");
-    }
-  }
+  // One axis per dimension of the Views, in their own strides; the shape function does the rest
+  // (the batch dimensions by stride, widest first, merged where they nest).
+  const std::array<axis, rank> array = detail::view_axes<r2c, c2r>(in, out, halved);
 
   if (detail::same_first_element(in, out)) {
     for (std::size_t d = 0; d < rank; ++d) {
       if (in.extent(d) == 1 && out.extent(d) == 1) {
         continue;
       }
+      const std::ptrdiff_t in_stride = array[d].in_stride;
+      const std::ptrdiff_t out_stride = array[d].out_stride;
       if constexpr (!r2c && !c2r) {
-        if (in_stride[d] != out_stride[d]) {
+        if (in_stride != out_stride) {
           detail::reject(detail::dim_name("out", d, "stride"),
                          "must equal in's: in and out start at the same address, so the "
                          "transform is in place");
         }
       } else {
         const char* real = r2c ? "in" : "out";
-        const std::ptrdiff_t rs = r2c ? in_stride[d] : out_stride[d];
-        const std::ptrdiff_t cs = r2c ? out_stride[d] : in_stride[d];
+        const std::ptrdiff_t rs = r2c ? in_stride : out_stride;
+        const std::ptrdiff_t cs = r2c ? out_stride : in_stride;
         if (d == halved ? rs != 1 || cs != 1 : rs != 2 * cs) {
           detail::reject(detail::dim_name(real, d, "stride"),
                          d == halved ? "must be 1 on both sides along the halved axis of an "
@@ -635,13 +664,7 @@ shape_of(const InView& in, const OutView& out, direction dir, const axis_type<Di
                           "the same first element)");
   }
 
-  // One axis per dimension of the Views, in their own strides; the shape function does the rest
-  // (the batch dimensions by stride, widest first, merged where they nest).
-  std::array<axis, rank> array{};
-  for (std::size_t d = 0; d < rank; ++d) {
-    array[d] = axis{.n = extent[d], .in_stride = in_stride[d], .out_stride = out_stride[d]};
-  }
-  const std::size_t last_n = extent[halved];
+  const std::size_t last_n = array[halved].n;
   return fftn::detail::shape_along_axes<In, Out>(array, std::span<const std::size_t>(dims), dir,
                                                  r2c || !c2r ? last_n : last_n / 2 + 1,
                                                  r2c ? last_n / 2 + 1 : last_n);
@@ -665,6 +688,102 @@ template <class InView, class OutView, std::size_t Dim>
 [[nodiscard]] fftn::plan<element_t<InView>, element_t<OutView>>
 make_plan(const InView& in, const OutView& out, direction dir, const axis_type<Dim>& axes) {
   return detail::plan_of(shape_of(in, out, dir, axes), detail::same_first_element(in, out));
+}
+
+namespace detail {
+
+// The halved dimension `halved` (negative counting from the end) as an index.
+template <std::size_t Rank> std::size_t halved_dimension(int halved) {
+  const auto r = static_cast<int>(Rank);
+  if (halved < -r || halved >= r) {
+    reject("halved",
+           "= " + std::to_string(halved) + " is outside the Views' rank " + std::to_string(r));
+  }
+  return static_cast<std::size_t>(halved < 0 ? halved + r : halved);
+}
+
+template <class InView, class OutView>
+std::array<axis, InView::rank()> array_of_pair(const InView& in, const OutView& out, int halved) {
+  check_view_pair<InView, OutView>();
+  using in_value = InView::non_const_value_type;
+  using out_value = OutView::non_const_value_type;
+  static_assert(std::is_same_v<typename real_of<in_value>::type, typename real_of<out_value>::type>,
+                "fftn::kokkos: in and out must have the same precision");
+  static_assert(InView::rank() >= 1, "fftn::kokkos: the Views must have at least one dimension");
+  constexpr bool in_complex = !std::is_floating_point_v<in_value>;
+  constexpr bool out_complex = !std::is_floating_point_v<out_value>;
+  constexpr bool r2c = !in_complex && out_complex;
+  constexpr bool c2r = in_complex && !out_complex;
+  const std::size_t dim = r2c || c2r ? halved_dimension<InView::rank()>(halved) : 0;
+  std::array<axis, InView::rank()> array = view_axes<r2c, c2r>(in, out, dim);
+  // Explicit strides only: 0 means the tight default to the axes_* functions and a pipeline.
+  for (axis& a : array) {
+    if (a.in_stride == 0) {
+      a.in_stride = 1;
+    }
+    if (a.out_stride == 0) {
+      a.out_stride = 1;
+    }
+  }
+  return array;
+}
+
+} // namespace detail
+
+/// The array description of a pair of Views: one `fftn::axis` per dimension, in the Views'
+/// order, to pass as the `array` argument of `fftn::axes_c2c`, `axes_r2c`, `axes_c2r` and
+/// `axes_r2r`, or to write a pipeline's line and batches from (`pipeline_desc::line`,
+/// `pipeline_desc::batches`).
+///
+/// Entry d has `n` the extent of dimension d (on the halved dimension of a real kind, the real
+/// side's extent) and `in_stride` and `out_stride` the Views' strides along it, in elements.
+/// The Views form one of FFTN's kinds in one precision: c2c (both complex), r2c, c2r, or both
+/// real (the array of `axes_r2r`, or of a `<T, C, T>` pipeline's input and output). For r2c and
+/// c2r this two-argument form takes the last dimension as the halved one; name another with
+/// the three-argument form.
+///
+/// Preconditions: the Views are of equal rank, at least 1; their memory is accessible from the
+/// host and their values are `float`, `double` or a complex of either, in one precision, `out`
+/// writable (checked at compile time). The caller passes the halved dimension last in the
+/// `axes_*` call's `axes` and sets `options::in_place` when the Views share their memory. The
+/// result holds no addresses: a plan or pipeline built from it executes on the pointers passed
+/// at execution (`data_of(in)`, `data_of(out)`, or any arrays of the same layout).
+///
+/// Throws `std::invalid_argument` naming the argument (`in`, `out`), as `shape_of` does, when an
+/// extent is 0, a stride is 0 on a dimension of extent above 1 on either side, or the extents do
+/// not match the kind (equal everywhere, except along the halved dimension of a real kind, where
+/// the complex side has n/2 + 1 for the real side's n).
+///
+/// Guarantees: every stride is explicit (nonzero; a stride Kokkos reports as 0 on a dimension
+/// of extent 1, which never steps, is given as 1), so `axes_*` take them as they are and their
+/// `padded` argument does not matter. Nothing is read or written through the Views, and their
+/// addresses are not compared: overlap and in-place layouts are checked by the plan or pipeline
+/// built from the result, as for any shape.
+template <class InView, class OutView>
+[[nodiscard]] std::array<axis, InView::rank()> array_of(const InView& in, const OutView& out) {
+  return detail::array_of_pair(in, out, -1);
+}
+
+/// As the two-argument `array_of`, for r2c and c2r pairs only, with the halved dimension named:
+/// `halved` indexes the Views' dimensions, negative values counting from the end (-1, the last
+/// dimension, is what the two-argument form takes). It must be the dimension that the `axes_*`
+/// call lists last.
+///
+/// Preconditions: as for the two-argument form, and the Views form r2c or c2r (checked at
+/// compile time: a c2c or real pair has no halved dimension).
+///
+/// Throws `std::invalid_argument` as the two-argument form does, and naming `halved` when it is
+/// outside the Views' rank.
+///
+/// Guarantees: as for the two-argument form.
+template <class InView, class OutView>
+[[nodiscard]] std::array<axis, InView::rank()> array_of(const InView& in, const OutView& out,
+                                                        int halved) {
+  static_assert(std::is_floating_point_v<typename InView::non_const_value_type> !=
+                    std::is_floating_point_v<typename OutView::non_const_value_type>,
+                "fftn::kokkos: only r2c and c2r pairs have a halved dimension; call "
+                "array_of(in, out) for c2c and real pairs");
+  return detail::array_of_pair(in, out, halved);
 }
 
 /// An executor (`fftn::executor`) that runs FFTN's tasks on a host execution-space instance,
