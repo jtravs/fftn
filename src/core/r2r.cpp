@@ -1094,9 +1094,13 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     std::size_t m = even ? n / 2 : n;
     // The folded routes of DCT-I and DST-I (X85's arm D): odd n up to the profile's limit, without
     // accumulation (DCT-I's v_0 waits in the output's place of Y_1). A real DFT of n -+ 1 points:
-    // a complex chain of half that.
+    // a complex chain of half that. DCT-I from 9 points only: at 5 the extension's chain of 4 is
+    // one leaf, and the folded route's extra stage cost more than its chain of 2 saved (EPYC 7763,
+    // 1.08 of the extension's time; X85's narrowing), while 9 took 0.98 and DST-I of 5 0.92.
+    constexpr std::size_t folded_dct1_min = 9;
     const bool folded = extension && !even && !e.out.accumulate &&
-                        n <= static_cast<std::size_t>(settings.profile.r2r_folded_max);
+                        n <= static_cast<std::size_t>(settings.profile.r2r_folded_max) &&
+                        (rt != route::dct1 || n >= folded_dct1_min);
     if (fourth && !even) {
       m = 2 * n;
     } else if (folded) {

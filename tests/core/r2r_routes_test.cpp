@@ -81,6 +81,9 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     for (const r2r_kind kind : {r2r_kind::dct1, r2r_kind::dst1}) {
       for (const std::size_t n : lengths) {
+        if (kind == r2r_kind::dct1 && n < 9) {
+          continue; // DCT-I folds from 9 points (core/r2r.cpp, folded_dct1_min)
+        }
         const std::string what = kind_name(kind) + ", n = " + std::to_string(n) + ", " +
                                  fftn::isa_name(t) + (sizeof(T) == 8 ? " double" : " float");
         fftn::test::input_source src(0xF01DULL + n);
@@ -257,7 +260,8 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
 }
 
 // Accumulation keeps the extension (the folded DCT-I parks v_0 in the output), and so do even
-// lengths and lengths above the limit; the plans without the switches are main's.
+// lengths, DCT-I below 9 points and lengths above the limit; the plans without the switches are
+// main's.
 TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
   build_settings folded;
   folded.profile.r2r_folded_max = 101;
@@ -272,6 +276,9 @@ TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
         fftn::detail::view_of(sh), {}, fftn::detail::view_of(e), s));
   };
   EXPECT_NE(text(101, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
+  EXPECT_NE(text(9, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
+  EXPECT_EQ(text(7, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
+  EXPECT_NE(text(5, r2r_kind::dst1, folded, false).find("folded route"), std::string::npos);
   EXPECT_NE(text(99, r2r_kind::dst1, folded, false).find("folded route"), std::string::npos);
   EXPECT_EQ(text(103, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
   EXPECT_EQ(text(100, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
