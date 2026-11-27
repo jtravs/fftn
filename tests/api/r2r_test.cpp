@@ -1330,7 +1330,8 @@ std::vector<r2r_case> cases() {
        .count = 3,
        .in = {.gap = 1},
        .out = {.gap = 2},
-       .expect = "r2r read: dct1 line's even extension of 32 reals",
+       // Odd: the extension, or the folded route where the host's profile takes it (X85).
+       .expect = "r2r read: dct1 line",
        .kinds = {r2r_kind::dct1}},
       {.name = "even dct1 rows reversed",
        .n = {12},
@@ -1343,7 +1344,7 @@ std::vector<r2r_case> cases() {
        .n = {15},
        .count = 3,
        .out = {.gap = 1},
-       .expect = "r2r store: the r2c pairing's imaginary parts of bins 1 .. n, negated",
+       .expect = "r2r store: the r2c pairing", // odd: either route (X85)
        .kinds = {r2r_kind::dst1}},
       {.name = "even dst1 rows reversed",
        .n = {10},

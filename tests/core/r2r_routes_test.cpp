@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -116,6 +117,140 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
         o.within(fftn::test::compare<T>(std::span<const T>(back), scaled), tol * 2.0,
                  what + ", twice");
       }
+    }
+  }
+  EXPECT_TRUE(o.passed()) << o.detail();
+}
+
+// The folded route under the layouts and edges the extension takes (strides of either sign, gaps,
+// in place, a plane whose two axes fold, real factors on both sides, a scale), against the same
+// plan on the extension, within twice the r2r tests' tolerance (both routes' errors).
+TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
+  using T = TypeParam;
+  struct layout_case {
+    std::string name;
+    r2r_kind kind;
+    std::size_t n0; // 0: rows of n1
+    std::size_t n1;
+    std::size_t count;
+    std::ptrdiff_t in_stride;
+    std::ptrdiff_t out_stride;
+    bool in_place;
+    bool factors;
+    double scale;
+  };
+  const std::vector<layout_case> cases{
+      {"dct1 rows with gaps", r2r_kind::dct1, 0, 17, 3, 2, 3, false, false, 1.0},
+      {"dst1 rows reversed", r2r_kind::dst1, 0, 15, 2, -1, -2, false, false, 1.0},
+      {"dct1 rows in place", r2r_kind::dct1, 0, 33, 3, 1, 1, true, false, 1.0},
+      {"dst1 rows with factors", r2r_kind::dst1, 0, 31, 2, 1, 1, false, true, 1.0},
+      {"dct1 rows with factors and a scale", r2r_kind::dct1, 0, 65, 2, 2, 1, false, true, 0.25},
+      {"dct1 planes", r2r_kind::dct1, 9, 17, 2, 1, 1, false, false, 1.0},
+      {"dst1 planes in place with factors", r2r_kind::dst1, 7, 13, 2, 1, 1, true, true, 1.0},
+  };
+  fftn::test::outcome o;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    for (const layout_case& lc : cases) {
+      const std::string what =
+          lc.name + ", " + std::string(fftn::isa_name(t)) + (sizeof(T) == 8 ? " double" : " float");
+      fftn::shape<T, T> sh;
+      std::vector<std::size_t> n;
+      if (lc.n0 != 0) {
+        n.push_back(lc.n0);
+      }
+      n.push_back(lc.n1);
+      // The last axis at the case's strides (the in-place cases at 1), the outer axis after it.
+      const std::ptrdiff_t si = lc.in_place ? 1 : lc.in_stride;
+      const std::ptrdiff_t so = lc.in_place ? 1 : lc.out_stride;
+      const auto mag = [](std::ptrdiff_t v) { return v < 0 ? -v : v; };
+      const auto line_in = static_cast<std::ptrdiff_t>(lc.n1) * mag(si);
+      const auto line_out = static_cast<std::ptrdiff_t>(lc.n1) * mag(so);
+      std::ptrdiff_t span_in = line_in;
+      std::ptrdiff_t span_out = line_out;
+      if (lc.n0 != 0) {
+        sh.axes.push_back({.n = lc.n0, .in_stride = line_in, .out_stride = line_out});
+        span_in *= static_cast<std::ptrdiff_t>(lc.n0);
+        span_out *= static_cast<std::ptrdiff_t>(lc.n0);
+      }
+      sh.axes.push_back({.n = lc.n1, .in_stride = si, .out_stride = so});
+      for (std::size_t d = 0; d < sh.axes.size(); ++d) {
+        sh.kinds.push_back(lc.kind);
+      }
+      sh.batches = {{.count = lc.count, .in_dist = span_in, .out_dist = span_out}};
+      const std::size_t elements = static_cast<std::size_t>(std::max(span_in, span_out)) * lc.count;
+      // Element 0 of transform 0: past the reversed strides' reach.
+      const std::size_t base_in =
+          si < 0 ? static_cast<std::size_t>(mag(si)) * (lc.n1 - 1) : std::size_t{0};
+      const std::size_t base_out =
+          so < 0 ? static_cast<std::size_t>(mag(so)) * (lc.n1 - 1) : std::size_t{0};
+      fftn::plan_edges<T, T> e;
+      std::size_t points = 1;
+      for (const std::size_t v : n) {
+        points *= v;
+      }
+      std::vector<T> fin(points);
+      std::vector<T> fout(points);
+      if (lc.factors) {
+        std::vector<std::ptrdiff_t> strides;
+        if (lc.n0 != 0) {
+          strides.push_back(static_cast<std::ptrdiff_t>(lc.n1));
+        }
+        strides.push_back(1);
+        e.in.mul = {.kind = fftn::factor_kind::real, .axis_strides = strides, .batch_strides = {}};
+        e.out.mul = e.in.mul;
+        fftn::test::input_source f(0xFAC7ULL + points);
+        const std::vector<T> a = f.reals<T>(points);
+        const std::vector<T> b = f.reals<T>(points);
+        for (std::size_t i = 0; i < points; ++i) {
+          fin[i] = T(1) + a[i] / T(4);
+          fout[i] = T(1) + b[i] / T(4);
+        }
+      }
+      const fftn::options opts{.in_place = lc.in_place, .scale = lc.scale, .force_isa = t};
+      build_settings folded;
+      folded.profile.r2r_folded_max = 65535;
+      const auto make = [&](const build_settings& s) {
+        return lc.factors ? fftn::detail::make_plan_core_with_edges(fftn::detail::view_of(sh), opts,
+                                                                    fftn::detail::view_of(e), s)
+                          : make_plan_core(fftn::detail::view_of(sh), opts, s);
+      };
+      const auto fold = make(folded);
+      const auto ext = make(build_settings{});
+      if (fftn::detail::describe(*fold).find("folded route") == std::string::npos) {
+        o.fail(what + ": not on the folded route");
+        continue;
+      }
+      fftn::test::input_source src(0x1A70ULL + elements);
+      const std::vector<T> x = src.reals<T>(elements);
+      const fftn::exec_args args{.in_factor = lc.factors ? fin.data() : nullptr,
+                                 .out_factor = lc.factors ? fout.data() : nullptr};
+      const auto run_one = [&](const fftn::detail::plan_core& core) {
+        const fftn::workspace ws(fftn::detail::workspace_bytes(core, 1));
+        std::vector<T> in = x;
+        std::vector<T> out(elements, T(-7.25));
+        T* dst = lc.in_place ? in.data() : out.data();
+        fftn::detail::execute_core(core, 0, lc.count, in.data() + base_in,
+                                   (lc.in_place ? in.data() + base_in : dst + base_out), ws, args);
+        return lc.in_place ? in : out;
+      };
+      const std::vector<T> got = run_one(*fold);
+      const std::vector<T> want = run_one(*ext);
+      std::vector<fftn::test::exact_real> exact(want.size());
+      for (std::size_t i = 0; i < want.size(); ++i) {
+        exact[i] = fftn::test::exact_from(static_cast<double>(want[i]));
+      }
+      // Each route's error: the underlying transforms of N = 2(n -+ 1) points per axis (errors
+      // adding in quadrature across axes), a rounding per stage operation (10) per phase, the
+      // factors' and the scale's (3); twice that for the two routes.
+      std::size_t big = 1;
+      for (const std::size_t v : n) {
+        big *= lc.kind == r2r_kind::dct1 ? 2 * (v - 1) : 2 * (v + 1);
+      }
+      const fftn::test::tolerance tol =
+          (fftn::test::derived_tolerance<T>(big, fftn::test::fftn_bound(big)) +
+           fftn::test::input_rounding<T>() * (10.0 * static_cast<double>(n.size()) + 3.0)) *
+          2.0;
+      o.within(fftn::test::compare<T>(std::span<const T>(got), exact), tol, what);
     }
   }
   EXPECT_TRUE(o.passed()) << o.detail();
