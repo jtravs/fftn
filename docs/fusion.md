@@ -111,7 +111,9 @@ is pure per element keeps every determinism guarantee. Callbacks are taken by c2
 c2r plans of every rank; on planes and volumes inside the line bodies of the first and last
 phases, so they cost no pass of their own. Only a consumed output changes a strategy (some
 strategies use the output as their working memory), and `describe()` then says so.
-Real-to-real plans, and planes and volumes with stored runs, refuse callbacks.
+Beside stored runs a callback runs in the runs' pass, on each run of a row at its logical
+place: `produce` writes only the runs (the plan writes the zeros) and `consume` takes only the
+output's runs. Real-to-real plans refuse callbacks.
 
 ## Pipelines
 

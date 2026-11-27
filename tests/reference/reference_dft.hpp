@@ -89,4 +89,13 @@ std::vector<exact_real> r2r(std::span<const r2r_type> kinds, std::span<const std
 std::vector<exact_real> r2r(r2r_type kind, std::span<const double> x,
                             std::span<const std::size_t> outputs);
 
+// The 1-D transform of `kind` of x evaluated straight from its definition as
+// docs/conventions.md writes it (FFTW's unnormalised conventions), independently of r2r(): each
+// term as the formula has it (DCT-I's x_0 and (-1)^k x_(n-1), DCT-III's x_0 and DST-III's
+// (-1)^k x_(n-1) outside the sum), each cosine and sine Boost's own of pi m / d for the
+// formula's denominator d (n - 1, n + 1, 2n or 4n; the DHT's 2 pi j k / n as pi (2 j k) / n),
+// with m reduced modulo 2d in integers, rather than from r2r()'s tables and kernel. Every output,
+// in 113-bit arithmetic: O(n^2). Not remembered.
+std::vector<exact_real> r2r_from_definition(r2r_type kind, std::span<const double> x);
+
 } // namespace fftn::test::reference

@@ -341,8 +341,11 @@ its own, and a side with a factor or accumulation runs its callback in that side
 nothing in place of the callbacks, so construction never calls one. Only a consumed output keeps
 a row from a strategy that writes the output as its working memory (the grid, the depth-first
 chains, the lanes over adjacent transforms, and a real row's lanes whose input is in the
-workspace block too), which then runs as the chain, as `plan::describe()` says. Real-to-real
-plans, and planes and volumes with stored runs, refuse callbacks at construction.
+workspace block too), which then runs as the chain, as `plan::describe()` says. Beside stored
+runs (rows, planes and volumes) a side's callback runs in that side's pass of the runs, on each
+run of a row: a block never crosses a gap, its coordinates are logical, `produce` writes only
+the runs and `consume` receives only the output's runs. Real-to-real plans refuse callbacks at
+construction.
 
 ## Stored runs
 

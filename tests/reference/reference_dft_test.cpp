@@ -485,5 +485,45 @@ TEST(ReferenceR2r, DefinitionsIdentitiesAndInverses) {
                std::invalid_argument);
 }
 
+// r2r() against the independent direct sums of the definitions (r2r_from_definition: the
+// formulas of docs/conventions.md with Boost's cosines and sines, none of r2r()'s tables or
+// kernel), every kind at n = 1...64 and some larger primes, to a few units of 2^-113 times the
+// input's size: the two agree as quadruple-precision evaluations, far below any double's rounding.
+TEST(ReferenceR2r, AgreesWithTheDirectSumsOfTheDefinitions) {
+  using reference::r2r_type;
+  std::vector<std::size_t> lengths;
+  for (std::size_t n = 1; n <= 64; ++n) {
+    lengths.push_back(n);
+  }
+  for (const std::size_t n : {67U, 97U, 127U, 131U, 257U}) {
+    lengths.push_back(n);
+  }
+  for (const std::size_t n : lengths) {
+    input_source src(0xD5ULL + n);
+    const std::vector<double> x = src.reals<double>(n);
+    double size = 1.0;
+    for (const double v : x) {
+      size += 2.0 * std::abs(v);
+    }
+    for (int t = 0; t <= static_cast<int>(r2r_type::dht); ++t) {
+      const auto kind = static_cast<r2r_type>(t);
+      if (kind == r2r_type::dct1 && n < 2) {
+        EXPECT_THROW(static_cast<void>(reference::r2r_from_definition(kind, x)),
+                     std::invalid_argument);
+        continue;
+      }
+      const std::vector<std::size_t> extents{n};
+      const std::vector<r2r_type> kinds{kind};
+      const std::vector<exact_real> tables = reference::r2r(kinds, extents, x);
+      const std::vector<exact_real> sums = reference::r2r_from_definition(kind, x);
+      ASSERT_EQ(sums.size(), n);
+      for (std::size_t k = 0; k < n; ++k) {
+        const double diff = (tables[k].hi - sums[k].hi) + (tables[k].lo - sums[k].lo);
+        EXPECT_LE(std::abs(diff), 1e-28 * size) << "kind " << t << ", n = " << n << ", k = " << k;
+      }
+    }
+  }
+}
+
 } // namespace
 } // namespace fftn::test

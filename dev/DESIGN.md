@@ -878,7 +878,9 @@ Points that matter:
   The edges note follows the scales times that product, and the strategy note names only the
   chain directions the phases run. Tested at every n ≤ 512 by the kind twice and against the
   quadruple-precision reference at every n ≤ 128 and two residues mod 15 above (the direct sum
-  is O(n²) in 113-bit arithmetic), sampled at longer lengths.
+  is O(n²) in 113-bit arithmetic), sampled at longer lengths; every kind I to IV also against
+  an independent direct sum of conventions.md's formulas (`reference::r2r_from_definition`, no
+  table or kernel shared with the reference) at every n ≤ 64 and primes up to 257.
 - **Phase 5 underneath.** The scratch-line programs of 5.2b, the edge phases and cursors of
   5.1b (multi-axis lines, real factors). The odd `dct4` zero-pads into the scratch line and
   does not use 5.1d's stored runs or 5.1e's pruned codelets (see the as-built note above). Fusing the read stage into the first pass and the store stage into the
@@ -3585,8 +3587,19 @@ volumes of every kind take callbacks, the API unchanged. In `build()` (`core/pla
   for a callback alone.
 - A plan with callbacks takes no c2r intermediate packed in the output (X60; describe() says so),
   and its multi-axis program runs walked (the unrolled calls carry no callback sites).
-- Not built: callbacks beside stored runs on planes and volumes (refused, naming
-  `edges.in.call.fn` or `edges.out.call.fn`), whose edge phases are nests per run (`run_phase`).
+- **Beside stored runs** (a follow-up of 5.3c, 2026-11-27): a side with runs has its runs' edge
+  phase anyway (`run_phase`, nests per combination of the other axes' pieces), and its callback
+  runs there (`run_callback_line`), on each run of each row of a nest that is not a gap, at the
+  run's logical place in the whole logical transform (the workspace block, or the output for a
+  c2c input without output runs): the input's after the runs' read (`produce`: after zeros
+  between the runs, gap lines zeros as before and never passed), then the side's scale in place;
+  the output's after its scale, before the runs' store or accumulation (`consume`: none). The
+  nest's loops move the coordinates one element of their axes an iteration, and a loop of one
+  iteration around a nest that does not start at 0 starts them at its pieces' first logical
+  elements; a produced input's or consumed output's slot is moved by no loop (either may be
+  null). The side without runs keeps 5.3c's places. Plans without callbacks beside runs build
+  exactly as before (the same records). describe() says "in the input's (output's) stored runs'
+  phase, on each run of a row of axis d", the blocks per the longest run.
 
 As built (task 5.3d; provisional with the rest of the API, second reader pending):
 `pipeline_desc::middle.call` (`callback<Mid>`, `modify` only, refused otherwise naming
@@ -5250,6 +5263,7 @@ to change before a release.
 | 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
 | 2026-11-26 | The C API for fusion (step 6.9, section 5.9, "As built (step 6.9)"; provisional, second reader to come): edges and `fftn_exec_args`, block callbacks as C function pointers with a `void*` user argument behind one `noexcept` C++ function per element type, and pipelines of every built kind (fan-out, runs, groups) as an opaque `fftn_pipeline`; default functions for the structs whose zero is not the C++ default; a callback's failure goes through its user pointer | The maintainer accepted 12's C++ APIs as built (2026-11-26); the C interface follows 6.8's conventions so that C, Fortran, Python and Julia callers get fusion too |
+| 2026-11-27 | Block callbacks beside stored runs on planes and volumes (follow-up of 5.3c, section 12.3, "As built (task 5.3c)"): the side's callback in its runs' edge phase, on each run of a row at its logical place, in 12.1's order; the refusal lifted. The DCT and DST kinds I to IV are also checked against an independent direct sum of conventions.md's formulas (test-only `reference::r2r_from_definition`) | The runs' phase already holds each run in cache at its logical place, so the callback costs no sweep; "a block never crosses a gap" and logical coordinates as on rows. The direct sums share no table or kernel with `reference::r2r`, which the r2r suites use |
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 
 ---

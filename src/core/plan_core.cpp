@@ -1908,6 +1908,87 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       edge_block = static_cast<std::size_t>(span);
     }
   }
+  // One line of a run phase with the side's block callback (run_phase), in 12.1's order: the
+  // input's read of the runs (or, produced, zeros between them), the callback on each run, then
+  // the side's scale; the output's scale, the callback on each run, then the runs' store or
+  // accumulation (none, consumed). `logical`: the view holding the whole logical line (the
+  // input's destination, the output's source), its element 0 `logical_offset` bytes from the
+  // slot's cursor; `line_at`: the line's run_line. A row whose axis has no runs is one run.
+  const auto run_callback_line = [&](const edge_side& e, bool output, std::size_t n,
+                                     const view& logical, std::ptrdiff_t logical_offset,
+                                     const run_line& line_at, bool real, std::vector<stage>& st) {
+    const std::size_t row = r - 1;
+    const std::ptrdiff_t stride = logical.stride[row];
+    const std::ptrdiff_t eb = logical.element_bytes;
+    const auto offset_at = [&](std::size_t pos) {
+      return logical_offset + static_cast<std::ptrdiff_t>(pos) * stride * eb;
+    };
+    const std::vector<line_run>& stored_runs = e.runs.of(listed(row));
+    std::vector<line_run> runs = stored_runs;
+    if (runs.empty()) {
+      runs.push_back({.logical = 0, .stored = 0, .count = n});
+    }
+    const std::size_t sites_before = c.callback_sites.size();
+    const auto callbacks = [&] {
+      for (const line_run& run : runs) {
+        st.push_back(callback_stage(s.prec, real, e.call, output, run.count, run.logical,
+                                    logical.where, stride, offset_at(run.logical), block_bytes,
+                                    c.callback_sites));
+      }
+    };
+    // The scale in place on the whole line (12.1: a scale never crosses a callback).
+    const auto vocabulary = [&] {
+      if (!has_vocabulary(e)) {
+        return;
+      }
+      stage v = edge_pass_stage(s.prec, vocabulary_of(e), output, n, logical.where, stride,
+                                logical.where, stride, settings.chunk_points, real, 0);
+      v.args.src_cols = static_cast<std::size_t>(logical_offset);
+      v.args.dst_cols = static_cast<std::size_t>(logical_offset);
+      st.push_back(std::move(v));
+    };
+    if (!output) {
+      if (e.call.mode == callback_mode::produce) {
+        std::size_t next = 0;
+        const auto zeros = [&](std::size_t from_pos, std::size_t to_pos) {
+          run_zero_line(
+              s.prec, to_pos - from_pos,
+              {.dst = logical.where, .dst_stride = stride, .dst_offset = offset_at(from_pos)},
+              settings.chunk_points, real, st);
+        };
+        for (const line_run& run : runs) {
+          if (run.logical > next) {
+            zeros(next, run.logical);
+          }
+          next = run.logical + run.count;
+        }
+        if (next < n) {
+          zeros(next, n);
+        }
+      } else {
+        edge_side read;
+        read.runs = e.runs;
+        run_line_stages(s.prec, read, false, n, stored_runs, line_at, settings.chunk_points, real,
+                        st);
+      }
+      callbacks();
+      vocabulary();
+    } else {
+      vocabulary();
+      callbacks();
+      if (e.call.mode != callback_mode::consume) {
+        edge_side store;
+        store.accumulate = e.accumulate;
+        store.runs = e.runs;
+        run_line_stages(s.prec, store, true, n, stored_runs, line_at, settings.chunk_points, real,
+                        st);
+      }
+    }
+    for (std::size_t k = sites_before; k < c.callback_sites.size(); ++k) {
+      c.callback_sites[k]->rank = r;
+      c.callback_sites[k]->axis = listed(row);
+    }
+  };
   // The edge phase of a side with stored runs (task 5.1d), from `from` to `to` over lines of
   // `extent` along the last axis: the input's reads the stored runs into the whole transform with
   // zeros elsewhere, the output's stores (or accumulates) only the runs. Each axis but the last is
@@ -1915,12 +1996,25 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
   // pieces is a nest of its own over the pieces' extents, its lines' stages offset to the
   // pieces' first elements: a gap's lines are zeros, the others' lines run_line_stages. The
   // factor is none (build_with_runs), so no cursor moves.
+  //
+  // With the side's block callback (after task 5.3c), each line of a nest that is not a gap takes
+  // it on each of the line's runs, at the run's logical place (a block never crosses a gap), in
+  // 12.1's order (run_callback_line). The nest's loops move the callbacks' coordinates (`loops`,
+  // edge_loop) one element of their axes an iteration, and a loop of one iteration around the
+  // nest starts them at its pieces' first logical elements. A produced input and a consumed
+  // output may be null: then no loop moves their slot.
   const auto run_phase = [&](program& q, bool output, const std::vector<std::size_t>& extent,
-                             const view& from, const view& to, bool real) {
+                             const view& from, const view& to, bool real,
+                             std::vector<edge_loop>& loops) {
     const edge_side& e = output ? edge_ops->out : edge_ops->in;
     const std::size_t row = r - 1;
     const view& stored = output ? to : from;
     const view& logical = output ? from : to;
+    const bool call = e.call.any();
+    const bool unread = call && !output && e.call.mode == callback_mode::produce;
+    const bool unwritten = call && output && e.call.mode == callback_mode::consume;
+    const view& loop_from = unread ? to : from;
+    const view& loop_to = unwritten ? from : to;
     struct piece {
       std::size_t logical = 0;
       std::size_t stored = 0;
@@ -1962,7 +2056,28 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       }
       stored_offset *= stored.element_bytes;
       logical_offset *= logical.element_bytes;
-      const std::vector<std::size_t> open = open_loops(q, row, row, sub, from, to);
+      const bool calls_here = call && !gap;
+      // The callbacks' coordinates start at the pieces' first logical elements (shape::axes'
+      // order), in a loop of one iteration that moves no slot.
+      std::size_t wrapper = SIZE_MAX;
+      if (calls_here) {
+        edge_loop starts{.record = q.records.size()};
+        for (std::size_t d = 0; d + 1 < r; ++d) {
+          starts.start.at(listed(d)) = pieces[d][choice[d]].logical;
+        }
+        if (std::ranges::any_of(starts.start, [](std::size_t v) { return v != 0; })) {
+          wrapper = q.records.size();
+          q.records.emplace_back(loop{.kind = loop_kind::lines, .count = 1});
+          loops.push_back(starts);
+        }
+      }
+      std::vector<edge_loop> local;
+      const std::vector<std::size_t> open =
+          open_loops(q, row, row, sub, loop_from, loop_to, calls_here ? &local : nullptr);
+      for (edge_loop l : local) {
+        l.axis = listed(l.axis);
+        loops.push_back(l);
+      }
       std::vector<stage> line;
       const run_line line_at{
           .src = from.where,
@@ -1974,6 +2089,8 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       };
       if (gap) {
         run_zero_line(s.prec, extent[row], line_at, settings.chunk_points, real, line);
+      } else if (call) {
+        run_callback_line(e, output, extent[row], logical, logical_offset, line_at, real, line);
       } else {
         run_line_stages(s.prec, e, output, extent[row], e.runs.of(listed(row)), line_at,
                         settings.chunk_points, real, line);
@@ -1982,6 +2099,9 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
         q.records.emplace_back(std::move(st));
       }
       close_loops(q, open);
+      if (wrapper != SIZE_MAX) {
+        std::get<loop>(q.records[wrapper]).body_end = static_cast<std::uint32_t>(q.records.size());
+      }
       // The next combination of pieces, the last axis' pieces fastest.
       std::size_t d = r - 1;
       while (d > 0) {
@@ -2106,10 +2226,11 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       // A block callback on a row's edge phase (task 5.3b): real rows on the chain, and rows as
       // the lanes over adjacent transforms (line_count: the block's transforms, one element apart);
       // on a multi-axis plan (task 5.3c) in the edge phase its factor or accumulation has anyway,
-      // on each row of the last axis inside the loops over the others. Not beside stored runs
-      // there (build_with_runs refuses them).
+      // on each row of the last axis inside the loops over the others; beside stored runs there
+      // in the runs' phase, on each run (run_phase).
       if (r != 1 && e.runs.any()) {
-        throw std::logic_error("fftn: internal: a callback beside runs on a multi-axis plan");
+        run_phase(q, output, extent, from, to, real, loops);
+        return;
       }
       const std::size_t sites_before = c.callback_sites.size();
       const std::size_t n = extent[row];
@@ -2225,7 +2346,7 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
       return;
     }
     if (e.runs.any()) {
-      run_phase(q, output, extent, from, to, real);
+      run_phase(q, output, extent, from, to, real, loops);
       return;
     }
     const std::vector<std::size_t> open = open_loops(q, row, row, extent, from, to);
@@ -3812,6 +3933,31 @@ void build(plan_core& c, const shape_view& s, const side& in, const side& out, c
           return *inside;
         }
         const std::size_t n = output ? out.extent[r - 1] : in.extent[r - 1];
+        const side_runs& runs = output ? edge_ops->out.runs : edge_ops->in.runs;
+        if (runs.any()) {
+          // In the runs' phase (run_phase), a block per run of a row: the longest gives the
+          // blocks' words.
+          std::size_t longest = n;
+          if (!runs.of(listed(r - 1)).empty()) {
+            longest = 0;
+            for (const line_run& run : runs.of(listed(r - 1))) {
+              longest = std::max(longest, run.count);
+            }
+          }
+          return callback_blocks(
+              std::string(output ? "in the output's stored runs' phase, on each run of a row of "
+                                   "axis "
+                                 : "in the input's stored runs' phase, on each run of a row of "
+                                   "axis ") +
+                  std::to_string(listed(r - 1)) +
+                  (output ? (edge_ops->out.call.mode == callback_mode::consume
+                                 ? " in the workspace block, nothing stored"
+                                 : " in the workspace block, before the runs' store")
+                          : (edge_ops->in.call.mode == callback_mode::produce
+                                 ? ", zeros between the runs"
+                                 : ", after the runs' read")),
+              longest, 1, output ? out_element : in_element, block_bytes, "runs");
+        }
         const std::size_t lines_n = adjacent != 0 ? adjacent : 1;
         return callback_blocks(
             std::string(output ? "in the output edge's phase (its factor's or accumulation's), on "
