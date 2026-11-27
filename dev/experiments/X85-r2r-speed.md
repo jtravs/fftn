@@ -135,7 +135,42 @@ keyed to that vendor's class; plans outside a rule's reach stay as they were):
 
 ## Results
 
-(Pending.)
+**Judging run, EPYC 7763** (20261127-070028-304b; DMOG node17 shared, every round loaded, load
+average 44–60 of 128; GCC 16.2, `avx2`; band ±1.73 %; commit 0a1e55a1; arms A, A~, B = c2a6f672,
+D = `R2R_FOLDED_MAX=65535`, L = `R2R_LANES_COLUMNS=1`):
+
+- **D:** over the 46 `d-*` cases with every axis odd and at most 257 points (N_acc below), D ÷ A
+  0.787; all faster but DCT-I of 5 points, 1.041 [1.023, 1.043], past the band by 0.6 %, a near
+  miss. Above 257 (not judged: outside N_acc) 0.57–0.82.
+- **L:** over the 270 planes and volumes L ÷ A 1.021, 100 slower (DCT-IV 384² 1.16, DCT-II 256² in
+  place 1.10, the DHT of 1024² in place 1.09), 27 faster: rule L1 fails. Rule L2 fails too: on
+  `avx2` the lanes chain gives other bits than the line's scratch chain at line lengths 32 and 48
+  (test run below; scalar, `x86_v2` and `avx` agree bitwise).
+- **C:** B ÷ A geometric mean 0.990, 68 cases where the base was faster beyond the band (small
+  planes 0.85–0.95): the read and store stages' scratch stride, added for L only, costs.
+
+**Accuracy (rule D1), EPYC `avx2`** (DMOG job 520982, `bench/x85/accuracy.py`): folded, the
+largest swept n with every swept n up to it within half the bound is **257**; the first miss is
+DST-I of 385 points in float (1.07 of half the bound), then DST-I 513 in double (1.17), DCT-I
+1537 (1.0 and 1.22), and the ratio grows like √n to 4–6 at 24577–49153. The extensions stay
+within half the bound to 49153. The tests' clause: the folded test (both metrics, the r2r tests'
+tolerance) passes at every swept n up to 385 on every x86 target and on the Mac's, and fails from
+513 (the largest error of the kind twice, 1.08–2.5 of its tolerance).
+
+**Tests, EPYC** (DMOG job 520982, GCC 16.2 Release `-Werror`, full ctest 3780 of 3782): the two
+failures were L2's bitwise test (avx2 double and float).
+
+**Action on L** (commit 363ed5aa): arm L and the stages' scratch stride deleted (AGENTS.md section
+6: a loss is deleted); the stages are main's again.
+
+**Deciding run, EPYC (declared before it starts).** On the final code 363ed5aa, arms A, B =
+c2a6f672 and D = `R2R_FOLDED_MAX=257` (the setting rule D2 would adopt), catalogue `x85`:
+rule D2 over the `d-*` cases with every axis odd and at most 257 (the near miss DCT-I 5 is
+re-run here and this run decides it); every case the setting does not move (above 257, planes and
+volumes of other kinds) on its old plan and not slower beyond the band; rule C on every case
+(B ÷ A).
+
+(Xeon 6240 pending: judging run Slurm 17554 behind X68's jobs in the `fbench-serial` chain.)
 
 ## Verdict
 
