@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-/* Builds the plan of `shape` (whose split field is set) with `options` in C, runs it once in
+/* Builds the plan of `shape` (whose layout is FFTN_SPLIT) with `options` in C, runs it once in
  * `form` through the _split executions on `in` and `out` (by `lanes` members or pool threads,
  * `group_size` per cache group), and releases it. `transforms` is the batch's count, for the
  * pieces and the team's coverage. Returns FFTN_OK or the first failing status, with `error`

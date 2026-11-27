@@ -366,7 +366,7 @@ TEST(CApi, QueriesMatchCpp) {
         .r2r_kinds = nullptr,
         .run_count = 0,
         .runs = nullptr,
-        .split = 0,
+        .layout = FFTN_INTERLEAVED,
     };
     fftn_plan* plan = fftn_plan_create(&s, nullptr, nullptr);
     ASSERT_NE(plan, nullptr);
@@ -469,7 +469,7 @@ TEST(CApi, WorkspacesAndReferences) {
       .r2r_kinds = nullptr,
       .run_count = 0,
       .runs = nullptr,
-      .split = 0,
+      .layout = FFTN_INTERLEAVED,
   };
   fftn_plan* plan = fftn_plan_create(&s, nullptr, &e);
   ASSERT_NE(plan, nullptr);
@@ -533,7 +533,7 @@ TEST(CApi, ThrowingExecutorIsAStatus) {
       .r2r_kinds = nullptr,
       .run_count = 0,
       .runs = nullptr,
-      .split = 0,
+      .layout = FFTN_INTERLEAVED,
   };
   fftn_plan* plan = fftn_plan_create(&s, nullptr, nullptr);
   ASSERT_NE(plan, nullptr);

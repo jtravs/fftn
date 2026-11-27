@@ -171,16 +171,30 @@ int csplit_refusals(void) {
   s.axes = &axis;
   s.batch_rank = 1;
   s.batches = &batch;
-  s.split = 1;
+  s.layout = FFTN_SPLIT;
 
   /* 1: real-to-real has no complex side, refused in C naming the field. */
   s.kind = FFTN_R2R;
   s.r2r_kinds = &dct;
-  if (!csplit_refused(&s, NULL, NULL, "shape.split")) {
+  if (!csplit_refused(&s, NULL, NULL, "shape.layout")) {
     return 1;
   }
   s.kind = FFTN_C2C;
   s.r2r_kinds = NULL;
+
+  /* A layout that is not an fftn_layout is refused, not read as split, on either side of the
+   * range (stored through memcpy: the field's type need not hold it). */
+  {
+    const int bad[2] = {2, -1};
+    int i;
+    for (i = 0; i < 2; ++i) {
+      memcpy(&s.layout, &bad[i], sizeof bad[i]);
+      if (!csplit_refused(&s, NULL, NULL, "not an fftn_layout")) {
+        return 1;
+      }
+    }
+    s.layout = FFTN_SPLIT;
+  }
 
   /* 2: stored runs, refused by the core. */
   s.run_count = 1;

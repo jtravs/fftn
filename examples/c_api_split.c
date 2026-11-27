@@ -26,8 +26,8 @@ int main(void) {
   }
 
   // snippet-begin: split
-  // Real rows into split spectra: the shape of interleaved r2c rows with split set; on the split
-  // side strides and distances count reals, the same numbers for both arrays.
+  // Real rows into split spectra: the shape of interleaved r2c rows with the layout FFTN_SPLIT; on
+  // the split side strides and distances count reals, the same numbers for both arrays.
   const fftn_axis axis = {N, 0, 0};
   const fftn_batch batch = {COUNT, 0, 0};
   fftn_shape shape = {0};
@@ -39,7 +39,7 @@ int main(void) {
   shape.axes = &axis;
   shape.batch_rank = 1;
   shape.batches = &batch;
-  shape.split = 1;
+  shape.layout = FFTN_SPLIT;
   fftn_plan* forward = fftn_plan_create(&shape, NULL, &error);
 
   // And back: c2r from the split spectra, scaled by 1/n.

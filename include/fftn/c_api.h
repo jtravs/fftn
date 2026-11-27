@@ -135,6 +135,15 @@ typedef enum fftn_side {
   FFTN_OUT, /**< the output */
 } fftn_side;
 
+/**
+ * How a shape's complex sides hold their values (provisional, "Split complex" below):
+ * fftn::complex<T> or fftn::split_complex<T> in C++. A zeroed shape is interleaved.
+ */
+typedef enum fftn_layout {
+  FFTN_INTERLEAVED = 0, /**< one array of (re, im) pairs (the default) */
+  FFTN_SPLIT = 1,       /**< two arrays of reals, executed through the _split forms */
+} fftn_layout;
+
 /** One transformed dimension, fftn::axis: strides in elements of each side's own type. */
 typedef struct fftn_axis {
   size_t n;             /**< the logical length; at least 1 */
@@ -176,12 +185,12 @@ typedef struct fftn_shape {
   size_t run_count;               /**< the number of stored runs; 0 for none */
   const fftn_stored_run* runs;    /**< run_count stored runs */
   /**
-   * Nonzero: the complex sides are split-complex arrays, executed through the _split forms
-   * (fftn_execute_split; provisional, "Split complex" below), as fftn::split_complex<T> makes
-   * them in C++; their strides and distances count reals. FFTN_C2C, FFTN_R2C and FFTN_C2R only.
-   * 0: interleaved.
+   * FFTN_INTERLEAVED (0): the complex sides are interleaved. FFTN_SPLIT: they are split-complex
+   * arrays, executed through the _split forms (fftn_execute_split; provisional, "Split complex"
+   * below), as fftn::split_complex<T> makes them in C++; their strides and distances count
+   * reals. FFTN_SPLIT for FFTN_C2C, FFTN_R2C and FFTN_C2R only.
    */
-  int split;
+  fftn_layout layout;
 } fftn_shape;
 
 /** The instruction sets, fftn::isa, for fftn_options::force_isa and fftn_isa_name. */
@@ -261,12 +270,12 @@ FFTN_C_API fftn_options fftn_options_default(void) FFTN_C_NOEXCEPT;
  * Fails with FFTN_ERROR_INVALID_ARGUMENT, and the message naming the argument, where the C++
  * constructor throws std::invalid_argument, and also when `shape` is NULL, a field holds a
  * value that is not one of its enumerators (kind, precision, direction of FFTN_C2C, an
- * r2r_kinds entry, a run's where, options->force_isa, options->effort), an array is NULL
- * while its count is not 0, r2r_kinds is NULL for FFTN_R2R or not NULL for another kind, or
- * split is nonzero for FFTN_R2R. Fails with FFTN_ERROR_OUT_OF_MEMORY when memory runs out.
+ * r2r_kinds entry, a run's where, layout, options->force_isa, options->effort), an array is
+ * NULL while its count is not 0, r2r_kinds is NULL for FFTN_R2R or not NULL for another kind,
+ * or layout is FFTN_SPLIT for FFTN_R2R. Fails with FFTN_ERROR_OUT_OF_MEMORY when memory runs out.
  * `error` may be NULL.
  *
- * A plan of a split shape (shape->split nonzero) is executed through the _split forms only
+ * A plan of a split shape (shape->layout FFTN_SPLIT) is executed through the _split forms only
  * (fftn_execute_split and the others): an interleaved form given a split plan ends the program
  * with a message on stderr, since the plan's imaginary arrays would be missing.
  */
@@ -729,7 +738,7 @@ FFTN_C_API int fftn_pipeline_execute_on(const fftn_pipeline* pipeline, const voi
  *
  * Provisional (dev/DESIGN.md 5.9, "Split complex", and 18.2 "Phase 6", Q28-Q31): complex values
  * kept as two arrays of reals, as fftn::split_complex<T> and fftn::split_ptr<T> keep them in C++.
- * A plan of a shape whose `split` field is nonzero reads or writes its complex sides as such
+ * A plan of a shape whose `layout` is FFTN_SPLIT reads or writes its complex sides as such
  * arrays, and is executed through the forms below; docs/conventions.md ("Split complex") states
  * the layout rules and docs/c_api.md ("Split complex") quotes a compiled C example. Split plans
  * take no edges, stored runs or wisdom, and r2c and c2r split plans are not in place, as in C++. */

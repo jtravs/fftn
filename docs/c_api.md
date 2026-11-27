@@ -91,6 +91,12 @@ standard library itself (`-lstdc++` with GCC, `-lc++` with Clang on macOS):
 a shared library. With `-DFFTN_BUILD_C_SHARED=ON` the build also makes `libfftn_c`
 (`fftn_c.dll` on Windows), installed and exported as `fftn::fftn_c`, which holds the whole
 library inside and exports the `fftn_` functions and nothing else. The C++ API stays static.
+While FFTN is 0.x a minor version may change the C API, so the library's SOVERSION is
+`0.<minor>`: `libfftn_c.so.0.<minor>` on Linux (the soname, linked to the fully versioned file,
+with `libfftn_c.so` for the linker) and `libfftn_c.0.<minor>.dylib` on macOS (whose
+compatibility version is `0.<minor>`). For example, at version 0.1 the soname is
+`libfftn_c.so.0.1`, and a program built against it never loads 0.2's library. Windows' DLL is
+not renamed.
 
 Every C symbol the library defines starts with `fftn_`; a test checks both libraries.
 
@@ -111,7 +117,7 @@ Each C type stands for the C++ type of the same name, field by field:
 | `fftn_executor` (`fftn/executor.h`) | `fftn::executor_ref` |
 | `fftn_wisdom` (opaque) | `fftn::wisdom` |
 | `fftn_length_kind` | `fftn::length_kind` |
-| `fftn_shape::split`, `fftn_split_ptr`, `fftn_split_const_ptr` ("Split complex" below) | `fftn::split_complex<T>`, `fftn::split_ptr<T>`, `fftn::split_ptr<const T>` |
+| `fftn_layout` (`fftn_shape::layout`), `fftn_split_ptr`, `fftn_split_const_ptr` ("Split complex" below) | `fftn::split_complex<T>`, `fftn::split_ptr<T>`, `fftn::split_ptr<const T>` |
 
 - **One plan type** serves every kind and precision, and data are `void*`. Complex values are
   interleaved pairs, so arrays of C99 `double _Complex`, C++ `std::complex<double>` and
@@ -356,15 +362,16 @@ own:
 ## Split complex
 
 Complex values kept as two arrays of reals ([conventions.md](conventions.md), "Split complex")
-have a C form too (provisional: DESIGN 5.9, "Split complex", and 18.2 Q28–Q31). A shape with
-`split` set is the C++ shape with `fftn::split_complex<T>` on its complex sides, for `FFTN_C2C`,
+have a C form too (provisional: DESIGN 5.9, "Split complex", and 18.2 Q28–Q31). A shape whose
+`layout` is `FFTN_SPLIT` is the C++ shape with `fftn::split_complex<T>` on its complex sides
+(`FFTN_INTERLEAVED`, 0, is the default, so a zeroed shape is interleaved), for `FFTN_C2C`,
 `FFTN_R2C` and `FFTN_C2R`; its plan is executed through the four forms with a `_split` suffix,
 which take the arrays as an `fftn_split_const_ptr` (input) and an `fftn_split_ptr` (output), the
 C forms of `split_ptr<const T>` and `split_ptr<T>`:
 
 ```c file=examples/c_api_split.c region=split
-// Real rows into split spectra: the shape of interleaved r2c rows with split set; on the split
-// side strides and distances count reals, the same numbers for both arrays.
+// Real rows into split spectra: the shape of interleaved r2c rows with the layout FFTN_SPLIT; on
+// the split side strides and distances count reals, the same numbers for both arrays.
 const fftn_axis axis = {N, 0, 0};
 const fftn_batch batch = {COUNT, 0, 0};
 fftn_shape shape = {0};
@@ -376,7 +383,7 @@ shape.rank = 1;
 shape.axes = &axis;
 shape.batch_rank = 1;
 shape.batches = &batch;
-shape.split = 1;
+shape.layout = FFTN_SPLIT;
 fftn_plan* forward = fftn_plan_create(&shape, NULL, &error);
 
 // And back: c2r from the split spectra, scaled by 1/n.
@@ -425,12 +432,15 @@ fftn_plan_release(forward);
 - **What split plans do not take,** as in C++: edges (`fftn_plan_create_edges` refuses split
   shapes with edges), stored runs, r2c or c2r in place, and wisdom (`fftn_wisdom_add` refuses a
   split plan; split plans are planned by the rules, which `fftn_plan_describe` says when other
-  planning was asked for). `split` with `FFTN_R2R` is refused. Pipelines have no split form.
-- **`fftn_shape` grew a field** (`split`, last) on 2026-11-27, as Q21 allows before 1.0. A
-  zeroed shape is unchanged in meaning, but C programs must be rebuilt against the new header,
-  and mirrors of the struct in other languages (Python's `ctypes`, Julia's `ccall`, Fortran's
-  `iso_c_binding`) must add the field. C++ code that names every field in a designated
-  initialiser and leaves out `split` gets a `-Wmissing-field-initializers` warning.
+  planning was asked for). `FFTN_SPLIT` with `FFTN_R2R` is refused, as is a `layout` that is
+  not an `fftn_layout`. Pipelines have no split form.
+- **`fftn_shape` grew a field** (`layout`, last, an `fftn_layout`: an enumeration whose
+  underlying type the compiler chooses, int-sized, 4 bytes) on 2026-11-27, as Q21 allows before
+  1.0. A zeroed shape is unchanged in meaning, but C programs must be rebuilt against the new
+  header, and mirrors of the struct in other languages (Python's `ctypes`, Julia's `ccall`,
+  Fortran's `iso_c_binding`) must add the field, as a 4-byte integer. C++ code that names every
+  field in a designated initialiser and leaves out `layout` gets a
+  `-Wmissing-field-initializers` warning.
 
 ## Not yet in C
 
