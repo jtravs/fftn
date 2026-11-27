@@ -237,8 +237,9 @@ known in advance or the call is hot ([easy](easy.md)).
 a plan shaped like Kokkos-FFT 2.0's (`view_plan`, and `fftn::kokkos::compat` with Kokkos-FFT's
 own names, so a call site changes only its include and namespace), View-based construction of
 core plans (`shape_of`, `make_plan`), and Kokkos-FFT's one-shot functions (provisional)
-([kokkos](kokkos.md)). A helper giving a View's dimensions as the `axis` list of the `axes_*`
-functions (`array_of`) is planned; its design awaits the maintainer.
+([kokkos](kokkos.md)). `array_of` gives a pair of Views as the `axis` list of the `axes_*`
+functions and of pipelines, so edges, callbacks and pipelines work over Views too
+([kokkos](kokkos.md#fusion-over-views)).
 
 ## The C API
 
@@ -274,5 +275,4 @@ and `transforms_of` on plans) follows the agreed design.
 Not built, and so not documented beyond a mention: tuning the speed of the real-to-real
 transforms; split-complex data read and written in the transform's own passes; split rows on
 strategies other than the chain; edges, stored runs and measured planning on split-complex
-plans; `array_of` for Kokkos Views. FFTN's
-progress and what comes next are in [dev/PLAN.md](../dev/PLAN.md).
+plans. FFTN's progress and what comes next are in [dev/PLAN.md](../dev/PLAN.md).

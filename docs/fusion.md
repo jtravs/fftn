@@ -221,6 +221,31 @@ description can take, and recorded with `wisdom::add` ([planning](planning.md), 
 - **Execution** serially, in pieces (`execute_transforms`), by a team or on an executor,
   bitwise alike.
 
+**Over Kokkos Views**, `fftn::kokkos::array_of` (`fftn/kokkos.hpp`) gives a pair of Views as
+one `axis` per dimension, from which the line and the batches are written; the same entries are
+the `array` of the `axes_*` functions for a plan with edges or callbacks
+([kokkos](kokkos.md#fusion-over-views)). Every column of a View, convolved on the instance's
+threads:
+
+```cpp file=examples/kokkos_rows_planes.cpp region=pipeline
+namespace fk = fftn::kokkos;
+// Every column of x (n rows of `count` columns: lines of n points, `count` apart) convolved
+// with one kernel into y. array_of gives one axis per dimension of the Views, with their
+// extents and strides: dimension 0 is the line, dimension 1 the batch.
+const auto array = fk::array_of(x, y);
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.line = array[0];
+desc.batches = {
+    {.count = array[1].n, .in_dist = array[1].in_stride, .out_dist = array[1].out_stride},
+};
+desc.middle.scale = 1.0 / static_cast<double>(n);
+const fftn::pipeline pipe(desc);
+
+const fk::executor threads(exec);
+fftn::workspace ws(pipe.workspace_bytes(threads.width()));
+pipe.execute(fk::data_of(x), fk::data_of(y), threads, ws, {.mid_factor = kernel.data()});
+```
+
 `describe()` says which pair a pipeline runs, its program form (flat, unrolled or walked) and
 where each operation goes. What is refused until built is listed in
 [conventions](conventions.md#pipelines).

@@ -20,7 +20,9 @@ The header offers three levels:
 - **View-based construction for the core API.** `shape_of(in, out, dir, axes)` gives the
   `fftn::shape` of a pair of Views, `make_plan` the ordinary `fftn::plan`, and `data_of(view)`
   the pointer to execute it with. Use this level for concurrent executions of one plan (a
-  workspace each) or to manage workspaces yourself.
+  workspace each) or to manage workspaces yourself. `array_of(in, out)` gives the Views as the
+  `axis` list of the core's `axes_*` functions and of pipelines, for edges, callbacks and
+  fusion ([Fusion over Views](#fusion-over-views)).
 - **Threads.** `fftn::kokkos::executor` runs a core plan on an execution-space instance, and
   `fftn::kokkos::team_of` makes the members of a `Kokkos::TeamPolicy` kernel an `fftn::team`.
   `view_plan` executes through the executor already.
@@ -245,10 +247,52 @@ namespace per build.
   real transforms. The real View must show that padding itself: take it as the first n
   columns of a View of 2(n/2 + 1) reals over the complex memory (a subview of the padded rows
   does it, in either layout).
-- **The array description of a pair of Views.** A helper returning the `axis` list of a pair of Views, to
-  pass to the core's `axes_*` functions (`array_of`), is planned; its design awaits the
-  maintainer. Meanwhile `shape_of` gives the whole shape, whose fields may be changed before
-  the plan is built.
+
+## Fusion over Views
+
+Edges, block callbacks, stored runs and pipelines ([fusion](fusion.md)) are written in the
+core's vocabulary of axes. `array_of(in, out)` gives a pair of Views in it: one `fftn::axis` per
+dimension, in the Views' order, with the extents and the Views' strides in elements. Pass it as
+the `array` of `fftn::axes_c2c`, `axes_r2c`, `axes_c2r` or `axes_r2r` with the dimensions to
+transform, add edges, callbacks or runs to the shape, and build the plan; or write a pipeline's
+line and batches from its entries. Here every column of a View is convolved with one kernel by a
+pipeline on the instance's threads:
+
+```cpp file=examples/kokkos_rows_planes.cpp region=pipeline
+namespace fk = fftn::kokkos;
+// Every column of x (n rows of `count` columns: lines of n points, `count` apart) convolved
+// with one kernel into y. array_of gives one axis per dimension of the Views, with their
+// extents and strides: dimension 0 is the line, dimension 1 the batch.
+const auto array = fk::array_of(x, y);
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+desc.line = array[0];
+desc.batches = {
+    {.count = array[1].n, .in_dist = array[1].in_stride, .out_dist = array[1].out_stride},
+};
+desc.middle.scale = 1.0 / static_cast<double>(n);
+const fftn::pipeline pipe(desc);
+
+const fk::executor threads(exec);
+fftn::workspace ws(pipe.workspace_bytes(threads.width()));
+pipe.execute(fk::data_of(x), fk::data_of(y), threads, ws, {.mid_factor = kernel.data()});
+```
+
+The rules are `shape_of`'s, less what needs the Views' addresses:
+
+- **Kinds.** Both Views complex (c2c), real into complex (r2c), complex into real (c2r), or both
+  real (the array of `axes_r2r`, or a `<T, C, T>` pipeline's input and output), in one
+  precision.
+- **The halved dimension** of r2c and c2r is the last one, which the complex side holds as
+  n/2 + 1 values; `array_of(in, out, halved)` names another (negative values count from the
+  end). Its entry has the real side's n. List it last in the `axes_*` call. A c2c or real pair
+  has none, and the three-argument form does not compile for it.
+- **Extents and strides** are checked as `shape_of` checks them, with the same errors: no
+  extent 0, equal extents except along the halved dimension, and no stride 0 except on a
+  dimension of extent 1, whose stride is given as 1. Every stride is explicit, so the `axes_*`
+  functions take them as they are, and their `padded` argument does not matter.
+- **Placement is yours.** `array_of` does not compare the Views' addresses. For Views that
+  share their memory set `options::in_place`; the plan or pipeline then checks the in-place
+  strides (FFTW's padding for real kinds) and refuses outputs that overlap, as for any shape.
 
 ## Normalisation
 

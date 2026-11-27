@@ -3,8 +3,10 @@
 
 // A small Kokkos program: real rows forward and back through the Kokkos-FFT spellings, in-place
 // batched planes through the adapter's own names, then core plans on Kokkos' threads, through
-// the executor and in a team kernel, and planes through the one-shot functions. The example quoted
-// in docs/kokkos.md. Exits with 0 when every round trip gives back its input.
+// the executor and in a team kernel, planes through the one-shot functions, and a pipeline over a
+// View's strided columns written from array_of. The example quoted in docs/kokkos.md and
+// docs/fusion.md. Exits with 0 when every round trip gives back its input and the pipeline agrees
+// with the plans.
 
 #include <fftn/fftn.hpp>
 #include <fftn/kokkos.hpp>
@@ -13,9 +15,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <vector>
 
 namespace {
 
@@ -172,6 +176,71 @@ double threaded_round_trip(const host& exec) {
   return error;
 }
 
+// The largest difference between a pipeline over a View's strided columns, on the instance's
+// threads, and the same convolution by two plans and a loop, relative to the largest output.
+double pipeline_error(const host& exec) {
+  const std::size_t n = 64;
+  const std::size_t count = 24;
+  using columns = Kokkos::View<complex**, Kokkos::LayoutRight, Kokkos::HostSpace>;
+  const columns x("x", n, count);
+  const columns y("y", n, count);
+  for (std::size_t j = 0; j < n; ++j) {
+    for (std::size_t c = 0; c < count; ++c) {
+      x(j, c) =
+          complex(std::cos(0.2 * static_cast<double>(j * (c + 1))), 0.1 * static_cast<double>(c));
+    }
+  }
+  // A kernel's spectrum, made up directly.
+  std::vector<std::complex<double>> kernel(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    kernel[k] =
+        std::polar(1.0 / (1.0 + 0.1 * static_cast<double>(k)), 0.3 * static_cast<double>(k));
+  }
+
+  // snippet-begin: pipeline
+  namespace fk = fftn::kokkos;
+  // Every column of x (n rows of `count` columns: lines of n points, `count` apart) convolved
+  // with one kernel into y. array_of gives one axis per dimension of the Views, with their
+  // extents and strides: dimension 0 is the line, dimension 1 the batch.
+  const auto array = fk::array_of(x, y);
+  fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, count);
+  desc.line = array[0];
+  desc.batches = {
+      {.count = array[1].n, .in_dist = array[1].in_stride, .out_dist = array[1].out_stride},
+  };
+  desc.middle.scale = 1.0 / static_cast<double>(n);
+  const fftn::pipeline pipe(desc);
+
+  const fk::executor threads(exec);
+  fftn::workspace ws(pipe.workspace_bytes(threads.width()));
+  pipe.execute(fk::data_of(x), fk::data_of(y), threads, ws, {.mid_factor = kernel.data()});
+  // snippet-end: pipeline
+
+  // The same work by two plans of the Views and a loop.
+  const columns spectrum("spectrum", n, count);
+  const columns want("want", n, count);
+  const auto forward = fk::make_plan(x, spectrum, fftn::direction::forward, fk::axis_type<1>{0});
+  const auto backward =
+      fk::make_plan(spectrum, want, fftn::direction::backward, fk::axis_type<1>{0});
+  fftn::workspace plain_ws(std::max(forward.workspace_bytes(), backward.workspace_bytes()));
+  forward.execute(fk::data_of(x), fk::data_of(spectrum), plain_ws);
+  for (std::size_t k = 0; k < n; ++k) {
+    for (std::size_t c = 0; c < count; ++c) {
+      spectrum(k, c) *= complex(kernel[k].real(), kernel[k].imag()) / static_cast<double>(n);
+    }
+  }
+  backward.execute(fk::data_of(spectrum), fk::data_of(want), plain_ws);
+  double largest = 0;
+  double error = 0;
+  for (std::size_t j = 0; j < n; ++j) {
+    for (std::size_t c = 0; c < count; ++c) {
+      largest = std::max(largest, Kokkos::abs(want(j, c)));
+      error = std::max(error, Kokkos::abs(y(j, c) - want(j, c)));
+    }
+  }
+  return error / largest;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -182,9 +251,14 @@ int main(int argc, char** argv) {
     const double planes = planes_round_trip(exec);
     const double threaded = threaded_round_trip(exec);
     const double one_shot = one_shot_round_trip(exec);
-    std::printf("largest round-trip errors: rows %.3g, planes %.3g, threaded %.3g, one-shot %.3g\n",
-                rows, planes, threaded, one_shot);
-    return rows < 1e-14 && planes < 1e-13 && threaded < 1e-13 && one_shot < 1e-14 ? 0 : 1;
+    const double pipeline = pipeline_error(exec);
+    std::printf("largest round-trip errors: rows %.3g, planes %.3g, threaded %.3g, one-shot %.3g; "
+                "pipeline against plans %.3g\n",
+                rows, planes, threaded, one_shot, pipeline);
+    return rows < 1e-14 && planes < 1e-13 && threaded < 1e-13 && one_shot < 1e-14 &&
+                   pipeline < 1e-14
+               ? 0
+               : 1;
   } catch (const std::exception& e) {
     std::printf("failed: %s\n", e.what());
     return 1;

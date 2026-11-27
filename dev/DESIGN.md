@@ -656,6 +656,35 @@ the header and the docs until it happens.
   their identical layout, which `data_of` checks, and on the library touching the data only
   through `void*` and `T` scalars in its own translation units, as Kokkos-FFT does with
   FFTW's complex type.
+- *`array_of(in, out)` and `array_of(in, out, halved)`* give a pair of Views as the core's
+  array description, so edges, callbacks, stored runs and pipelines (section 12) work over
+  Views (18.2, "Pipelines" 10, settled as proposed). **As built (task 5.5;
+  `include/fftn/kokkos.hpp`, `tests/kokkos/kokkos_array_test.cpp`, the `pipeline` region of
+  `examples/kokkos_rows_planes.cpp`).** The result is a `std::array<axis, rank>`, one entry per
+  dimension in the Views' order: `n` the extent (on the halved dimension the real side's),
+  `in_stride` and `out_stride` the Views' strides in elements. It is the `array` argument of
+  `axes_c2c`, `axes_r2c`, `axes_c2r` and `axes_r2r` (the selected dimensions then chosen by
+  index, stored runs included), and a pipeline's `line` and `batches` are written from its
+  entries. The pair forms c2c, r2c, c2r or, both real, the r2r kind (`axes_r2r`, a `<T, C, T>`
+  pipeline's input and output), in one precision. The two-argument form takes the last
+  dimension as the halved one of r2c and c2r, the proposal's `halved = -1`; the three-argument
+  form names it (negative counting from the end; refused naming `halved` outside the rank) and
+  does not compile for c2c and real pairs: the kind is a property of the types, so the
+  proposal's refusal is a `static_assert`, as for the adapter's other type checks, and two
+  overloads keep a default `-1` from reaching a pair that has no halved dimension. The checks
+  that a list of axes can carry are `shape_of`'s, made by one shared function
+  (`detail::view_axes`) so that the two refuse the same Views with the same errors: types,
+  ranks, host access and a writable `out` at compile time; extents not 0 (checked over every
+  dimension before any stride, since a `LayoutRight` or `LayoutLeft` View with an extent of 0
+  reports strides of 0 for the dimensions that span it, which are not broadcast); extents
+  against the kind; a stride of 0 only at extent 1, where `array_of` gives 1, so every stride
+  is explicit (0 means the tight default to `axes_*` and a pipeline, and `padded` then does not
+  matter). The address checks are dropped: overlap and in place are the
+  caller's (`options::in_place`), and plan or pipeline construction checks the in-place strides
+  and the output's overlap from the axes, as for any shape. `docs/kokkos.md` ("Fusion over
+  Views") and `docs/fusion.md` show it with a pipeline over a View's strided columns on the
+  executor, rather than the proposal's plan with edges, since pipelines gain most on strided
+  lines (X67). `compat` gains nothing (Kokkos-FFT has no fusion).
 - *`view_plan<ExecutionSpace, InView, OutView, Dim = 1>`* has the constructors (`axis` with
   optional `n`; `axis_type<Dim>` with optional lengths `s`) and `execute(in, out, norm)` of
   Kokkos-FFT 2.0's `Plan`, plus the free `execute(plan, in, out, norm)`, `fftn_plan()` and
@@ -4836,7 +4865,8 @@ stays open. The headers keep "provisional" until step 6.20 confirms the APIs for
    PR 134 refuses them on plans, and both are lifted together.
 9. **When `transforms_of` arrives.** It is in the class from 5.2b, ahead of 5.5's
    owner-computes work, since it is the plan's function on the same core.
-10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5; not built, no design yet). PLAN's 5.5 names
+10. **`fftn/kokkos.hpp`'s `array_of`** (task 5.5). *Settled 2026-11-27 (the maintainer): as
+    proposed; built (section 5.5, "As built").* PLAN's 5.5 names
     it, but neither 5.5 nor 12 describes it; the fusion proposal of 2026-11-24 had one line
     ("`array_of(view)`, which returns the `std::vector<axis>` that `shape_of` already
     computes"). Proposal: `array_of(in, out, halved = -1)`, two host Views of equal rank
@@ -5485,6 +5515,7 @@ to change before a release.
 | 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 | 2026-11-27 | Experiment X85 (step 6.12, section 5.7 "As built (step 6.12)"): the folded DCT-I and DST-I (a real DFT of n ∓ 1 points, the odd outputs as running sums) for odd n up to `machine_profile::r2r_folded_max` (DCT-I from 33), 129 on Zen 3's class (AMD's cores), 0 elsewhere, adopted under the narrowing clause; the lanes over adjacent lines on r2r planes' strided axes rejected and deleted; the fused read and store stages drafted, not built | The folded route halves the chain (0.794 of the extension's time on the EPYC up to 129 points) but its error grows like √n: the tests' largest error of the kind twice fails from 251–261 points, so 129 (18.2 Q14). The lanes lost on the EPYC (1.022, up to 1.18) with the per-line stages still scalar, and their bits differ on `avx2` |
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
+| 2026-11-27 | `fftn::kokkos::array_of` (task 5.5, section 5.5, "As built"; 18.2 "Pipelines" 10 settled by the maintainer as proposed): `array_of(in, out)` and `array_of(in, out, halved)` return `std::array<axis, rank>`, one axis per View dimension with the extents (the real side's on the halved dimension) and the Views' strides; c2c, r2c, c2r and real pairs; the halved dimension the last unless named, a named one refused at compile time for c2c and real pairs; `shape_of`'s per-dimension checks shared, every zero extent now refused before any stride; a stride of 0 at extent 1 given as 1; no address checks | The maintainer accepted the proposal on 2026-11-27. Two overloads rather than one default argument, because a default `-1` cannot be told from an explicit one and a c2c pair must not take it; the kind is a type property, so its refusal is a compile-time one like the adapter's other type checks. Explicit strides, because 0 means the tight default to `axes_*` and pipelines |
 
 ---
 
