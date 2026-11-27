@@ -1,6 +1,6 @@
 # X85: real-to-real speed (the folded DCT-I and DST-I, lanes over adjacent lines, fused stages)
 
-- **Status:** done on the EPYC 7763 (D adopted narrowed on Zen 3's class up to 129 points, L rejected, F not built); the Xeon 6240 leg queued, the Mac leg a daytime follow-up
+- **Status:** done on the EPYC 7763 (D adopted narrowed on Zen 3's class up to 129 points, L rejected, F not built); D not adopted on the Xeon 6240 (rule D2), the Mac leg a daytime follow-up
 - **Owner:** task AK session, 2026-11-27
 - **Phase / task:** 6.12 ([PLAN.md](../PLAN.md), phase 6 table); DESIGN.md 5.7 and 18.2 "Phase 6"
   Q14 and Q15
@@ -222,18 +222,39 @@ excluded cases (odd DCT-I and DST-I of 131–257 points) on their old plans, no 
 than A beyond the band, the geometric mean over the moved cases against D2's 0.90; and the full
 ctest on DMOG passes.
 
-**Third narrowed deciding run, EPYC** (20261127-083621-be45; node17 shared, loaded, load average
-34; band ±1.90 %; code 44363fa6, A = `R2R_FOLDED_MAX=0`, D = the profile's 129): the 35 cases D
-moves (DCT-I of 33–129 and DST-I of 5–129 points, rows, batches, planes, float rows) **0.793** of A's
-time (0.637–0.969), none slower beyond the band; the excluded DCT-I and DST-I of 131–257 points and
-DCT-I below 33 on their old plans (notes identical); the other cases on their plans (1.012, none
-slower). DMOG's full ctest of that code (Slurm 521024, GCC 16 Release `-Werror`, the EPYC's own
+**Third narrowed deciding run, EPYC** (20261127-083621-be45; node17 shared, every round loaded,
+load average 34; 12 rounds, band ±1.05 %; code 44363fa6, A = `R2R_FOLDED_MAX=0`, D = the profile's
+129, one binary): the 35 cases D moves (DCT-I of 33–129 and DST-I of 5–129 points, rows, batches,
+planes, float rows) **0.794** of A's time (0.636–0.968), none slower beyond the band; the excluded
+DCT-I and DST-I of 131–257 points and DCT-I below 33 on their old plans (notes identical); the
+other 305 cases on their plans (1.000), one of them past the band (DCT-III of 1024² out of place),
+on the same plan and binary in both arms: noise, not the change. DMOG's full ctest of that code (Slurm 521024, GCC 16 Release `-Werror`, the EPYC's own
 profile folding): **3743 of 3743 pass**. **It passes.**
 
-**Xeon 6240:** judging run Slurm 17561 on a997ebb8 (arms A, B, D = `R2R_FOLDED_MAX=65535`,
-FFTW, pocketfft), rule D1's sweep (Slurm 17562, `avx512` and `avx2` forced) and the `r2r`
-standing (17563) queue in the `fbench-serial` chain behind other tasks' jobs; not finished when
-this verdict was written.
+**Judging run, Xeon 6240** (20261127-081910-ebcf; Slurm 17561 in the `fbench-serial` chain, 7 of 12
+rounds loaded, a lupercal job of 8 CPUs beside it; GCC 14.4, `avx512`; band ±1.67 %; code a997ebb8,
+so DCT-I folds from 9 there; arms A, B = c2a6f672, D = `R2R_FOLDED_MAX=65535`, F = FFTW 3.3.11
+(`sse2-avx-avx2-avx2_128-avx512`), P = pocketfft (`-march=native`)):
+
+- **D:** over the 38 `d-*` targets up to 129 points 0.852, DST-I faster everywhere, but DCT-I of 45
+  points 1.068 [1.058, 1.098] and of 65 in float 1.054 [1.034, 1.085] slower beyond the band (and DCT-I
+  of 9, which the final code excludes, 1.044): rule D2 fails on the Xeon 6240's class, which keeps 0.
+  One wrong output: DST-I of 16385 points in float, far past any limit (rule D1's region). A DST-I-only
+  key for this class is a follow-up (it would need its own deciding run).
+- **C:** B ÷ A 1.005 (10 cases where the base was faster, 34 slower: DST-I rows and planes on the
+  extension, identical plans; code placement).
+- **Standing on the `x85` cases** (not the whole `r2r` catalogue): FFTW ÷ FFTN 1.319 (rows 1.63,
+  planes and volumes 1.26; FFTW's DCT-III, DST-III and DHT planes 0.86–0.92 of FFTN's time); pocketfft
+  ÷ FFTN **0.718**: on the 280 planes and volumes **0.560** (DCT-III and DST-III 0.39–0.41, DCT-II and
+  DST-II 0.49–0.51, the DHT 0.54, the kinds I and IV 0.63–0.74), on the 60 rows 2.29. pocketfft runs
+  a multi-dimensional transform as several lines at once in vector lanes (8 doubles with AVX-512),
+  pre- and post-processing included: the r2r planes are FFTN's largest gap on the Xeon, and arm L's
+  failure (lanes around scalar per-line stages) says the stages must be vectorised across lines too.
+
+**Accuracy (rule D1), Xeon** (Slurm 17562): N_acc = 257 on `avx512` and on `avx2` forced, as on
+the EPYC (the ratio to half the bound 0.84–0.96 at 513–1025, above 1 from 1537). The Xeon's and the
+EPYC's whole-catalogue standings (Slurm 17563 on the Xeon, `x85-standing-epyc4` on DMOG) were
+still running when this was written.
 
 ## Verdict
 
@@ -241,8 +262,9 @@ this verdict was written.
   clause** (44363fa6): `machine_profile::r2r_folded_max` = 129 there, DCT-I from 33 points (a
   constant in core/r2r.cpp, for every class). Rule D1's rms sweep allowed 257, its tests' clause
   only about 250 (the largest error of the kind twice), so 129; rule D2 passed on the final code
-  (0.793 over the 35 cases it moves, none slower). Every other class keeps 0 (the extensions)
-  until measured: the Xeon 6240's class waits for its runs, Apple's for the daytime Mac leg. For
+  (0.794 over the 35 cases it moves, none slower). Every other class keeps 0 (the extensions)
+  until measured: on the Xeon 6240's class rule D2 failed (DCT-I of 45 and 65 points), Apple's waits
+  for the daytime Mac leg. For
   the maintainer's veto: the three narrowings (DCT-I below 9, then below 33, on evidence that DCT-I
   single rows of 9–17 points swing by about 10 % between runs; then the limit 257 to 129 after the
   tests' clause failed at 251).
@@ -251,11 +273,12 @@ this verdict was written.
 - **F, fused stages: not built.** Drafted above; it needs generator pass kinds per route.
 - **C:** with L's stride gone the stages are main's; the remaining differences against c2a6f672
   went both ways on identical plans (code placement in src/core/r2r.cpp).
-- **Q15** stays open: the standing on the EPYC's quick tier was FFTN ÷ FFTW 0.784 (run
-  20261127-064235-0a8f), behind on DCT-III/DST-III and on planes of DCT-II, DCT-III and the DHT;
-  the full-catalogue standing on both machines is queued (EPYC after this verdict, Xeon in the
-  chain).
+- **Q15** stays open: on the EPYC's quick tier FFTN ÷ FFTW 0.784 (run 20261127-064235-0a8f), behind
+  on DCT-III/DST-III and on planes of DCT-II, DCT-III and the DHT; on the Xeon's `x85` cases FFTN
+  beats FFTW (1.319) but pocketfft takes 0.56 of FFTN's time on planes and volumes. The
+  whole-catalogue standings were queued at the time of writing.
 - Lessons 4.32 (running sums cost accuracy as √n) and 4.33 (lanes with scalar per-line stages).
-- Follow-ups: the Xeon leg (D1 on `avx512`, D2 with its own limit); the Mac leg by day; arm F; the
-  DCT-III/DST-III route (the standing's largest gap: its read stage pairs and twiddles, its store
-  stage undoes Makhoul's order, both scalar).
+- Follow-ups: r2r planes and volumes as lanes over lines with the read and store stages vectorised
+  across the lanes (pocketfft's 0.39–0.74 on the Xeon); the DCT-III/DST-III route (its read stage
+  pairs and twiddles, its store stage undoes Makhoul's order, both scalar); arm F; a DST-I-only key on
+  the Xeon 6240's class; the Mac leg by day.

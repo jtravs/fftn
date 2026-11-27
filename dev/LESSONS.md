@@ -1177,7 +1177,9 @@ time over 270 planes and volumes on the EPYC (100 slower, up to 1.16; 27 faster)
 stages and the tile's strided writes cost what the shared chain saved. And a runtime stride added
 to those scalar stages' scratch indexing (1 in every per-line plan) cost 5–15 % on small planes
 by itself against the base commit (68 of 340 cases past the band; not diagnosed further, the stride was
-deleted with the lanes). [X85](experiments/X85-r2r-speed.md).
+deleted with the lanes). pocketfft, which runs several lines of a multi-dimensional transform at
+once in vector lanes, pre- and post-processing included, took 0.56 of FFTN's time on the same
+planes and volumes on the Xeon (AVX-512): batch the whole line's work, not only its FFT. [X85](experiments/X85-r2r-speed.md).
 
 ## 5. Threading
 
