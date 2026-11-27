@@ -71,7 +71,8 @@ using runs_t = std::vector<run_spec>;
 
 // The stored position of logical element j of a side with these runs (out of place, along each
 // axis with runs the stored place of its run, elsewhere j itself): false where j is in no run.
-bool stored_at(const runs_t& runs, const std::vector<std::size_t>& j, std::vector<std::size_t>& at) {
+bool stored_at(const runs_t& runs, const std::vector<std::size_t>& j,
+               std::vector<std::size_t>& at) {
   at = j;
   for (std::size_t a = 0; a < j.size(); ++a) {
     bool listed_axis = false;
@@ -135,6 +136,7 @@ struct axes_case {
   bool team_program = false;                   // the plan must have a team program
   runs_t in_runs{};                            // stored runs (out of place only), C axes
   runs_t out_runs{};
+  double in_scale = 1.0; // edges.in.scale: after the input callback, before the transform
 };
 
 // The side's lengths in C order: the complex side of a real transform has n/2 + 1 bins along the
@@ -309,7 +311,7 @@ template <class E> struct cb_context {
   int lanes = 1;
   std::size_t scratch = 0;
   std::size_t block_bytes = 0;
-  runs_t runs; // the side's stored runs, C axes
+  runs_t runs;             // the side's stored runs, C axes
   std::vector<E> captured; // consume: transform t's element q at t product(dims) + q
   std::unique_ptr<std::atomic<int>[]> hits;
   std::atomic<int> errors{0};
@@ -555,6 +557,7 @@ template <class T, transform_kind K> struct axes_run {
     };
     edges.in = {.mul = factor(c.in_factor, in_dims)};
     edges.out = {.mul = factor(c.out_factor, out_dims), .accumulate = c.accumulate};
+    edges.in.scale = c.in_scale;
     if (c.in == in_kind::modify) {
       edges.in.call = {.fn = &modify_in<In>, .scratch_bytes = c.scratch};
     } else if (c.in == in_kind::produce) {
@@ -678,7 +681,7 @@ template <class T, transform_kind K> struct axes_run {
             v = cubic_in(v, q, b);
           }
         }
-        xin[q] = widen(v) * factor_of(fin, c.in_factor, in_dims, j, b);
+        xin[q] = widen(v) * factor_of(fin, c.in_factor, in_dims, j, b) * c.in_scale;
       });
       const std::vector<cd> exact = reference(c, xin);
       std::vector<fftn::test::exact_complex> want;
@@ -1330,8 +1333,78 @@ std::vector<axes_case> run_cases() {
        .in = in_kind::modify,
        .out = out_kind::modify,
        .settings = &k.team,
+       .team_program = true,
        .in_runs = {{.axis = 0, .logical = 4, .stored = 0, .count = 20}},
        .out_runs = {{.axis = 1, .logical = 8, .stored = 0, .count = 40}}},
+      // The input edge's scale after the input callback, before the transform (12.1's order:
+      // read, callback, scale), beside input runs.
+      {.name = "c2c plane, input runs, modify, then the input edge's scale",
+       .kind = c2c,
+       .dims = {8, 12},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .in_runs = rows_two,
+       .in_scale = 0.25},
+      {.name = "r2c volume, input runs, produce, then the input edge's scale",
+       .kind = r2c,
+       .dims = {4, 6, 10},
+       .count = 2,
+       .in = in_kind::produce,
+       .out = out_kind::modify,
+       .in_runs = {{.axis = 0, .logical = 1, .stored = 0, .count = 2}},
+       .in_scale = 3.0},
+      // Runs of one element along an outer axis: nests of one line whose coordinates start past
+      // 0 (the loop of one iteration around them).
+      {.name = "c2c plane, runs of one element along axis 0",
+       .kind = c2c,
+       .dims = {8, 12},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .in_runs = {{.axis = 0, .logical = 5, .stored = 0, .count = 1}},
+       .out_runs = {{.axis = 0, .logical = 3, .stored = 0, .count = 1},
+                    {.axis = 0, .logical = 6, .stored = 1, .count = 1}}},
+      {.name = "c2c volume, runs of one element along the outer axes",
+       .kind = c2c,
+       .dims = {4, 6, 8},
+       .count = 2,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .in_runs = {{.axis = 1, .logical = 4, .stored = 0, .count = 1}},
+       .out_runs = {{.axis = 0, .logical = 2, .stored = 0, .count = 1},
+                    {.axis = 1, .logical = 5, .stored = 0, .count = 1}}},
+      // Runs at the Nyquist end of the half spectrum (bin n/2): an r2c's output, a c2r's input.
+      {.name = "r2c plane, output runs at the Nyquist bin",
+       .kind = r2c,
+       .dims = {6, 12},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .out_runs = {{.axis = 1, .logical = 6, .stored = 0, .count = 1},
+                    {.axis = 0, .logical = 1, .stored = 0, .count = 1}}},
+      {.name = "r2c plane, output runs ending at the Nyquist bin, consume",
+       .kind = r2c,
+       .dims = {6, 12},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::consume,
+       .out_runs = {{.axis = 1, .logical = 4, .stored = 0, .count = 3}}},
+      {.name = "c2r plane, input runs ending at the Nyquist bin",
+       .kind = c2r,
+       .dims = {6, 12},
+       .count = 2,
+       .in = in_kind::modify,
+       .out = out_kind::modify,
+       .in_runs = {{.axis = 1, .logical = 5, .stored = 0, .count = 2}}},
+      {.name = "c2r plane, input runs at the Nyquist bin alone, produce",
+       .kind = c2r,
+       .dims = {6, 12},
+       .count = 2,
+       .in = in_kind::produce,
+       .out = out_kind::consume,
+       .in_runs = {{.axis = 1, .logical = 0, .stored = 0, .count = 1},
+                   {.axis = 1, .logical = 6, .stored = 1, .count = 1}}},
       // r2c: the input's runs on the real rows, the output's on the half spectrum.
       {.name = "r2c plane, runs on both sides, both modify, scale",
        .kind = r2c,
