@@ -14,8 +14,8 @@ the page that states the details. Three kinds of document stand behind it:
   [threading](threading.md), [fusion](fusion.md), [easy](easy.md), [kokkos](kokkos.md),
   [c_api](c_api.md), [building](building.md)) explain one subject each.
 
-Every code block here and on those pages is quoted from a program under `examples/` that the
-build compiles and the tests run.
+Every C and C++ block here and on those pages is quoted from a program under `examples/` that
+the build compiles and the tests run.
 
 FFTN is unreleased: every API may still change before the first tagged release. Parts marked
 **provisional** here, as in their headers, have not yet had the maintainer's review and are
@@ -27,9 +27,9 @@ FFTN is a static library with no dependencies. Build and install it with CMake, 
 `fftn::fftn` ([building](building.md)); pkg-config and FetchContent work too. In C++ include
 `<fftn/fftn.hpp>`, which brings every core header; the OpenMP adapter, the Kokkos adapter and
 the convenience layer have headers of their own (`fftn/omp.hpp`, `fftn/kokkos.hpp`,
-`fftn/easy.hpp`). Compile as C++20 or later. No instruction-set
-flag is needed or wanted: one build carries kernels for every target of its architecture and
-each plan takes the fastest one the processor supports.
+`fftn/easy.hpp`). Compile as C++20 or later. No instruction-set flag is needed or wanted: one
+build carries kernels for every target of its architecture and each plan takes the fastest one
+the processor supports.
 
 ## A first transform
 
