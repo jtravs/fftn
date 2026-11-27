@@ -143,12 +143,6 @@ struct build_settings { // NOLINT(clang-analyzer-optin.performance.Padding)
   const void* out_factor = nullptr;
   // Puts options::scale on the input edge instead of the output edge (c2c only).
   bool scale_on_input = false;
-  // A c2c row's chain with a modifying or producing input callback out of place: the copy (or
-  // the produced row) goes to the output, which the chain then transforms in place, instead of
-  // the workspace block (DESIGN.md 12.3, "The modifying-edge copy"; task 5.3b). Experiment X66
-  // is to decide between the two per target; the other strategies always take the output
-  // (their own use of the block rules it out), the lanes their block's rows.
-  bool callback_copy_out = false;
   // The largest radix of the pass the pairing of an even real line fuses into
   // (strategies/chain.hpp, DESIGN.md 9.1): 0 the rule (plan_core.cpp, fusion_of), 1 never
   // (a separate pass), 16 every codelet pass whatever the line's size.

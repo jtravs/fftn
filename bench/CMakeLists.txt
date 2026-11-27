@@ -364,6 +364,33 @@ if(FFTN_BUILD_TESTS)
                    --options ISA=sse9 --check-only)
   set_tests_properties(bench.fftn_isa_option_refused PROPERTIES PASS_REGULAR_EXPRESSION
     "\"type\":\"error\",\"message\":\"FFTN options: ISA=")
+  # The FFTN backend's callback options (experiment X66): every mode and side on rows, real rows,
+  # planes in place, the interleaved layout and a volume pass their check, the library's arm and
+  # the user's loop alike (the work is the identity in exact arithmetic, and produce and consume
+  # move the data by coordinates).
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/callback_option_cases.txt
+       "id=1 kind=c2c dims=64 batch=3 place=out sign=-1\nid=2 kind=r2c dims=30 batch=2 place=out sign=-1\n"
+       "id=3 kind=c2r dims=32 batch=2 place=out sign=1\nid=4 kind=c2c dims=12x8 batch=4 place=in sign=-1 layout=interleaved\n"
+       "id=5 kind=c2c dims=12x8 batch=4 place=out sign=-1 layout=interleaved\nid=6 kind=r2c dims=8x6x4 batch=1 place=out sign=-1\n")
+  foreach(_opts IN ITEMS "EDGE_CALL=exp" "EDGE_CALL=cubic+EDGE_ARM=loop"
+                         "EDGE_CALL=exp+CALL_SIDE=in+CALL_MODE=produce"
+                         "EDGE_CALL=cubic+CALL_SIDE=in+CALLBACK_BLOCK_BYTES=128"
+                         "EDGE_CALL=exp+CALL_SIDE=in+EDGE_ARM=loop")
+    string(REPLACE "+" " " _spaced "${_opts}")
+    string(REPLACE "=" "_" _name "${_opts}")
+    add_test(NAME bench.fftn_callback_${_name}
+             COMMAND fbench-fftn run --cases ${CMAKE_CURRENT_BINARY_DIR}/callback_option_cases.txt
+                     --options ${_spaced} --check-only)
+    set_tests_properties(bench.fftn_callback_${_name} PROPERTIES
+      PASS_REGULAR_EXPRESSION "\"id\":\"6\",\"status\":\"ok\",[^\n]*\"pass\":true"
+      FAIL_REGULAR_EXPRESSION "\"pass\":false;\"status\":\"error\"")
+  endforeach()
+  add_test(NAME bench.fftn_callback_consume
+           COMMAND fbench-fftn run --cases ${CMAKE_CURRENT_BINARY_DIR}/callback_option_cases.txt
+                   --options "EDGE_CALL=identity CALL_MODE=consume" --check-only)
+  set_tests_properties(bench.fftn_callback_consume PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"id\":\"4\",\"status\":\"unsupported\".*\"id\":\"6\",\"status\":\"ok\",[^\n]*\"pass\":true"
+    FAIL_REGULAR_EXPRESSION "\"pass\":false;\"status\":\"error\"")
   if(TARGET fbench-fftw)
     # Includes the check that describe names the real FFTW library, not this executable.
     add_test(NAME bench.harness_selftest_fftw COMMAND fbench-fftw selftest)
