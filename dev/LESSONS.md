@@ -1138,6 +1138,21 @@ array took 0.07–0.40 of its time. Expected savings from "fusing" (one sweep fe
 Give a callback long contiguous runs, and say in the documentation how to walk them.
 [X66](experiments/X66-block-callbacks.md).
 
+4.31 **A fused route is as fast as its slowest object, whatever traffic it saves; time each object
+against the step it replaces.** The free-space stage as three objects (planes with a prologue
+callback, a spectral pair on the frequency pencils, planes with an epilogue) read a quarter of the
+DRAM lines of the route it replaced (transposes into a plane-major scratch, row chunks, transposes
+back) on an EPYC 7763 and half on a Xeon 6240 at one thread, and still took 1.2–2.6 times its time
+on both, at one thread and at a full socket; at a full Xeon socket it even read more lines than the
+old route (17.6 sweeps of the field against 16.1). A per-step profile found one cause: the (y, x) planes over the field's own
+layout (the frequency axis a stride-1 batch, so lines of 16 adjacent transforms are 256 bytes read
+from rows 12 KB and 4.6 MB apart) ran 4–5 times the tight planes' time plus the transposes, while
+the pencils' pair took 0.17–0.33 of the rows route. Strides that are multiples of 2 KiB (192² ×
+384) cost the Xeon most. The same objects run slab by slab (the y axis alone, then x and the
+pencils per y slab while it is in cache) took 0.31–0.52 of the three objects' time. Traffic
+counts said fusion would win; only the profile said where it lost.
+[X68](experiments/X68-free-space-stage.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /

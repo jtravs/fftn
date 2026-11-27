@@ -147,6 +147,20 @@ one thread unless stated):
   in place before the plan. If you may overwrite the input, run the plan in place (no copy: even
   with your own loop).
 
+**A stage over several axes** (the free-space stage of [DESIGN 12.5](../dev/DESIGN.md), measured
+by experiment [X68](../dev/experiments/X68-free-space-stage.md) on the same two machines):
+
+- **Planes whose stride-1 dimension is a batch are slow at large sizes for now.** Planes (y, x) of
+  a (y, x, ω) array with ω contiguous took 4–5 times the time of the same planes stored tight at
+  384² × 750, more than the transposes they save; the spectral pair on the ω pencils, on the other
+  hand, took a fifth to a third of the time of transposing, transforming the rows and transposing
+  back. Until that is fixed, transpose into tight planes for large fields, or run the y axis alone
+  and the x axis slab by slab while the slab is in cache.
+- **A propagator: precompute it on few threads, compute it on many.** A complex factor array took
+  0.70–0.76 of a callback computing `exp(i φ)` per element at one thread, but 1.43 of it at 64
+  threads on the EPYC 7763, where reading an array as large as the field costs more than the cos
+  and sin.
+
 ## Pipelines
 
 A row pipeline (`pipeline_desc`, `pipeline`) takes each line of one axis through a transform,

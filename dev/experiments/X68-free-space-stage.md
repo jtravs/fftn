@@ -1,7 +1,8 @@
 # X68: the free-space stage as three objects against today's route
 
-- **Status:** running. The decision rules were drafted with 5.3's design (2026-11-26), before
-  anything was built, and amended before the first judging run (below).
+- **Status:** done 2026-11-27 on the Xeon 6240 and the EPYC 7763; the Mac leg and arm W are daytime
+  follow-ups. The decision rules were drafted with 5.3's design (2026-11-26), before anything was
+  built, and amended before the first judging run (below).
 - **Owner:** X68 agent of the lead's night session, 2026-11-27 (task 5.3h)
 - **Phase / task:** 5.3h, on 5.3a–5.3f as built
 
@@ -211,8 +212,171 @@ where an item below makes them precise or changes them.
 
 ## Results
 
-Not run.
+Every arm passed fbench's identity check on every case, and `STAGE_SELFCHECK` (each arm against
+T with work that is not the identity: a cubic term, a propagator that depends on the coordinates,
+a window that depends on the bin) agreed to 1e-12 on the test cases (bench/CMakeLists.txt,
+`bench.fftn_stage_*`). Recorded times are as fbench stored them; nothing was edited.
+
+**Sessions** (commit 71711f20, `bench/x68/x68.py`, 6 rounds of 3 batches each, median statistic,
+arms T, O, Of, G, C and the control T~):
+
+| Machine | Threads | Run | Band | Load |
+|---|---|---|---|---|
+| EPYC 7763 (DMOG node17, GCC 16.2, `avx2`; a shared 64-core allocation beside another user's 32-core job) | 1 | 20261127-044232-ce8d | ±2.84 % | 33–34 |
+| | 8 | 20261127-055642-b144 | ±1.00 % | 34–40 |
+| | 64 (one socket, memory interleaved) | 20261127-061851-2eb8 | ±3.36 % | 40–65 |
+| Xeon 6240 (GCC 14.4, `avx512`; Slurm job 17547 in the `fbench-serial` chain, `-c 36`, never exclusive; taskset on the idler socket, memory bound to its node) | 1 | 20261127-044138-3acb | ±1.27 % | 2–8 |
+| | 8 | 20261127-062235-ce8a | ±1.16 % | 5–65 (2 rounds loaded) |
+| | 18 (one socket) | 20261127-065922-020f | ±1.18 % | 6–11 |
+
+**Ratios** (`bench/x66/score.py`; median paired ratio and 95 % interval; the 384² × 750 case,
+then the geometric mean over the six cases):
+
+| Machine, threads | O/T at 384² | O/T mean | Of/O mean | G/O at 384² | G/O mean | G/T at 384² |
+|---|---|---|---|---|---|---|
+| EPYC, 1 | 1.329 [1.324, 1.334] | 1.388 | 0.757 | 0.959 [0.954, 0.962] | 0.931 | 1.273 |
+| EPYC, 8 | 1.200 [1.195, 1.207] | 1.194 | 1.036 | 0.660 [0.656, 0.663] | 0.694 | 0.792 |
+| EPYC, 64 | 2.587 [2.575, 2.671] | 1.518 | 1.425 | 0.305 [0.293, 0.313] | 0.441 | 0.804 |
+| Xeon, 1 | 1.169 [1.145, 1.188] | 1.615 | 0.696 | 0.795 [0.782, 0.815] | 0.637 | 0.934 |
+| Xeon, 8 | 2.078 [1.996, 2.112] | 1.909 | 0.829 | 0.532 [0.513, 0.564] | 0.549 | 1.101 |
+| Xeon, 18 | 1.885 [1.741, 1.938] | 1.754 | 0.880 | 0.519 [0.505, 0.534] | 0.546 | 0.977 |
+
+O is slower than T beyond the band on 33 of the 36 case-and-width pairs. The three others are the
+EPYC's 128² × 433 at one thread (1.049, inside its ±2.84 % band), its 128² × 433 at 8 threads (0.793, faster) and its 192² × 384 with two components at 64
+(1.013, inside the band). The worst are the Xeon's 192² cases at one thread (2.47, 2.48) and the
+EPYC's 384² at 64 threads (2.59). G is faster than O on every case and width (0.30–0.96). Every
+case's per-case ratios are in the runs.
+
+**Time in sweeps** (`bench/x68/model.py`: each arm's time over arm C's, one in-place sweep of the
+field at that width). At one thread every route is bound by its arithmetic, not by memory: T takes
+53–74 sweeps of time, O 68–135. At full width T comes close to its design: 9.5–12 sweeps of time
+at 384² on the EPYC (64 threads) and 19–20 on the Xeon (18), while O takes 16–40. A sweep of the
+384² field took 24 ms on the EPYC at 64 threads (147 GB/s with memory interleaved) and 35 ms on
+the Xeon at 18 (101 GB/s).
+
+**DRAM traffic** (read sweeps: lines read or read for ownership × 64 / V, one counted execute
+after a warm one, one thread unless stated):
+
+| Case | EPYC T | O | Of | G | C | Xeon T | O | Of | G | C |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 384x384x750-b1 | 17.52 | 4.46 | 8.57 | 3.64 | 1.81 | 16.01 | 7.81 | 9.76 | 4.29 | 1.00 |
+| 384x384x750-b2 | 18.08 | 4.54 | 8.52 | 3.83 | 1.77 | 16.42 | 8.54 | 10.73 | 4.75 | 1.00 |
+| 256x256x433-b1 | 12.87 | 6.23 | 8.25 | 3.12 | 1.80 | 18.81 | 11.56 | 13.79 | 3.92 | 1.00 |
+| 192x192x384-b1 | 17.61 | 4.72 | 8.92 | 3.24 | 1.82 | 15.23 | 16.49 | 23.02 | 3.31 | 1.00 |
+| 192x192x384-b2 | 18.07 | 4.95 | 9.24 | 3.33 | 1.82 | 15.34 | 15.91 | 24.00 | 3.57 | 1.00 |
+| 128x128x433-b1 | 15.15 | 5.79 | 7.68 | 3.14 | 1.82 | 18.57 | 6.57 | 7.77 | 3.18 | 1.00 |
+
+| Case | Xeon, 18 threads: T | O | Of | G | C |
+|---|---|---|---|---|---|
+| 384x384x750-b1 | 16.06 | 17.59 | 25.55 | 5.04 | 1.00 |
+| 384x384x750-b2 | 16.82 | 18.16 | 25.73 | 5.11 | 1.00 |
+| 256x256x433-b1 | 12.50 | 19.46 | 27.28 | 6.02 | 1.00 |
+| 192x192x384-b1 | 14.29 | 15.67 | 23.94 | 3.27 | 1.00 |
+| 192x192x384-b2 | 14.95 | 16.90 | 24.89 | 3.92 | 1.00 |
+| 128x128x433-b1 | 10.61 | 8.56 | 12.39 | 3.97 | 1.00 |
+
+- The EPYC's counters (PMCx044 fills from memory plus PMCx072 L2 prefetches that miss the L3)
+  count one in-place sweep (arm C) as 1.77–1.82 sweeps: they count some lines twice, most likely
+  an L2 prefetch and the demand fill it serves. Divided by C's count, the EPYC reads T 7.1–10.2
+  sweeps, O 2.5–3.5, Of 4.2–5.1 and G 1.7–2.2.
+- The Xeon's counters (perf stat over the process's threads, offcore responses missing the L3:
+  all data reads and all RFOs; campaign record 20261127-044134) count arm C as 1.00 sweep, so its
+  figures are read as they stand. At one thread O read 0.49–0.53 of T's lines at 384² and 0.35 at
+  128², but slightly more than T at 192² (16.5 against 15.2); at 18 threads O read more than T on
+  five of six cases (384²: 17.6 against 16.1), while T's traffic hardly moved with the width (16.0
+  and 16.1 at 384²) and G's stayed at 3.3–6.0. Of read 2–8 sweeps more than O: its factor is read
+  in a pass of its own.
+
+**Where O's time goes** (`STAGE_PROFILE=1`, a diagnosis made after the judging runs had started,
+on commit ccf0fe84, which adds only the profile's stamps to the judged code: DMOG, one thread and eight, each step's mean over three runs,
+campaign record 20261127-051647). At 384² × 750 on the EPYC, one thread:
+
+| Step | T | O | Of | G |
+|---|---|---|---|---|
+| propagator and inverse planes (T: the input crossing, then the planes) | 2957 + 699 | 5117 | 3176 | 4382 (inverse y) |
+| the time line (T: pack, rows, response, rows, crop) | 2029 | 670 (the pencils' pair) | 648 | 1213 (per slab: x, pair, x) |
+| forward planes and finish (T: the planes, then the crossing) | 704 + 481 | 3540 | 3562 | 2876 (forward y) |
+
+and at eight threads the forward planes and finish took 806 ms in O against T's 161 + 181. The
+pencils do what 12.5 promised: the spectral pair on the ω pencils took 0.33 of T's rows route at
+one thread and 0.17 at eight (124 ms against 716). The planes do not: FFTN's (y, x) planes over
+the field's own layout (y and x at strides of n_x n_ω and n_ω elements, ω a stride-1 batch, run as
+lanes over blocks of 16 adjacent transforms) took 4–5 times the time of the same planes stored
+tight, plus the transposes T pays to make them tight. The Xeon's 192² cases (strides of 6144
+bytes and 1.18 MB, multiples of 2 KiB) lost most. The propagator as a callback on those planes
+cost about 2 s more than the factor array at one thread (O's inverse planes 5117 ms against Of's
+3176), so per element it cost about the same as in T's crossing; Of's factor, read as a pass of
+its own over the planes' input, cost more than the callback from eight threads up on the EPYC
+(Of/O 1.04 at 8, 1.43 at 64).
 
 ## Verdict
 
-Not run.
+Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytime follow-up
+(the maintainer's guidance on Mac timing at night).
+
+- **Rule 1, 5.3's acceptance: not met.** At 384² × 750 at full width O took 2.59 of T's time on the
+  EPYC and 1.89 on the Xeon (the bar is 0.80); at one thread 1.33 and 1.17 (bar 0.95). The traffic
+  leg passes on the EPYC (0.25 of T's lines at one thread, where its counters can count) and fails on
+  the Xeon at full width (1.09: 17.6 read sweeps against 16.1; 0.49 at one thread). The stage as
+  three objects moves a quarter to a half of today's DRAM lines on one thread and still takes
+  longer, because its planes are slow, and at a full Xeon socket the same planes read more lines
+  than today's whole route (below).
+- **Rule 2, no loss: failed,** on 33 of 36 case-and-width pairs. The cause is one defect, diagnosed
+  above: FFTN's planes on the free-space layout (ω the stride-1 batch) run 4–5 times the time of
+  the same planes stored tight plus the transposes; the pencils' pair wins (0.17–0.33 of T's rows
+  route). Fixing it is a planner and strategy change with an experiment of its own, beyond 5.3h's
+  reach, so it is recorded as **lead 1** below; leaving it as a lead needs the maintainer's
+  agreement. It extends X66's lead 3 (the same layout's callback blocks).
+- **Rule 3, traffic check: triggered on the Xeon, diagnosed.** On the EPYC O read 4.5 sweeps at
+  384² (2.5 divided by C's count), within 6. On the Xeon it read 7.8 at one thread and 17.6 at 18
+  threads, above 6. The excess is the planes over the free-space layout: of O's three objects only
+  they change their access with the width (the pencils are whole lines in the workspace at any
+  width), T's and G's traffic barely moves with the width (T 16.0 to 16.1, G 4.3 to 5.0), the
+  profile puts O's lost time in the same planes, and at 192² (2 KiB-multiple strides) O re-reads
+  even at one thread (16.5 against T's 15.2). Lines of 16 adjacent transforms (256 bytes) at those
+  strides are evicted before the next pass over them comes back: lead 1. Rule 4 is judged with
+  that cause recorded.
+- **Rule 4, the multi-axis pipeline: proposed by the rule's letter, with a caveat for the
+  maintainer.** G/O at 384² × 750 at full width: 0.305 [0.293, 0.313] on the EPYC and 0.519
+  [0.505, 0.534] on the Xeon, both wholly below 0.85; G/O at every size and width at most 0.961
+  (EPYC, one thread), below 1 + band. Both machines pass the first leg, so by amendment 11 the
+  Mac cannot change it: **a multi-axis pipeline is proposed to the maintainer as a new step, not
+  built.** The caveat: G beats O mostly because G's y and x plans avoid the slow two-axis planes
+  of lead 1, not because the slab grouping saves traffic of its own: G read 3.6 sweeps against
+  O's 4.5 on the EPYC, and on the Xeon 4.3 against 7.8 at one thread and 5.0 against 17.6 at 18,
+  where most of the difference is O's planes re-reading the field. Against today's route G took 0.80 of T's time at 384² at full width on the EPYC and 0.98
+  on the Xeon, and 1.27 and 0.93 at one thread. The proposal below therefore asks for lead 1
+  first and a re-run of G/O on the fixed planes before anything is built.
+- **Rule 5, the propagator (informative):** Of/O 0.76 (EPYC) and 0.70 (Xeon) at one thread, where
+  the cos and sin per element dominate; 1.04 and 0.83 at eight; 1.43 (EPYC, 64) and 0.88 (Xeon, 18)
+  at full width, where the extra array read costs more than the arithmetic on the EPYC. As
+  hypothesised, O_f/O rises above 1 at full width on a machine that is bound by bandwidth there.
+  The advice in `docs/fusion.md`: precompute a fixed propagator when a stage runs on few threads;
+  at full width on a bandwidth-bound machine computing it per element in the callback can win.
+- **Rule 6, FFTW: not judged** (W not built, amendment 4).
+
+**Leads for the maintainer:**
+
+1. **Planes over a stride-1 batch at large strides** (the free-space layout; X66's lead 3). At 384²
+   × 750 the field's (y, x) planes took 4–5 times the tight planes' time (EPYC, one thread: 3540
+   ms against 704 + 481 with T's transposes; eight threads: 806 against 161 + 181), and the Xeon's
+   192² × 384 (strides that are multiples of 2 KiB) 2.5 times T's whole stage at one thread. The
+   lanes over blocks of 16 adjacent transforms read 256 bytes per line from lines 12 KB (x) and 4.6
+   MB (y) apart: a cache line's worth per DRAM page and per TLB entry. Candidates for its own
+   experiment: wider blocks of adjacent transforms (whole cache lines or pages of ω), the x axis
+   slab by slab while a slab is in cache and the y axis on wide blocks (what G does by hand), or
+   transposing internally as the old route does. The stage, the three objects and G are the
+   benchmark for it (`STAGE`, catalogue `x68`).
+2. **The multi-axis pipeline** (rule 4's proposal): a new step after lead 1, with drafted rules:
+   G (or the pipeline) against O on the fixed planes at the four sizes, 1, 8 and full width, on the
+   EPYC, the Xeon and the Mac; build it only if G/O is at most 0.85 at 384² × 750 at full width on
+   two of the three machines and at most 1 + band everywhere, measured after lead 1 is adopted; and
+   G/T at most 0.80 at 384² at full width, so that it beats today's route too.
+3. **A factor on planes' input at full width.** Of's complex factor of the field's size, applied
+   as a pass of its own over the planes' input, cost more than computing cos and sin per element
+   at 64 threads on the EPYC (1.43). A factor of stride 1 along ω could be fused into the planes'
+   first lanes pass, as a row's chain fuses one (12.1).
+
+**Follow-up:** the Mac M5 Max leg (the same campaign, `--place none`, on AC with `pmset -g batt`
+before and after, the model of `bench/x68/model.py` as its traffic estimate) and arm W, by day.
+The lesson is in [LESSONS](../LESSONS.md) 4.31.

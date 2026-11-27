@@ -3835,6 +3835,20 @@ That is what a multi-axis pipeline would do, less its per-call overhead. Fusing 
 into one is worth microseconds against a stage of hundreds of milliseconds, and the client's
 volumes (226 MB and up) never fit a cache, so neither is a reason to build it.
 
+**As measured (task 5.3h, experiment X68, 2026-11-27).** fbench's `STAGE` option builds the stage
+from public objects only (bench/backends/fftn_stage.cpp): today's route (T), the three objects
+above (O; Of with the propagator as a factor), the slab grouping (G). The pencils behaved as
+designed: the spectral pair took 0.17–0.33 of the old route's pack, rows, response, rows and crop.
+The planes did not: over the field's own layout (y and x at strides n_x n_ω and n_ω, ω a stride-1
+batch run as lanes over blocks of 16 adjacent transforms) they took 4–5 times the time of the same
+planes stored tight plus the old route's transposes, so O took 1.2–2.6 times T's time (EPYC 7763
+and Xeon 6240, one thread to a socket) while reading a quarter (EPYC) to a half (Xeon) of its DRAM
+lines at one thread; at a full Xeon socket the planes re-read the field and O read more than T. 5.3's acceptance is
+therefore not met until those planes are fixed (X68's lead 1, a step of its own). G, the same
+objects per y slab, took 0.31–0.52 of O's time at full width; by X68's rule 4 a multi-axis
+pipeline is proposed to the maintainer, not built, behind lead 1, since most of G's gain is that
+its y and x plans avoid the slow two-axis planes.
+
 ---
 
 ## 13. Threading and execution
