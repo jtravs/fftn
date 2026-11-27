@@ -492,10 +492,8 @@ public:
       return;
     }
     const std::size_t bytes = (n * sizeof(cd) + 63) / 64 * 64;
-    void* p = std::aligned_alloc(64, bytes);
-    if (p == nullptr) {
-      throw std::bad_alloc();
-    }
+    // Aligned operator new rather than std::aligned_alloc, which the Windows C runtime lacks.
+    void* p = ::operator new(bytes, std::align_val_t{64});
     std::memset(p, 0, bytes);
     p_.reset(static_cast<cd*>(p));
   }
@@ -504,7 +502,7 @@ public:
 
 private:
   struct release {
-    void operator()(cd* p) const { std::free(p); }
+    void operator()(cd* p) const { ::operator delete(p, std::align_val_t{64}); }
   };
   std::unique_ptr<cd, release> p_;
   std::size_t n_ = 0;
