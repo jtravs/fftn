@@ -1199,6 +1199,20 @@ deleted with the lanes). pocketfft, which runs several lines of a multi-dimensio
 once in vector lanes, pre- and post-processing included, took 0.56 of FFTN's time on the same
 planes and volumes on the Xeon (AVX-512): batch the whole line's work, not only its FFT. [X85](experiments/X85-r2r-speed.md).
 
+4.35 **A scrambled-order mode saves only the reordering step a library would otherwise pay;
+read the program before borrowing prior art's estimate.** Scrambled spectra between a transform
+and its inverse (MKL's scrambled mode, djbfft, PFFFT's unordered transforms) were expected to save
+10–25 % on FFTN's row convolutions. FFTN's pipelines have no reordering step to save: their chains
+are Stockham autosorts, whose passes write each result where the next pass reads it, and its
+depth-first chains fold the four-step transpose into the strided addressing of their first and top
+passes, so `describe()` of every pair showed radix, pairing, edge and copy stages only (stride
+copies, independent of order). The savings a scrambled order seems to offer come from the passes
+next to the middle sharing their data, and they are open to the natural order: in a Stockham
+chain the last pass and the inverse chain's first pass read the same R-tuples (n/R apart), so one
+joined pass can do both; in a four-step pair the forward's top pass and an inverse decimated in
+frequency at the top touch the same index sets. Ask which pass a scrambled order removes before
+designing an API around it. [X9](experiments/X9-scrambled-middle.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
