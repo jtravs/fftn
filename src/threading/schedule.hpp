@@ -525,7 +525,7 @@ struct machine_profile {
 // X35's rule for a private L2 of 2 MiB or more was adopted there only. vendor: the
 // processor's maker, the profile's vendor (unknown by default; t.vendor is not read, so a
 // caller replaying a recording passes planning_vendor(t, ...)), which set_grid_sizes reads for
-// the Intel-only keys (the Xeon 6240's class, 2 MiB of L2).
+// the Intel-only keys (the Xeon 6240's class, 2 MiB of L2) and the AMD-only one (Zen 3's class).
 [[nodiscard]] machine_profile profile_for(const topology& t, bool x86_64 = FFTN_ARCH_X86_64 != 0,
                                           cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 

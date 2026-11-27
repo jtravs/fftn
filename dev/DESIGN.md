@@ -1965,7 +1965,7 @@ to 8, on `avx2`:
   above L1/8, with one top of 4, to 2 L1 for powers of two and to 16 L1 for the rest (X46:
   8192 0.73, 16384 0.84; X51: 20480–122880 0.69–0.86; from L1/2, batches of 4096 lost
   1.03–1.04; powers of two beyond 2 L1 gained nothing against X32's chains);
-- the EPYC 7763's profile (x86-64, private L2 with a large L3) where that L2 is under 1 MiB
+- the EPYC 7763's profile (x86-64, private L2 with a large L3) where that L2 is under 1 MiB, on AMD's cores (section 13.5)
   (Zen 3; Zen 4 and Zen 5, 1 MiB and `avx512`, keep their plans: unmeasured), for lengths
   that are not powers of two, from L2/4 to 4 L2, power-of-two part above L1/4,
   one top of 4 (X51: 12288–122880 and 46080 0.63–0.79; tops of 16 lost 1.2–1.7 on `avx2`'s

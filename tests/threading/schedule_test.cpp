@@ -1536,6 +1536,19 @@ TEST(Schedule, AmdOnlyKeys) {
       .r2r_folded_isa = fftn::isa::avx2,
   };
   EXPECT_EQ(amd_keyed_of(recorded("linux-amd-epyc-7763.sysfs", cpu_vendor::amd)), zen3);
+  // The Intel-only keys stay off on AMD's Zen 3 cores (Schedule.IntelOnlyKeys no longer loops over
+  // them).
+  for (const char* file : {"linux-amd-epyc-7763.sysfs", "linux-gcp-n2d-zen2.sysfs"}) {
+    SCOPED_TRACE(file);
+    const machine_profile p = recorded(file, cpu_vendor::amd);
+    EXPECT_EQ(p.grid_two_odd_part, 0U);
+    EXPECT_EQ(p.grid_three_block, 0U);
+    EXPECT_FALSE(p.adjacent_lanes);
+    EXPECT_FALSE(p.split_complex_rows);
+    EXPECT_TRUE(p.batch_leaf_12);
+    EXPECT_FALSE(p.fit_large_l2);
+    EXPECT_EQ(p.team_state_page, 0U);
+  }
   amd_keyed zen2 = zen3;
   zen2.c2r_packed_bytes = 8 * mib;
   EXPECT_EQ(amd_keyed_of(recorded("linux-gcp-n2d-zen2.sysfs", cpu_vendor::amd)), zen2);
