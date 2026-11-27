@@ -266,8 +266,16 @@ band ±1.51 %; arms F = FFTW, N = FFTN, P = pocketfft): FFTN ÷ FFTW **0.816** (
 1.3 is far from met. By kind and shape (double, geometric means of FFTN ÷ FFTW): rows 0.41–0.78
 for the kinds I, II and IV, 0.95–1.07 for DCT-III, DST-III and the DHT; planes 0.56 (kinds I),
 0.90–0.91 (IV), 1.29–1.71 (II, III, DHT); volumes 1.06–3.10 (DCT-III 2.79, the DHT 3.10);
-strided axes 0.64–1.60. pocketfft ÷ FFTW 1.180 (rows 1.11–2.33, planes 0.59–0.92). The Xeon's
-whole-catalogue standing (Slurm 17563) was still running.
+strided axes 0.64–1.60. pocketfft ÷ FFTW 1.180 (rows 1.11–2.33, planes 0.59–0.92).
+
+**Standing, Xeon 6240, the whole `r2r` catalogue (informative)** (run 20261127-090454-24b7; Slurm
+17563 in the `fbench-serial` chain; code a997ebb8, whose profile folds nothing on Intel; 8 rounds,
+5 loaded, band ±3.95 %; FFTW 3.3.11 with AVX-512 codelets, pocketfft `-march=native`): FFTN ÷ FFTW
+**0.754** (double 0.784, float 0.619), 247 of 946 cases with their whole interval past 1.05 × (1 +
+band). By kind and shape (double): rows 0.43–0.77 for the kinds I, II and IV, 0.83–1.03 for DCT-III,
+DST-III and the DHT; planes 0.49 (kinds I), 0.84 (IV), 1.06–1.29 (II, III, DHT); volumes 0.87–2.32
+(DCT-III 2.10, the DHT 2.32); strided axes 0.53–1.25. pocketfft ÷ FFTW 1.154: rows 1.10–2.13, planes
+0.51–0.94, volumes 0.44–1.06, so on planes and volumes pocketfft leads both.
 
 ## Verdict
 
@@ -288,8 +296,9 @@ whole-catalogue standing (Slurm 17563) was still running.
 - **F, fused stages: not built.** Drafted above; it needs generator pass kinds per route.
 - **C:** with L's stride gone the stages are main's; the remaining differences against c2a6f672
   went both ways on identical plans (code placement in src/core/r2r.cpp).
-- **Q15** stays open: over the EPYC's whole catalogue FFTN ÷ FFTW 0.816 but 275 of 946 cases past the
-  tail limit, planes and volumes of the kinds II, III and the DHT 1.3–3.1; on the Xeon's `x85` cases
+- **Q15** stays open: over the whole catalogue FFTN ÷ FFTW 0.816 on the EPYC and 0.754 on the Xeon,
+  but 275 and 247 of 946 cases past the tail limit, planes and volumes of the kinds II, III and the DHT
+  1.3–3.1 on the EPYC and 1.1–2.3 on the Xeon; on the Xeon's `x85` cases
   FFTN beats FFTW (1.319) but pocketfft takes 0.56 of FFTN's time on planes and volumes. Multi-axis
   r2r is the gap; rows of the kinds I, II and IV are well ahead.
 - Lessons 4.33 (running sums cost accuracy as √n) and 4.34 (lanes with scalar per-line stages).
