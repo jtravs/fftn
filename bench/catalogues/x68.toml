@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X68's cases (dev/experiments/X68-free-space-stage.md): the free-space stage of the
+# FFTN backend's STAGE option (task 5.3h). Each case is a field of `batch` components (1, or 2
+# coupled), each stored as (y, x, w), w the stored frequencies: c2c, rank 3, n_y x n_x x stored, in
+# place, double precision. The time line comes from the client application's catalogue: the 384^2
+# and 192^2 cases are envelopes (a complex line of n_t = stored points, every bin stored: its rows
+# of 750 and 384); the 433-bin cases a real line of n_t = 1728 points with the stored bins a band
+# from bin 1 (its Cartesian filament's planes of 433 and rows of 1728), which the arms are told by
+# STAGE_TIME=433.1728.1. 256^2 has no case in that catalogue: it takes the 433-bin line on the next
+# grid between 192^2 and 384^2. Tier "quick" is the single-component cases.
+
+[catalogue]
+name = "x68"
+
+[[group]]
+name = "x68-384"
+note = "384^2 x 750, envelope (the client's 1.77 GB field), one component and two coupled"
+kind = "c2c"
+dims = ["384x384x750"]
+batch = [1, 2]
+place = "in"
+
+[[group]]
+name = "x68-384-quick"
+kind = "c2c"
+dims = ["384x384x750"]
+place = "in"
+tiers = ["quick"]
+
+[[group]]
+name = "x68-256"
+note = "256^2 x 433, a real line of 1728 points, the band from bin 1"
+kind = "c2c"
+dims = ["256x256x433"]
+place = "in"
+tiers = ["quick"]
+
+[[group]]
+name = "x68-192"
+note = "192^2 x 384, envelope, one component and two coupled"
+kind = "c2c"
+dims = ["192x192x384"]
+batch = [1, 2]
+place = "in"
+
+[[group]]
+name = "x68-192-quick"
+kind = "c2c"
+dims = ["192x192x384"]
+place = "in"
+tiers = ["quick"]
+
+[[group]]
+name = "x68-128"
+note = "128^2 x 433, a real line of 1728 points, the band from bin 1 (the client's Cartesian filament)"
+kind = "c2c"
+dims = ["128x128x433"]
+place = "in"
+tiers = ["quick"]

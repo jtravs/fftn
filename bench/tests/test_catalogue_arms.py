@@ -109,7 +109,7 @@ class RealToReal(unittest.TestCase):
     def test_covers_every_kind_rank_layout_and_precision(self):
         cases = self.cat.cases
         self.assertEqual({c.kind for c in cases}, {"r2r"})
-        self.assertEqual({c.r2r for c in cases}, set(catalogue.R2R_KINDS))
+        self.assertTrue(set(catalogue.R2R_KINDS) <= {c.r2r for c in cases})
         for tier in ("smoke", "full"):
             chosen = self.cat.select(tier)
             for kind in catalogue.R2R_KINDS:
@@ -123,6 +123,12 @@ class RealToReal(unittest.TestCase):
         quick = {c.id for c in self.cat.select("quick")}
         self.assertTrue(quick <= {c.id for c in self.cat.select("tracking")})
 
+    def test_mixed_kinds(self):
+        c = catalogue.Case("r2r", (64, 48), 1, "out", -1, r2r="dct2.dst3")
+        self.assertEqual(c.id, "r2r-dct2.dst3-64x48-b1-op")
+        self.assertTrue(c.line().endswith(" r2r=dct2.dst3"))
+        self.assertTrue(any("." in c.r2r for c in self.cat.cases))
+
     def test_r2r_key_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             for group in (
@@ -130,6 +136,8 @@ class RealToReal(unittest.TestCase):
                 'kind = "c2c"\nr2r = "dct2"\ndims = 8',
                 'kind = "r2r"\nr2r = "dct5"\ndims = 8',
                 'kind = "r2r"\nr2r = "dct1"\ndims = 1',
+                'kind = "r2r"\nr2r = "dct2.dst3"\ndims = 8',
+                'kind = "r2r"\nr2r = "dct2.dct1"\ndims = "8x1"',
             ):
                 path = Path(tmp) / "bad.toml"
                 path.write_text(f'[[group]]\nname = "g"\n{group}\n')
