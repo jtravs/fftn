@@ -3134,6 +3134,34 @@ fbench's `PIPELINE` arms build through `make_pipeline_core` with the build setti
 so `STRATEGY` forces the pair, and gain the valid halves (`PIPE_RUNS`), fan-out (`PIPE_FANOUT`),
 interleaved lines and FFTW's arm (`fbench-fftw PIPELINE=separate`) for X67.
 
+**As built (task 5.2g, the pair rules, 2026-11-27; experiment X67).** The rules take two pairs
+besides the chain pair, each where X67 measured it winning and for what it measured:
+
+- **The depth-first pair** for a `<C, C, C>` line contiguous on both sides from
+  `machine_profile::pipeline_depth_min_kib` to `pipeline_depth_max_kib` of the complex line, on the
+  target `pipeline_depth_isa`, with the tops the forced pair takes (`convolution_depth_tops`; the
+  program X67 timed). Set on the Xeon 6240's class (Intel's cores), avx512: 288 KiB to 2 MiB
+  (18432 to 131072 points in double, from 36864 in float), where the pair took 0.62–0.83 of the
+  chain pair's time with valid halves, fan-out and whole lines. Narrowed to what X67 measured
+  (`depth_measured`): a kernel of stride 1 or none, at most one stored run per side, no prologue or
+  epilogue factor, accumulation or callback. The EPYC 7763's class keeps the chain pair (the pair
+  lost there, as rows' depth-first chains do on avx2).
+- **The lanes pair** for lines one element apart on both sides (a plane's strided axis) from 64
+  points to `machine_profile::pipeline_lanes_adjacent_max` (512 on Zen 3's class, AMD's cores, and
+  on the Xeon 6240's), with a lanes column phase's block only, for a kernel of stride 1 or none
+  and none of what `lanes_pair_refusal` names: 0.46–0.96 of the chain pair's time on the EPYC,
+  0.58–0.72 on the Xeon. Batches of short rows keep the chain pair (the lanes pair took 1.3–2.1 of
+  its time). The rule is keyed by machine class and holds for every target of the machine alike,
+  so the `avx2` and `avx512` targets of one machine never split on it; that is DESIGN 6.2's
+  concern with per-target thresholds where the chain pair fuses the kernel (5.2f's review).
+
+`<T, C, T>` and `<C, T, C>` keep the real chain pairs. The new profile fields sit in the
+padding after existing `bool` fields, so the profile's size and its other fields' offsets are
+unchanged (the plain drivers copy it; their objects disassemble the same). Plans and every
+pipeline outside these two rules keep their programs and bits (probes against `main`). X67's
+verdict and the leads it left (the real pair's middle as a baseline pass, fan-out's copies,
+whole lines against the plans' own strategies, short-row batches) are in its file.
+
 ### 12.3 Block callbacks
 
 ```cpp
@@ -5168,6 +5196,7 @@ to change before a release.
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
 | 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
+| 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. Keyed by machine class, every target alike, so the two targets of one machine never split (DESIGN 6.2) |
 
 ---
 

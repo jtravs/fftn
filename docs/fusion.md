@@ -140,12 +140,13 @@ description can take, and recorded with `wisdom::add` ([planning](planning.md), 
   `direction::backward`); `pipeline<T, C, T>`, r2c then c2r, a real convolution over the
   n/2 + 1 bins (`convolution_rows`); `pipeline<C, T, C>`, c2r then r2c, half spectra in and
   out around a real middle.
-- **Pairs.** Each line runs as the chain pair (for the real kinds, the real chain pair): the
+- **Pairs.** By default each line runs as the chain pair (for the real kinds, the real chain pair): the
   two transforms' chains on a line held in the workspace, a `<C, C, C>` pipeline's complex
   factors of stride 1 fused into the neighbouring pass, every other operation a pass over the
   line in cache. A depth-first pair for long `<C, C, C>` lines and a lanes pair for batches of
-  short `<C, C, C>` lines are built too; the rules take neither yet, measured planning times
-  them where they apply.
+  short `<C, C, C>` lines or a plane's strided lines are built too: the rules take the first for
+  long contiguous lines and the second for strided lines on the processors where experiment X67
+  measured them faster, and measured planning times them wherever they apply.
 - **Stored runs** on the line, both sides (the valid half of a zero-padded convolution, a
   band of bins of a `<C, T, C>` half spectrum).
 - **Fan-out:** several inverses per forward transform, each with its own middle factor and
