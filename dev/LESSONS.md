@@ -1123,6 +1123,20 @@ the forms paid on both machines (0.39–0.76; geometric means EPYC 0.549, Xeon 0
 else moved: a change judged over a mixed target set can hide a clear win in a subset its
 mechanism names in advance. [X65](experiments/X65-edges.md).
 
+4.30 **Fusing two transforms around a pointwise middle saves only the spectrum's round trip,
+which inside L2 is a few per cent; whatever the fused form gives up costs more.** FFTN's row
+convolutions (a transform, a kernel multiply, the inverse, one line at a time in cache) against
+the same work as three calls (two plans and a vectorised loop), at one thread: on the EPYC 7763
+the fused form took 1.00 (double) and 0.99 (float) of the three calls' time over the L2-resident
+lines, and lost up to 1.10 where its middle ran as a baseline vectorised pass while the user's loop
+was compiled for AVX2, up to 1.21 with several inverses per forward, and 1.12–1.25 on whole lines
+and batches of short rows, where the plans keep strategies (batch leaves, the real rows' routes)
+that the fused pair does not; on the Xeon 6240 it took 0.89–0.91 inside L2 but 1.24–1.71 on whole
+long lines, where the separate plans ran the Xeon's depth-first chains. Giving the fused pair the
+same depth-first strategy (0.62–0.83 of the chain pair's time on the Xeon) mattered more than
+the fusion. A fused pipeline must carry every strategy and vectorised kernel its separate parts
+reach before its saved sweep can show. [X67](experiments/X67-row-pipelines.md).
+
 ## 5. Threading
 
 5.1 **Synchronisation costs set the smallest row worth splitting.** Spin barrier /
