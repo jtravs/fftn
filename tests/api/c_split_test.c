@@ -156,8 +156,8 @@ int csplit_refusals(void) {
   fftn_plan* p;
   fftn_wisdom* w;
   fftn_workspace* ws;
-  double re[64] = {0};
-  double im[64] = {0};
+  double re[128] = {0}; /* the input in the first half, the output in the second */
+  double im[128] = {0};
   fftn_split_const_ptr in;
   fftn_split_ptr out;
   fftn_executor none;
@@ -233,8 +233,8 @@ int csplit_refusals(void) {
   ws = fftn_workspace_create(fftn_plan_workspace_bytes(p, 1), NULL);
   in.re = re;
   in.im = im;
-  out.re = re + 32;
-  out.im = im + 32;
+  out.re = re + 64;
+  out.im = im + 64;
   memset(&none, 0, sizeof none);
   serial = none;
   serial.concurrency = csplit_serial_concurrency;
