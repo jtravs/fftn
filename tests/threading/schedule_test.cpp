@@ -793,10 +793,10 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(
       x86("linux-gcp-n2-ice-lake.sysfs", fftn::detail::cpu_vendor::intel).callback_block_bytes,
       24U * 1024U);
-  // The folded DCT-I and DST-I (X85's arm D) up to 257 points on Zen 3's class, AMD's cores only;
+  // The folded DCT-I and DST-I (X85's arm D) up to 129 points on Zen 3's class, AMD's cores only;
   // the extensions everywhere else.
   EXPECT_EQ(machine_profile{}.r2r_folded_max, 0U);
-  EXPECT_EQ(epyc86.r2r_folded_max, 257U);
+  EXPECT_EQ(epyc86.r2r_folded_max, 129U);
   for (const auto v : {fftn::detail::cpu_vendor::intel, fftn::detail::cpu_vendor::unknown}) {
     EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs", v).r2r_folded_max, 0U);
   }

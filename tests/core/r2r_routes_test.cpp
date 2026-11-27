@@ -61,21 +61,20 @@ std::vector<T> run(const fftn::detail::plan_core& core, const std::vector<T>& x,
   return out;
 }
 
-// The lengths whose folded route X85's rule D1 measured within half the r2r tests' rms bound
-// (dev/experiments/X85-r2r-speed.md): odd n up to folded_limit, some of each residue the route
-// branches on, and every odd n to 65 (Rader and Bluestein half lengths among them).
-constexpr std::size_t folded_limit = 257;
+// The longest folded line the profiles set (dev/experiments/X85-r2r-speed.md, rule D1 and the
+// tests' clause): every odd n up to it is checked.
+constexpr std::size_t folded_limit = 129;
 
 TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
   using T = TypeParam;
+  // Every odd n up to the limit by the kind twice (as tests/api/r2r_test.cpp checks every n), the
+  // reference's O(n^2) direct evaluation at every odd n to 65 and some above.
+  const auto against_reference = [](std::size_t n) {
+    return n <= 65 || n == 97 || n == 127 || n == 129 || n == 193 || n % 64 == 1 || n % 64 == 63;
+  };
   std::vector<std::size_t> lengths;
-  for (std::size_t n = 3; n <= 65; n += 2) {
+  for (std::size_t n = 3; n <= folded_limit; n += 2) {
     lengths.push_back(n);
-  }
-  for (const std::size_t n : {97U, 127U, 129U, 193U, 255U, 257U, 385U, 513U, 769U, 1025U}) {
-    if (n <= folded_limit) {
-      lengths.push_back(n);
-    }
   }
   fftn::test::outcome o;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
@@ -92,7 +91,8 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
             static_cast<fftn::test::reference::r2r_type>(kind)};
         const std::array<std::size_t, 1> extents{n};
         const std::vector<fftn::test::exact_real> want =
-            fftn::test::reference::r2r(type, extents, xd);
+            against_reference(n) ? fftn::test::reference::r2r(type, extents, xd)
+                                 : std::vector<fftn::test::exact_real>{};
         build_settings folded;
         folded.profile.r2r_folded_max = static_cast<std::uint16_t>(folded_limit);
         const fftn::shape<T, T> sh = fftn::rows_r2r<T>(n, 1, kind);
@@ -110,7 +110,9 @@ TYPED_TEST(R2rRoutes, FoldedDctOneAndDstOneWithinTheR2rTolerance) {
         const fftn::test::tolerance tol =
             fftn::test::derived_tolerance<T>(big, fftn::test::fftn_bound(big)) +
             fftn::test::input_rounding<T>() * 11.0;
-        o.within(fftn::test::compare<T>(std::span<const T>(y), want), tol, what);
+        if (!want.empty()) {
+          o.within(fftn::test::compare<T>(std::span<const T>(y), want), tol, what);
+        }
         // The kind twice: N times the input, within two transforms.
         const std::vector<T> back = run<T>(*core, y, false);
         std::vector<fftn::test::exact_real> scaled(n);
@@ -218,7 +220,9 @@ TYPED_TEST(R2rRoutes, FoldedRouteUnderLayoutsAndEdges) {
                           : make_plan_core(fftn::detail::view_of(sh), opts, s);
       };
       const auto fold = make(folded);
-      const auto ext = make(build_settings{});
+      build_settings extension;
+      extension.profile.r2r_folded_max = 0; // the host's profile may set it (Zen 3's class)
+      const auto ext = make(extension);
       if (fftn::detail::describe(*fold).find("folded route") == std::string::npos) {
         o.fail(what + ": not on the folded route");
         continue;
@@ -283,8 +287,9 @@ TEST(R2rRoutes, FoldedRouteOnlyWhereItApplies) {
   EXPECT_EQ(text(103, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
   EXPECT_EQ(text(100, r2r_kind::dct1, folded, false).find("folded route"), std::string::npos);
   EXPECT_EQ(text(101, r2r_kind::dct1, folded, true).find("folded route"), std::string::npos);
-  EXPECT_EQ(text(101, r2r_kind::dct1, build_settings{}, false).find("folded route"),
-            std::string::npos);
+  build_settings none;
+  none.profile.r2r_folded_max = 0; // the host's profile may set it (Zen 3's class)
+  EXPECT_EQ(text(101, r2r_kind::dct1, none, false).find("folded route"), std::string::npos);
 }
 
 } // namespace

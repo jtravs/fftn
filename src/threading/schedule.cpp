@@ -234,13 +234,15 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
         std::min<std::size_t>(c.l2.size / 4, std::numeric_limits<std::uint32_t>::max()));
   }
   // X85's arm D (machine_profile::r2r_folded_max): odd DCT-I (from 33 points, core/r2r.cpp) and
-  // DST-I up to 257 points take the folded route on Zen 3's class (AMD's cores; the EPYC 7763,
-  // `avx2`): 257 is rule D1's limit, the largest swept length whose error stays inside half the
-  // r2r tests' bound in both precisions (the route's odd outputs are running sums, its error grows
-  // like sqrt n), and the folded route took 0.784 of the extension's time over the 43 rows,
-  // batches and planes it moves, none slower (the narrowed deciding run 20261127-075715-2887).
+  // DST-I up to 129 points take the folded route on Zen 3's class (AMD's cores; the EPYC 7763,
+  // `avx2`). The route's odd outputs are running sums, its error grows like sqrt n: rule D1's rms
+  // sweep stayed inside half the r2r tests' bound to 257 points, but the tests' largest error of
+  // the kind twice failed at 251 on avx2 (tests/api/r2r_test.cpp, DST-I) and from 261 on the
+  // baseline targets, so the limit is 129, where that ratio is about three quarters of its 251
+  // value. Over the cases up to 257 the route took 0.784 of the extensions' time, none slower (run
+  // 20261127-075715-2887); up to 129 see X85's last deciding run.
   if (zen3_like && p.vendor == cpu_vendor::amd) {
-    p.r2r_folded_max = 257;
+    p.r2r_folded_max = 129;
   }
   if (x86_64 && private_l2 && large_l3 && !large_l2) {
     p.column_wide_bytes = 1024;
