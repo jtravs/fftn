@@ -215,7 +215,11 @@ where an item below makes them precise or changes them.
 Every arm passed fbench's identity check on every case, and `STAGE_SELFCHECK` (each arm against
 T with work that is not the identity: a cubic term, a propagator that depends on the coordinates,
 a window that depends on the bin) agreed to 1e-12 on the test cases (bench/CMakeLists.txt,
-`bench.fftn_stage_*`). Recorded times are as fbench stored them; nothing was edited.
+`bench.fftn_stage_*`). The identity check alone cannot catch an arm that skips work (the work is
+the identity), so that every arm does the same work rests on `STAGE_SELFCHECK` and on review; after
+the second reader asked, it was also run at catalogue sizes (128² × 433 and 192² × 384 with two
+components, arms O, Of and G at one and eight threads, DMOG job 521006): every arm agreed with T to 1e-12 on both cases at both widths.
+Recorded times are as fbench stored them; nothing was edited.
 
 **Sessions** (commit 71711f20, `bench/x68/x68.py`, 6 rounds of 3 batches each, median statistic,
 arms T, O, Of, G, C and the control T~):
@@ -226,7 +230,7 @@ arms T, O, Of, G, C and the control T~):
 | | 8 | 20261127-055642-b144 | ±1.00 % | 34–40 |
 | | 64 (one socket, memory interleaved) | 20261127-061851-2eb8 | ±3.36 % | 40–65 |
 | Xeon 6240 (GCC 14.4, `avx512`; Slurm job 17547 in the `fbench-serial` chain, `-c 36`, never exclusive; taskset on the idler socket, memory bound to its node) | 1 | 20261127-044138-3acb | ±1.27 % | 2–8 |
-| | 8 | 20261127-062235-ce8a | ±1.16 % | 5–65 (2 rounds loaded) |
+| | 8 | 20261127-062235-ce8a | ±1.16 % (the A/A intervals reach 1.6–1.8 %; no verdict changes) | 5–65 (2 rounds loaded) |
 | | 18 (one socket) | 20261127-065922-020f | ±1.18 % | 6–11 |
 
 **Ratios** (`bench/x66/score.py`; median paired ratio and 95 % interval; the 384² × 750 case,
@@ -244,7 +248,9 @@ then the geometric mean over the six cases):
 O is slower than T beyond the band on 33 of the 36 case-and-width pairs. The three others are the
 EPYC's 128² × 433 at one thread (1.049, inside its ±2.84 % band), its 128² × 433 at 8 threads (0.793, faster) and its 192² × 384 with two components at 64
 (1.013, inside the band). The worst are the Xeon's 192² cases at one thread (2.47, 2.48) and the
-EPYC's 384² at 64 threads (2.59). G is faster than O on every case and width (0.30–0.96). Every
+EPYC's 384² at 64 threads with one component (2.59; with two components 1.32: O's two-component
+case cost only 1.32 times its one-component case there, while G's and C's cost about twice).
+Over all cases and widths O/T ranges 0.79–2.59. G is faster than O on every case and width (0.30–0.96). Every
 case's per-case ratios are in the runs.
 
 **Time in sweeps** (`bench/x68/model.py`: each arm's time over arm C's, one in-place sweep of the
@@ -255,7 +261,8 @@ at 384² on the EPYC (64 threads) and 19–20 on the Xeon (18), while O takes 16
 the Xeon at 18 (101 GB/s).
 
 **DRAM traffic** (read sweeps: lines read or read for ownership × 64 / V, one counted execute
-after a warm one, one thread unless stated):
+after a warm one, one thread unless stated; campaign records 20261127-044232 for the EPYC and
+20261127-044134 for the Xeon):
 
 | Case | EPYC T | O | Of | G | C | Xeon T | O | Of | G | C |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -301,8 +308,11 @@ and at eight threads the forward planes and finish took 806 ms in O against T's 
 pencils do what 12.5 promised: the spectral pair on the ω pencils took 0.33 of T's rows route at
 one thread and 0.17 at eight (124 ms against 716). The planes do not: FFTN's (y, x) planes over
 the field's own layout (y and x at strides of n_x n_ω and n_ω elements, ω a stride-1 batch, run as
-lanes over blocks of 16 adjacent transforms) took 4–5 times the time of the same planes stored
-tight, plus the transposes T pays to make them tight. The Xeon's 192² cases (strides of 6144
+lanes over blocks of 16 adjacent transforms) took about 5 times the time of the same planes
+stored tight (3540 ms against 704 at one thread, 806 against 161 at eight), and 2.4–3 times the
+tight planes plus the transposes T pays to make them tight (704 + 481, 161 + 181). G's y plan alone
+over the (x, ω) batch is slow in the same way (4382 and 2876 ms against T's 699 and 704 with the
+propagator and finish included in G's); G gains by running the x axis per slab in cache. The Xeon's 192² cases (strides of 6144
 bytes and 1.18 MB, multiples of 2 KiB) lost most. The propagator as a callback on those planes
 cost about 2 s more than the factor array at one thread (O's inverse planes 5117 ms against Of's
 3176), so per element it cost about the same as in T's crossing; Of's factor, read as a pass of
@@ -315,16 +325,21 @@ Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytim
 (the maintainer's guidance on Mac timing at night).
 
 - **Rule 1, 5.3's acceptance: not met.** At 384² × 750 at full width O took 2.59 of T's time on the
-  EPYC and 1.89 on the Xeon (the bar is 0.80); at one thread 1.33 and 1.17 (bar 0.95). The traffic
-  leg passes on the EPYC (0.25 of T's lines at one thread, where its counters can count) and fails on
-  the Xeon at full width (1.09: 17.6 read sweeps against 16.1; 0.49 at one thread). The stage as
+  EPYC (1.32 with two components) and 1.89 on the Xeon (the bar is 0.80); at one thread 1.33 and
+  1.17 (bar 0.95). The traffic leg passes on the EPYC (0.25 of T's lines at one thread, where its
+  counters can count; its double counting may not be uniform across access patterns, so this is
+  weaker evidence than the Xeon's exact counts) and fails on the Xeon at full width (1.10: 17.6
+  read sweeps against 16.1; 0.49 at one thread). The stage as
   three objects moves a quarter to a half of today's DRAM lines on one thread and still takes
   longer, because its planes are slow, and at a full Xeon socket the same planes read more lines
   than today's whole route (below).
-- **Rule 2, no loss: failed,** on 33 of 36 case-and-width pairs. The cause is one defect, diagnosed
-  above: FFTN's planes on the free-space layout (ω the stride-1 batch) run 4–5 times the time of
-  the same planes stored tight plus the transposes; the pencils' pair wins (0.17–0.33 of T's rows
-  route). Fixing it is a planner and strategy change with an experiment of its own, beyond 5.3h's
+- **Rule 2, no loss: failed,** on 33 of 36 case-and-width pairs. The main cause, diagnosed above on
+  the EPYC at one and eight threads: FFTN's planes on the free-space layout (ω the stride-1 batch)
+  take about 5 times the tight planes' time, 2.4–3 times the tight planes plus T's transposes; the
+  pencils' pair wins (0.17–0.33 of T's rows route). The profile does not cover full width: at 64
+  threads on the EPYC O's one-component 384² case (2.59) lost far more than its two-component case
+  (1.32), an extra effect at one component, likely how the planes' work is split among the threads,
+  that is left with lead 1 unexplained. Rule 1 fails either way. Fixing it is a planner and strategy change with an experiment of its own, beyond 5.3h's
   reach, so it is recorded as **lead 1** below; leaving it as a lead needs the maintainer's
   agreement. It extends X66's lead 3 (the same layout's callback blocks).
 - **Rule 3, traffic check: triggered on the Xeon, diagnosed.** On the EPYC O read 4.5 sweeps at
@@ -341,32 +356,37 @@ Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytim
   [0.505, 0.534] on the Xeon, both wholly below 0.85; G/O at every size and width at most 0.961
   (EPYC, one thread), below 1 + band. Both machines pass the first leg, so by amendment 11 the
   Mac cannot change it: **a multi-axis pipeline is proposed to the maintainer as a new step, not
-  built.** The caveat: G beats O mostly because G's y and x plans avoid the slow two-axis planes
-  of lead 1, not because the slab grouping saves traffic of its own: G read 3.6 sweeps against
-  O's 4.5 on the EPYC, and on the Xeon 4.3 against 7.8 at one thread and 5.0 against 17.6 at 18,
-  where most of the difference is O's planes re-reading the field. Against today's route G took 0.80 of T's time at 384² at full width on the EPYC and 0.98
+  built.** The caveat: G does not avoid lead 1's slow layout. Its y plan over the (x, ω) batch is
+  itself slow (on the EPYC at one thread 4382 and 2876 ms with the propagator and finish, against
+  T's tight planes 699 and 704), and the y axis at a 4.6 MB stride is lead 1's main target. G gains
+  by doing the x axis per slab, in cache, instead of a pass over the whole field: it read 3.6 sweeps
+  against O's 4.5 on the EPYC, and on the Xeon 4.3 against 7.8 at one thread and 5.0 against 17.6
+  at 18. Against today's route G took 0.80 of T's time at 384² at full width on the EPYC and 0.98
   on the Xeon, and 1.27 and 0.93 at one thread. The proposal below therefore asks for lead 1
   first and a re-run of G/O on the fixed planes before anything is built.
 - **Rule 5, the propagator (informative):** Of/O 0.76 (EPYC) and 0.70 (Xeon) at one thread, where
   the cos and sin per element dominate; 1.04 and 0.83 at eight; 1.43 (EPYC, 64) and 0.88 (Xeon, 18)
   at full width, where the extra array read costs more than the arithmetic on the EPYC. As
   hypothesised, O_f/O rises above 1 at full width on a machine that is bound by bandwidth there.
-  The advice in `docs/fusion.md`: precompute a fixed propagator when a stage runs on few threads;
-  at full width on a bandwidth-bound machine computing it per element in the callback can win.
+  On the Xeon the factor still won at 18 threads (0.88), and the EPYC was even at 8 (1.04). The
+  advice in `docs/fusion.md`: precompute a fixed propagator; only on a machine bound by bandwidth
+  at full width (the EPYC at 64 threads here) did computing it per element in the callback win.
 - **Rule 6, FFTW: not judged** (W not built, amendment 4).
 
 **Leads for the maintainer:**
 
 1. **Planes over a stride-1 batch at large strides** (the free-space layout; X66's lead 3). At 384²
-   × 750 the field's (y, x) planes took 4–5 times the tight planes' time (EPYC, one thread: 3540
-   ms against 704 + 481 with T's transposes; eight threads: 806 against 161 + 181), and the Xeon's
+   × 750 the field's (y, x) planes took about 5 times the tight planes' time and 2.4–3 times the
+   tight planes plus T's transposes (EPYC, one thread: 3540 ms against 704, and 704 + 481 with the
+   transposes; eight threads: 806 against 161, and 161 + 181), and the Xeon's
    192² × 384 (strides that are multiples of 2 KiB) 2.5 times T's whole stage at one thread. The
    lanes over blocks of 16 adjacent transforms read 256 bytes per line from lines 12 KB (x) and 4.6
    MB (y) apart: a cache line's worth per DRAM page and per TLB entry. Candidates for its own
    experiment: wider blocks of adjacent transforms (whole cache lines or pages of ω), the x axis
    slab by slab while a slab is in cache and the y axis on wide blocks (what G does by hand), or
-   transposing internally as the old route does. The stage, the three objects and G are the
-   benchmark for it (`STAGE`, catalogue `x68`).
+   transposing internally as the old route does. The extra loss at one component at 64 threads
+   on the EPYC (2.59 against 1.32 with two) belongs here too, unexplained. The stage, the three
+   objects and G are the benchmark for it (`STAGE`, catalogue `x68`).
 2. **The multi-axis pipeline** (rule 4's proposal): a new step after lead 1, with drafted rules:
    G (or the pipeline) against O on the fixed planes at the four sizes, 1, 8 and full width, on the
    EPYC, the Xeon and the Mac; build it only if G/O is at most 0.85 at 384² × 750 at full width on
@@ -379,4 +399,4 @@ Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytim
 
 **Follow-up:** the Mac M5 Max leg (the same campaign, `--place none`, on AC with `pmset -g batt`
 before and after, the model of `bench/x68/model.py` as its traffic estimate) and arm W, by day.
-The lesson is in [LESSONS](../LESSONS.md) 4.31.
+The lesson is in [LESSONS](../LESSONS.md) 4.32.

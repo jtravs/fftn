@@ -18,7 +18,7 @@
 // process with `-D -1 --control fifo:CTL,ACK`: the harness enables perf's counters (every thread
 // of the process, any events perf takes, uncore included where allowed) over the same executes
 // and reports how many it counted ("calls"); perf's totals divided by them are per call. One
-// case per process, since perf's totals cover the process (bench/x68/traffic.py).
+// case per process, since perf's totals cover the process (bench/x68/x68.py).
 //
 // Every result is one JSON line on standard output. The driver (bench/fbench.py) owns the
 // statistics; this program measures one process and says what it measured.
@@ -484,7 +484,11 @@ public:
   void enable() const override { command("enable\n"); }
   void disable() const override { command("disable\n"); }
   [[nodiscard]] std::string per_call(std::int64_t calls) const override {
-    return fbench::json().integer("calls", calls).str("counted_by", "perf").object();
+    return fbench::json()
+        .integer("calls", calls)
+        .str("counted_by", "perf")
+        .boolean("counted", ok_)
+        .object();
   }
 
 private:
@@ -492,10 +496,13 @@ private:
   void command(std::string_view text) const {
 #if FBENCH_PERF_CONTROL
     if (write(ctl_, text.data(), text.size()) != static_cast<ssize_t>(text.size())) {
+      ok_ = false; // perf did not get the command: the counts are not over the executes
       return;
     }
     std::array<char, 16> buf{};
-    static_cast<void>(read(ack_, buf.data(), buf.size()));
+    if (read(ack_, buf.data(), buf.size()) <= 0) {
+      ok_ = false;
+    }
 #else
     static_cast<void>(text);
 #endif
@@ -513,6 +520,7 @@ private:
   }
   int ctl_ = -1;
   int ack_ = -1;
+  mutable bool ok_ = true; // every command was sent and acknowledged
 };
 
 // ---- One case --------------------------------------------------------------------------

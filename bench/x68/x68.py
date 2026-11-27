@@ -48,6 +48,7 @@ placement and load of each run, and the traffic per arm and case.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -169,6 +170,20 @@ def placement(place: str, threads: int) -> tuple[list[str], dict]:
 def arm_specs(build: str, arms: list[str], threads: int) -> list[str]:
     extra = f"+THREADS={threads}" if threads > 1 else ""
     return [f"{a}={LIBRARY}:{build}+STAGE={a}+STAGE_TIME={STAGE_TIME}{extra}" for a in arms]
+
+
+def cpuset() -> dict:
+    """This process's CPUs and memory nodes (Linux), recorded with every run."""
+    out: dict = {}
+    with contextlib.suppress(AttributeError, OSError):
+        out["cpus"] = sorted(os.sched_getaffinity(0))
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("Mems_allowed_list:"):
+                out["mems"] = line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return out
 
 
 def load_average() -> float:
@@ -391,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
             env = dict(os.environ)
             if threads > 1:
                 env.update(OMP_PLACES="cores", OMP_PROC_BIND="close")
-            entry = {"placement": chosen, "load_before": load_average()}
+            entry = {"placement": chosen, "cpuset": cpuset(), "load_before": load_average()}
             entry.update(run_timing(args, threads, prefix, env))
             entry["load_after"] = load_average()
             record["timing"].append(entry)

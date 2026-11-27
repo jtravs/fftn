@@ -151,15 +151,18 @@ one thread unless stated):
 by experiment [X68](../dev/experiments/X68-free-space-stage.md) on the same two machines):
 
 - **Planes whose stride-1 dimension is a batch are slow at large sizes for now.** Planes (y, x) of
-  a (y, x, ω) array with ω contiguous took 4–5 times the time of the same planes stored tight at
-  384² × 750, more than the transposes they save; the spectral pair on the ω pencils, on the other
+  a (y, x, ω) array with ω contiguous took about 5 times the time of the same planes stored tight
+  at 384² × 750, and 2.4–3 times the tight planes plus the transposes they save; the spectral pair on the ω pencils, on the other
   hand, took a fifth to a third of the time of transposing, transforming the rows and transposing
-  back. Until that is fixed, transpose into tight planes for large fields, or run the y axis alone
-  and the x axis slab by slab while the slab is in cache.
-- **A propagator: precompute it on few threads, compute it on many.** A complex factor array took
-  0.70–0.76 of a callback computing `exp(i φ)` per element at one thread, but 1.43 of it at 64
-  threads on the EPYC 7763, where reading an array as large as the field costs more than the cos
-  and sin.
+  back. Until that is fixed, transpose into tight planes for large fields. Running the y axis
+  alone and the x axis slab by slab while the slab is in cache matched or beat the transposes only
+  at full width (0.80 of their time on the EPYC 7763, 0.98 on the Xeon 6240, at 384² × 750); at one
+  thread it took 0.92–1.54 of their time (1.19–1.54 at 192²).
+- **A propagator: precompute it.** A complex factor array took 0.70–0.76 of a callback computing
+  `exp(i φ)` per element at one thread, and 0.83–0.88 at 8 and 18 threads on the Xeon 6240. Only
+  at a full socket of the EPYC 7763 (64 threads), where reading an array as large as the field
+  costs more than the cos and sin, did the callback win (the factor took 1.43 of its time; at 8
+  threads the two were even, 1.04).
 
 ## Pipelines
 

@@ -338,7 +338,7 @@ The `threads` catalogue holds the shapes that exercise threading's rules (single
 few rows, leftover rows after whole rounds, many rows, small jobs, planes and volumes), for
 threaded arms; its groups are named after the rule they exercise. The `pipelines` catalogue
 holds convolution rows for the FFTN backend's `PIPELINE` arms, and `x67` experiment X67's
-(its header names the options and filter of each group).; the `x68` catalogue
+(its header names the options and filter of each group). The `x68` catalogue holds
 the free-space stage's fields for its `STAGE` arms.
 `--catalogue` takes a name under `catalogues/` or any path, so client catalogues can live
 anywhere.
