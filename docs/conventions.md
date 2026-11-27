@@ -732,7 +732,8 @@ bit, so the accuracy and "Determinism" below are the interleaved kinds'. The wor
 transform more. Not built yet: rows on other strategies than the chain (the lanes, the grid and
 the depth-first chains; `describe()` names the strategy the plan on interleaved data takes),
 edges, stored runs, measured planning and wisdom (split plans are planned by the rules, and
-`describe()` says so; `wisdom::add` takes none), and split data in the C API.
+`describe()` says so; `wisdom::add` takes none). The C API has split plans too
+([c_api.md](c_api.md), "Split complex").
 
 ## In place
 

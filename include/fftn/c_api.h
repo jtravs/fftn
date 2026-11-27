@@ -18,7 +18,8 @@
  * - **Data** are passed as `void*`: complex values are interleaved pairs (real part first),
  *   so arrays of C99 `double _Complex`, C++ `std::complex<double>` and Fortran
  *   `complex(c_double_complex)` pass unchanged. The caller passes arrays of the plan's kind
- *   and precision; nothing checks it.
+ *   and precision; nothing checks it. Split-complex data, two arrays of reals, have their own
+ *   pointers and executions (fftn_split_ptr, fftn_execute_split; provisional).
  * - **Errors.** No exception crosses into C. A function that constructs something returns
  *   NULL, or a status, and fills the caller's fftn_error, if one is given, with a code and the
  *   message of the C++ exception it caught. There is no thread-local "last error".
@@ -174,6 +175,13 @@ typedef struct fftn_shape {
   const fftn_r2r_kind* r2r_kinds; /**< FFTN_R2R: rank kinds, one per axis; otherwise NULL */
   size_t run_count;               /**< the number of stored runs; 0 for none */
   const fftn_stored_run* runs;    /**< run_count stored runs */
+  /**
+   * Nonzero: the complex sides are split-complex arrays, executed through the _split forms
+   * (fftn_execute_split; provisional, "Split complex" below), as fftn::split_complex<T> makes
+   * them in C++; their strides and distances count reals. FFTN_C2C, FFTN_R2C and FFTN_C2R only.
+   * 0: interleaved.
+   */
+  int split;
 } fftn_shape;
 
 /** The instruction sets, fftn::isa, for fftn_options::force_isa and fftn_isa_name. */
@@ -254,8 +262,13 @@ FFTN_C_API fftn_options fftn_options_default(void) FFTN_C_NOEXCEPT;
  * constructor throws std::invalid_argument, and also when `shape` is NULL, a field holds a
  * value that is not one of its enumerators (kind, precision, direction of FFTN_C2C, an
  * r2r_kinds entry, a run's where, options->force_isa, options->effort), an array is NULL
- * while its count is not 0, or r2r_kinds is NULL for FFTN_R2R or not NULL for another kind.
- * Fails with FFTN_ERROR_OUT_OF_MEMORY when memory runs out. `error` may be NULL.
+ * while its count is not 0, r2r_kinds is NULL for FFTN_R2R or not NULL for another kind, or
+ * split is nonzero for FFTN_R2R. Fails with FFTN_ERROR_OUT_OF_MEMORY when memory runs out.
+ * `error` may be NULL.
+ *
+ * A plan of a split shape (shape->split nonzero) is executed through the _split forms only
+ * (fftn_execute_split and the others): an interleaved form given a split plan ends the program
+ * with a message on stderr, since the plan's imaginary arrays would be missing.
  */
 FFTN_C_API fftn_plan* fftn_plan_create(const fftn_shape* shape, const fftn_options* options,
                                        fftn_error* error) FFTN_C_NOEXCEPT;
@@ -382,7 +395,9 @@ FFTN_C_API size_t fftn_wisdom_text(const fftn_wisdom* wisdom, char* buffer,
 
 /**
  * Records the program of `plan`, fftn::wisdom::add(plan). Returns FFTN_OK, or
- * FFTN_ERROR_OUT_OF_MEMORY with `error` filled.
+ * FFTN_ERROR_OUT_OF_MEMORY with `error` filled, or FFTN_ERROR_INVALID_ARGUMENT for a plan of
+ * split-complex data, whose programs wisdom does not record (C++ does not offer
+ * wisdom::add for them; provisional, "Split complex" below).
  */
 FFTN_C_API int fftn_wisdom_add(fftn_wisdom* wisdom, const fftn_plan* plan,
                                fftn_error* error) FFTN_C_NOEXCEPT;
@@ -550,8 +565,9 @@ FFTN_C_API fftn_edge fftn_edge_default(void) FFTN_C_NOEXCEPT;
  *
  * Fails as fftn_plan_create does, and with FFTN_ERROR_INVALID_ARGUMENT where the C++ constructor
  * refuses the edges (the message names the C++ field), where a factor's kind or a callback's
- * mode is not one of its enumerators, and where a stride array is NULL with a count that is not
- * 0. The edges' stride arrays are borrowed for the call only; their callbacks are kept.
+ * mode is not one of its enumerators, where a stride array is NULL with a count that is not
+ * 0, and for a split shape with edges, which C++ does not offer yet (the message names
+ * `edges`). The edges' stride arrays are borrowed for the call only; their callbacks are kept.
  */
 FFTN_C_API fftn_plan* fftn_plan_create_edges(const fftn_shape* shape, const fftn_options* options,
                                              const fftn_plan_edges* edges,
@@ -708,6 +724,74 @@ FFTN_C_API fftn_transform_range fftn_pipeline_transforms_of(const fftn_pipeline*
 FFTN_C_API int fftn_pipeline_execute_on(const fftn_pipeline* pipeline, const void* in, void* out,
                                         const fftn_executor* executor, fftn_workspace* workspace,
                                         const fftn_exec_args* args) FFTN_C_NOEXCEPT;
+
+/* ---- Split complex (the C form of fftn/split.hpp) ----
+ *
+ * Provisional (dev/DESIGN.md 5.9, "Split complex", and 18.2 "Phase 6", Q28-Q31): complex values
+ * kept as two arrays of reals, as fftn::split_complex<T> and fftn::split_ptr<T> keep them in C++.
+ * A plan of a shape whose `split` field is nonzero reads or writes its complex sides as such
+ * arrays, and is executed through the forms below; docs/conventions.md ("Split complex") states
+ * the layout rules and docs/c_api.md ("Split complex") quotes a compiled C example. Split plans
+ * take no edges, stored runs or wisdom, and r2c and c2r split plans are not in place, as in C++. */
+
+/**
+ * The output arrays of one split execution, fftn::split_ptr<T>, in the plan's precision: `re`
+ * addresses the real part of element 0 of transform 0 and `im` its imaginary part, each laid
+ * out by the shape's output strides and distances (counted in reals). On a real output (c2r)
+ * `re` is the real array and `im` is not read (NULL by convention).
+ */
+typedef struct fftn_split_ptr {
+  void* re; /**< the real parts, or a real side's array */
+  void* im; /**< the imaginary parts; not read on a real side */
+} fftn_split_ptr;
+
+/**
+ * The input arrays of one split execution, fftn::split_ptr<const T>: as fftn_split_ptr, read
+ * only. On a real input (r2c) `re` is the real array and `im` is not read.
+ */
+typedef struct fftn_split_const_ptr {
+  const void* re; /**< the real parts, or a real side's array */
+  const void* im; /**< the imaginary parts; not read on a real side */
+} fftn_split_const_ptr;
+
+/**
+ * The split fftn::plan::execute(in, out, ws): every transform of the batch, serially, for a plan
+ * of a split shape.
+ *
+ * Preconditions: those of fftn_execute and of fftn::split_ptr. The arrays of a side may lie
+ * anywhere relative to each other; an output's arrays overlap neither each other nor an input
+ * array, unless the plan is in place (c2c only), where `in.re == out.re` and `in.im == out.im`.
+ * An `im` that is NULL on a split side ends the program with a message on stderr naming
+ * split_ptr::im; a plan of an interleaved shape, which is executed through the forms without the
+ * suffix, ends it with a message too.
+ */
+FFTN_C_API void fftn_execute_split(const fftn_plan* plan, fftn_split_const_ptr in,
+                                   fftn_split_ptr out, fftn_workspace* workspace) FFTN_C_NOEXCEPT;
+
+/**
+ * The split fftn::plan::execute_transforms: `count` transforms from transform `first`, serially;
+ * `in` and `out` address transform 0, as for fftn_execute_split, whose preconditions hold.
+ */
+FFTN_C_API void fftn_execute_transforms_split(const fftn_plan* plan, size_t first, size_t count,
+                                              fftn_split_const_ptr in, fftn_split_ptr out,
+                                              fftn_workspace* workspace) FFTN_C_NOEXCEPT;
+
+/**
+ * The split team fftn::plan::execute: fftn_execute_team for a split plan, every member passing
+ * the same arrays; the output is bitwise that of fftn_execute_split.
+ */
+FFTN_C_API void fftn_execute_team_split(const fftn_plan* plan, fftn_split_const_ptr in,
+                                        fftn_split_ptr out, fftn_team team,
+                                        fftn_workspace* workspace,
+                                        fftn_completion done) FFTN_C_NOEXCEPT;
+
+/**
+ * The split executor fftn::plan::execute: fftn_execute_on for a split plan, with its statuses and
+ * preconditions; the output is bitwise that of fftn_execute_split.
+ */
+FFTN_C_API int fftn_execute_on_split(const fftn_plan* plan, fftn_split_const_ptr in,
+                                     fftn_split_ptr out, const fftn_executor* executor,
+                                     fftn_workspace* workspace) FFTN_C_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */
