@@ -87,8 +87,13 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // same caches (Zen 4c and Zen 5c, 1 MiB of L2 and of L3 per CPU with SMT, match the Xeon 6240's
   // key). The Xeon 6240's class (X34, X39, X46, X50, X51, X58, X61, X63, X75, X78) and the
   // 2 MiB-L2 key (X35, X55, X58, X64, X69, X70) were measured on Intel's cores only; every other
-  // vendor, unknown included, keeps those fields' defaults there.
+  // vendor, unknown included, keeps those fields' defaults there. Likewise Zen 3's class (below,
+  // zen3_like: X51, X59, X60, X62, X63, X65, X67, X72, X73, X85) was measured on AMD's cores only
+  // (the EPYC 7763; Zen 2 in X64's and X81's screens), and an Intel core with a private L2 under
+  // 1 MiB and 2 MiB of L3 per CPU (a client part, a small VM) matches its caches: the maintainer
+  // keyed it to AMD on 2026-11-27.
   const bool intel = p.vendor == cpu_vendor::intel;
+  const bool amd = p.vendor == cpu_vendor::amd;
   if (c.l1d.size != 0) {
     p.grid_min_bytes = c.l1d.size;
     p.grid_block_bytes = c.l1d.size;
@@ -159,12 +164,16 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (x86_64 && private_l2 && !large_l2) {
     p.team_volume_planes = true;
   }
-  // X59 arm R6 (machine_profile::fair_line_runs), only where it was measured: x86-64 with a
-  // private L2 under 1 MiB and a large L3 (Zen 3's CCX), as X51's arm E, and a cluster-shared
-  // L2 (Apple). Zen 4 and Zen 5 (1 MiB of L2, `avx512`) share the large-L3 branch, unmeasured,
-  // and keep the guided runs; so do the Xeon 6240's profile, where it lost, and Granite Rapids.
-  const bool zen3_like =
-      x86_64 && private_l2 && large_l3 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024;
+  // Zen 3's class: x86-64 with a private L2 under 1 MiB and a large L3 (the EPYC 7763's CCX; Zen
+  // 2's too), on AMD's cores only (the maintainer, 2026-11-27: every rule keyed to it was measured
+  // on AMD's cores alone). Another vendor's cores with those caches, unknown included, keep the
+  // large-L3 branch's fields (X29, X32, X36, X43, X57) and the defaults of the class's own.
+  // X59 arm R6 (machine_profile::fair_line_runs), only where it was measured: Zen 3's class, as
+  // X51's arm E, and a cluster-shared L2 (Apple). Zen 4 and Zen 5 (1 MiB of L2, `avx512`) share
+  // the large-L3 branch, unmeasured, and keep the guided runs; so do the Xeon 6240's profile,
+  // where it lost, and Granite Rapids.
+  const bool zen3_like = amd && x86_64 && private_l2 && large_l3 && c.l2.size != 0 &&
+                         c.l2.size < std::size_t{1024} * 1024;
   // X61 (machine_profile::adjacent_lanes), only where it was measured and passed: the Xeon
   // 6240's class (x86-64, a private L2 below 2 MiB without Zen 3's large L3 per core) and Apple
   // (a cluster-shared L2), both with a team running the chain, which Apple's unmeasured 8 lanes
@@ -179,12 +188,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   if (zen3_like || (c.l2.shared_by != 0 && !private_l2)) {
     p.fair_line_runs = true;
   }
-  // X73 (machine_profile::anchored_runs), where it was measured: Zen 3's class (16 unpinned
-  // threads: out-of-place batches 0.32-0.38 of their time), X74, Apple (6 threads on the M5
-  // Max: the standard batches 0.87-0.97, the client catalogue 0.996, none slower) and, X79,
-  // the Xeon 6240's class (X61's key, Intel's cores only) once the team state had pages of its
-  // own: X74's one loss, c2c 864 x 384 at 16 threads, was the state's page shared with the plan's
-  // twiddles (X76).
+  // X73 (machine_profile::anchored_runs), where it was measured: Zen 3's class (AMD's cores; 16
+  // unpinned threads: out-of-place batches 0.32-0.38 of their time; Zen 2 kept it, X81), X74, Apple
+  // (6 threads on the M5 Max: the standard batches 0.87-0.97, the client catalogue 0.996, none
+  // slower) and, X79, the Xeon 6240's class (X61's key, Intel's cores only) once the team state had
+  // pages of its own: X74's one loss, c2c 864 x 384 at 16 threads, was the state's page shared with
+  // the plan's twiddles (X76).
   const bool xeon6240_like = intel && x86_64 && private_l2 && !large_l2 && !large_l3;
   if (zen3_like || apple_like || xeon6240_like) {
     p.anchored_runs = true;
@@ -193,7 +202,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // factor edges run in the edge driver's batched forms, where it was measured: Zen 3's class
   // (EPYC 7763, `avx2`; AMD's cores only, by the maintainer's policy that a rule measured on one
   // vendor is keyed to it) and the Xeon 6240's (`avx512`, Intel's cores only).
-  if ((zen3_like && p.vendor == cpu_vendor::amd) || xeon6240_like) {
+  if (zen3_like || xeon6240_like) {
     p.edge_batched_forms = edge_forms_reach::leaf_rows;
   }
   // Experiment X67 (machine_profile::pipeline_depth_min_kib): <C, C, C> pipelines' lines on the
@@ -214,7 +223,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // Each on processors whose best target is the one measured (avx2 on Zen 3, avx512 on the Xeon):
   // a key of the machine, so that both targets of one machine take the rule alike, and an Intel
   // core of the Xeon's cache class without avx512 keeps the chain pair (AGENTS.md section 6).
-  if (zen3_like && p.vendor == cpu_vendor::amd) {
+  if (zen3_like) {
     p.pipeline_lanes_adjacent_max = 512;
     p.pipeline_lanes_isa = fftn::isa::avx2;
   }
@@ -243,7 +252,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // where that ratio is about three quarters of its 251 value. Over the 35 cases it moves the
   // route took 0.794 of the extensions' time, none slower (the deciding run
   // 20261127-083621-be45).
-  if (zen3_like && p.vendor == cpu_vendor::amd) {
+  if (zen3_like) {
     p.r2r_folded_max = 129;
     p.r2r_folded_isa = fftn::isa::avx2;
   }
@@ -340,7 +349,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // to 2^19 (1.17), so the limit is the L1's size. Experiment X62, on Zen 3's class only
     // (zen3_like; Zen 4 and 5 and the Ice Lake VMs share this branch, unmeasured): half the
     // L1, and a stage over C copies over the whole line: 1013-1021 and 1018 took 0.93 of
-    // their time with M = 2160 for 2048, 131071 0.98 (268800 for 276480).
+    // their time with M = 2160 for 2048, 131071 0.98 (268800 for 276480). AMD's cores only:
+    // another vendor's cores with Zen 3's caches take X36's L1.
     p.bluestein_pow2_part_bytes = zen3_like ? c.l1d.size / 2 : c.l1d.size;
     p.bluestein_whole_lanes = zen3_like;
     // Experiment X51 (arm E), EPYC 7763: depth-first chains with a top of 4 (16 registers:
@@ -349,9 +359,10 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     // the rules' time from 12288 to 163840 points in the screen (FFTW 0.70-0.84), 46080 0.83;
     // powers of two tied or lost (X32's chains), and 20000-100000 with parts of 8-64 points
     // gained little or lost (25000 1.16). Only where it was measured: x86-64 with a private
-    // L2 under 1 MiB (Zen 3's 512 KiB); Zen 4 and Zen 5 (1 MiB, `avx512`) and the Axion VM
-    // (AArch64) share this profile branch, unmeasured, and keep their plans.
-    if (x86_64 && c.l1d.size != 0 && c.l2.size != 0 && c.l2.size < std::size_t{1024} * 1024) {
+    // L2 under 1 MiB (Zen 3's class, AMD's cores only); Zen 4 and Zen 5 (1 MiB, `avx512`), the
+    // Axion VM (AArch64) and other vendors' x86 cores share this profile branch, unmeasured, and
+    // keep their plans.
+    if (zen3_like && c.l1d.size != 0) {
       p.depth_min_bytes = c.l2.size / 4;
       p.depth_max_bytes = 4 * c.l2.size;
       p.depth_pow2_max_bytes = 0;
@@ -475,7 +486,8 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // (Zen 4c with SMT, Zen 4 VMs reporting a small L3 per CPU), and on an EPYC 9B14 VM with the
   // threshold at 1 MiB the packed planes lost at one thread (512 x 1024 1.127, 512^2 1.109) and at
   // 8 lanes (600 x 800 1.286, 720^2 1.246), while Ice Lake-SP kept the gain (0.62-0.77). AMD's
-  // cores with avx512, and unknown ones, keep the block.
+  // cores with avx512, and unknown ones, keep the block. Zen 3's branch was measured on AMD's
+  // cores only (the EPYC 7763; Zen 2 in X64's screen), so it is AMD's (zen3_like).
   if (intel && c.l2.size != 0 && x86_64 && private_l2 && !large_l2 && !large_l3) {
     p.c2r_packed_bytes = c.l2.size;
     p.c2r_packed_isa = fftn::isa::avx512;
