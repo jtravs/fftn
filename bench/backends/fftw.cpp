@@ -15,12 +15,23 @@
 //                       library, so no OpenMP runtime joins the process); default 1, which
 //                       never initialises FFTW's threads; N > 1 needs libfftw3_threads in
 //                       the installation (FBENCH_FFTW_THREADS), and is double precision only
+//   PIPELINE=separate   a convolution of every row instead of the case's transform, as a user
+//                       writes it with FFTW (experiment X67's W arm; the FFTN backend's option
+//                       of the same name, bench/README.md): the forward plan, the user's
+//                       multiply loop (plain C++, cloned for AVX2 and AVX-512 like FFTN's
+//                       separate arm's), the inverse plan; with PIPE_RUNS=valid the user's
+//                       zero-padding (the input's m points copied into a line whose zeros were
+//                       written once) and cropping loops around them, and with PIPE_FANOUT=F a
+//                       second spectrum buffer and an inverse per copy (backends/convolution.hpp
+//                       has the layout). The loops run on the calling thread
+//   PIPE_RUNS=full|valid, PIPE_FANOUT=F   as for FFTN (fan-out with valid halves only)
 // Wisdom is otherwise fresh in every process: stale accumulated wisdom slowed FFTW by
 // 1.3x in the prototype (DESIGN.md finding E10). The driver keeps one wisdom file per run
 // and planner setting, so a campaign starts fresh and its rounds share their plans. Single
 // precision is a separate library with wisdom of its own, kept in <file>.f32.
 
 #include "backends/common.hpp"
+#include "backends/convolution.hpp"
 #include "harness/backend.hpp"
 #include "harness/json.hpp"
 
@@ -28,14 +39,18 @@
 
 #include <algorithm>
 #include <array>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -50,6 +65,9 @@ struct session {
   std::string wisdom_out;
   bool plan_note = false;
   int threads = 1;
+  bool pipeline = false; // PIPELINE=separate
+  bool pipe_valid = false;
+  std::size_t pipe_fanout = 1;
   std::string description;
 };
 
@@ -58,11 +76,20 @@ session& state() {
   return s;
 }
 
-// fftw_plan or fftwf_plan, by `single`.
+class convolution_arm;
+
+// fftw_plan or fftwf_plan, by `single`; or a PIPELINE arm (conv).
 struct plan_record {
   void* plan = nullptr;
   std::int32_t kind = fbench_c2c;
   bool single = false;
+  std::unique_ptr<convolution_arm> conv;
+  plan_record();
+  plan_record(const plan_record&) = delete;
+  plan_record& operator=(const plan_record&) = delete;
+  plan_record(plan_record&&) = delete;
+  plan_record& operator=(plan_record&&) = delete;
+  ~plan_record();
 };
 
 void say(char* message, std::size_t size, const std::string& text) {
@@ -119,6 +146,8 @@ template <> struct api<double> {
   static constexpr auto import_wisdom_from_file = &fftw_import_wisdom_from_file;
   static constexpr auto export_wisdom_to_file = &fftw_export_wisdom_to_file;
   static constexpr auto cleanup = &fftw_cleanup;
+  static constexpr auto malloc = &fftw_malloc;
+  static constexpr auto free = &fftw_free;
 };
 
 #ifdef FBENCH_FFTW_FLOAT
@@ -141,6 +170,8 @@ template <> struct api<float> {
   static constexpr auto import_wisdom_from_file = &fftwf_import_wisdom_from_file;
   static constexpr auto export_wisdom_to_file = &fftwf_export_wisdom_to_file;
   static constexpr auto cleanup = &fftwf_cleanup;
+  static constexpr auto malloc = &fftwf_malloc;
+  static constexpr auto free = &fftwf_free;
 };
 #endif
 
@@ -265,9 +296,305 @@ typename api<R>::plan make_plan(const fbench_case* c, void* in, void* out, unsig
                               in_dist, static_cast<R*>(out), out_embed.data(), 1, out_dist, flags);
 }
 
+// ---- PIPELINE (experiment X67's W arm) ---------------------------------------------------
+
+namespace conv = fbench::convolution;
+
+FBENCH_EDGE_CLONES void multiply_rows_f64(double* dst, const double* src, const double* k,
+                                          std::size_t bins, std::size_t dist, std::size_t first,
+                                          std::size_t count) {
+  conv::multiply_rows_as(dst, src, k, bins, dist, first, count);
+}
+
+FBENCH_EDGE_CLONES void multiply_rows_f32(float* dst, const float* src, const float* k,
+                                          std::size_t bins, std::size_t dist, std::size_t first,
+                                          std::size_t count) {
+  conv::multiply_rows_as(dst, src, k, bins, dist, first, count);
+}
+
+FBENCH_EDGE_CLONES void multiply_interleaved_f64(double* spectrum, const double* k,
+                                                 std::size_t bins, std::size_t lines,
+                                                 std::ptrdiff_t stride, std::size_t blocks,
+                                                 std::ptrdiff_t block_dist) {
+  conv::multiply_interleaved_as(spectrum, k, bins, lines, stride, blocks, block_dist);
+}
+
+FBENCH_EDGE_CLONES void multiply_interleaved_f32(float* spectrum, const float* k, std::size_t bins,
+                                                 std::size_t lines, std::ptrdiff_t stride,
+                                                 std::size_t blocks, std::ptrdiff_t block_dist) {
+  conv::multiply_interleaved_as(spectrum, k, bins, lines, stride, blocks, block_dist);
+}
+
+FBENCH_EDGE_CLONES void copy_lines_f64(double* dst, std::ptrdiff_t dst_dist, const double* src,
+                                       std::ptrdiff_t src_dist, std::size_t lines,
+                                       std::size_t count) {
+  conv::copy_lines_as(dst, dst_dist, src, src_dist, lines, count);
+}
+
+FBENCH_EDGE_CLONES void copy_lines_f32(float* dst, std::ptrdiff_t dst_dist, const float* src,
+                                       std::ptrdiff_t src_dist, std::size_t lines,
+                                       std::size_t count) {
+  conv::copy_lines_as(dst, dst_dist, src, src_dist, lines, count);
+}
+
+template <class R>
+void multiply_rows(R* dst, const R* src, const R* k, std::size_t bins, std::size_t dist,
+                   std::size_t lines) {
+  if constexpr (sizeof(R) == sizeof(float)) {
+    multiply_rows_f32(dst, src, k, bins, dist, 0, lines);
+  } else {
+    multiply_rows_f64(dst, src, k, bins, dist, 0, lines);
+  }
+}
+
+template <class R> void multiply_interleaved(R* spectrum, const R* k, const conv::layout& l) {
+  if constexpr (sizeof(R) == sizeof(float)) {
+    multiply_interleaved_f32(spectrum, k, l.bins, l.lines, l.stride, l.outer, l.outer_out_dist);
+  } else {
+    multiply_interleaved_f64(spectrum, k, l.bins, l.lines, l.stride, l.outer, l.outer_out_dist);
+  }
+}
+
+// `lines` runs of `count` reals, `src_dist` and `dst_dist` reals apart.
+template <class R>
+void copy_lines(R* dst, std::ptrdiff_t dst_dist, const R* src, std::ptrdiff_t src_dist,
+                std::size_t lines, std::size_t count) {
+  if constexpr (sizeof(R) == sizeof(float)) {
+    copy_lines_f32(dst, dst_dist, src, src_dist, lines, count);
+  } else {
+    copy_lines_f64(dst, dst_dist, src, src_dist, lines, count);
+  }
+}
+
+class convolution_arm {
+public:
+  convolution_arm() = default;
+  convolution_arm(const convolution_arm&) = delete;
+  convolution_arm& operator=(const convolution_arm&) = delete;
+  convolution_arm(convolution_arm&&) = delete;
+  convolution_arm& operator=(convolution_arm&&) = delete;
+  virtual ~convolution_arm() = default;
+  virtual void run(void* in, void* out) const = 0;
+};
+
+// Memory from fftw_malloc (FFTW's SIMD alignment), zeroed.
+template <class R> class fftw_buffer {
+public:
+  explicit fftw_buffer(std::size_t reals = 0) {
+    if (reals != 0) {
+      data_.reset(static_cast<R*>(api<R>::malloc(reals * sizeof(R))));
+      if (!data_) {
+        throw std::bad_alloc();
+      }
+      std::fill_n(data_.get(), reals, R{0});
+    }
+  }
+  [[nodiscard]] R* get() const { return data_.get(); }
+
+private:
+  struct release {
+    void operator()(R* p) const { api<R>::free(p); }
+  };
+  std::unique_ptr<R[], release> data_;
+};
+
+// The lines of a convolution case (conv::layout) as a user writes them with FFTW: many-plans (or
+// the guru interface for interleaved lines) at the session's planner, the user's loops between.
+// - Whole lines without fan-out: the forward plan into the output, the multiply loop in place
+//   there, the inverse plan in place (5.5's arm in FFTN's backend).
+// - Valid halves: each line's m input points copied into a zero-padded line of n of the arm's
+//   own (its zeros written once), the forward plan from there into a spectrum buffer, the loop
+//   in place (fan-out: into a second buffer per copy), the inverse plan into a line buffer, and
+//   the m points from logical m/2 copied into the output (into copy k's rows).
+template <class R> class fftw_convolution final : public convolution_arm {
+  using A = api<R>;
+  using C = typename A::complex;
+
+public:
+  fftw_convolution(const fbench_case& c, const conv::layout& l, void* in, void* out, unsigned flags)
+      : l_(l), width_(l.real ? 1 : 2) {
+    if (l.fanout > 1 && !l.valid) {
+      throw std::invalid_argument("FFTW's PIPELINE arm takes fan-out with PIPE_RUNS=valid only");
+    }
+    const auto kernel = conv::delay_kernel<R>(l.n, l.bins, l.fanout);
+    kernel_ = fftw_buffer<R>(2 * kernel.size());
+    std::copy_n(reinterpret_cast<const R*>(kernel.data()), 2 * kernel.size(), kernel_.get());
+    const int n = static_cast<int>(l.n);
+    const int lines = static_cast<int>(l.lines);
+    const int bins = static_cast<int>(l.bins);
+    if (!l.valid) {
+      // The spectrum in the output, as the case's own transform writes it.
+      dist_ = static_cast<std::size_t>(c.out_dist);
+      forward_ = plan_line(c, in, out, flags, true);
+      inverse_ = plan_line(c, out, out, flags, false);
+    } else {
+      dist_ = l.bins;
+      const std::size_t reals = l.lines * l.n * width_;
+      pad_ = fftw_buffer<R>(reals);
+      spectrum_ = fftw_buffer<R>(2 * l.lines * l.bins);
+      line_ = fftw_buffer<R>(reals);
+      if (l.fanout > 1) {
+        copy_ = fftw_buffer<R>(2 * l.lines * l.bins);
+      }
+      R* inverse_in = l.fanout > 1 ? copy_.get() : spectrum_.get();
+      if (l.real) {
+        forward_ =
+            A::plan_many_dft_r2c(1, &n, lines, pad_.get(), nullptr, 1, n,
+                                 reinterpret_cast<C*>(spectrum_.get()), nullptr, 1, bins, flags);
+        inverse_ = A::plan_many_dft_c2r(1, &n, lines, reinterpret_cast<C*>(inverse_in), nullptr, 1,
+                                        bins, line_.get(), nullptr, 1, n, flags);
+      } else {
+        forward_ = A::plan_many_dft(1, &n, lines, reinterpret_cast<C*>(pad_.get()), nullptr, 1, n,
+                                    reinterpret_cast<C*>(spectrum_.get()), nullptr, 1, bins,
+                                    FFTW_FORWARD, flags);
+        inverse_ = A::plan_many_dft(1, &n, lines, reinterpret_cast<C*>(inverse_in), nullptr, 1,
+                                    bins, reinterpret_cast<C*>(line_.get()), nullptr, 1, n,
+                                    FFTW_BACKWARD, flags);
+      }
+      // Planning may have written the buffers: the padding's zeros once more.
+      std::fill_n(pad_.get(), reals, R{0});
+    }
+    if (forward_ == nullptr || inverse_ == nullptr) {
+      throw std::runtime_error("FFTW returned no plan");
+    }
+  }
+
+  fftw_convolution(const fftw_convolution&) = delete;
+  fftw_convolution& operator=(const fftw_convolution&) = delete;
+  fftw_convolution(fftw_convolution&&) = delete;
+  fftw_convolution& operator=(fftw_convolution&&) = delete;
+  ~fftw_convolution() override {
+    if (forward_ != nullptr) {
+      A::destroy_plan(forward_);
+    }
+    if (inverse_ != nullptr) {
+      A::destroy_plan(inverse_);
+    }
+  }
+
+  void run(void* in, void* out) const override {
+    if (!l_.valid) {
+      execute(forward_, in, out, true);
+      if (l_.stride != 1) {
+        multiply_interleaved(static_cast<R*>(out), kernel_.get(), l_);
+      } else {
+        multiply_rows(static_cast<R*>(out), static_cast<R*>(out), kernel_.get(), l_.bins, dist_,
+                      l_.lines);
+      }
+      execute(inverse_, out, out, false);
+      return;
+    }
+    const auto n = static_cast<std::ptrdiff_t>(l_.n);
+    const auto w = static_cast<std::ptrdiff_t>(width_);
+    // Zero-padding: the input run into the padded lines.
+    copy_lines(pad_.get(), n * w, static_cast<const R*>(in), l_.in_dist * w, l_.lines,
+               l_.m * width_);
+    execute(forward_, pad_.get(), spectrum_.get(), true);
+    const std::size_t skip = l_.m / 2 * width_; // the output run's start in the line
+    for (std::size_t k = 0; k < l_.fanout; ++k) {
+      R* to = l_.fanout > 1 ? copy_.get() : spectrum_.get();
+      multiply_rows(to, spectrum_.get(), kernel_.get() + 2 * k * l_.bins, l_.bins, dist_, l_.lines);
+      execute(inverse_, to, line_.get(), false);
+      // Cropping: the output run of copy k.
+      copy_lines(static_cast<R*>(out) + static_cast<std::ptrdiff_t>(k) * l_.copy_dist * w,
+                 l_.out_dist * w, line_.get() + skip, n * w, l_.lines, l_.m * width_);
+    }
+  }
+
+private:
+  // The case's own forward plan (in to out), or the inverse in place in the output's layout.
+  typename A::plan plan_line(const fbench_case& c, void* in, void* out, unsigned flags,
+                             bool forward) const {
+    const int n = static_cast<int>(l_.n);
+    const int lines = static_cast<int>(l_.lines);
+    if (l_.stride != 1) {
+      std::array<typename A::iodim64, 1> axes{};
+      axes[0] = {.n = c.dims[0], .is = c.interleave, .os = c.interleave};
+      std::array<typename A::iodim64, 2> loops{};
+      int loop_rank = 0;
+      if (c.outer > 1) {
+        loops.at(0) = {.n = c.outer,
+                       .is = forward ? c.outer_in_dist : c.outer_out_dist,
+                       .os = c.outer_out_dist};
+        loop_rank = 1;
+      }
+      loops.at(static_cast<std::size_t>(loop_rank)) = {
+          .n = c.batch, .is = forward ? c.in_dist : c.out_dist, .os = c.out_dist};
+      ++loop_rank;
+      return A::plan_guru64_dft(1, axes.data(), loop_rank, loops.data(), static_cast<C*>(in),
+                                static_cast<C*>(out), forward ? FFTW_FORWARD : FFTW_BACKWARD,
+                                flags);
+    }
+    const int in_dist = static_cast<int>(c.in_dist);
+    const int out_dist = static_cast<int>(c.out_dist);
+    if (!l_.real) {
+      return A::plan_many_dft(1, &n, lines, static_cast<C*>(in), nullptr, 1,
+                              forward ? in_dist : out_dist, static_cast<C*>(out), nullptr, 1,
+                              out_dist, forward ? FFTW_FORWARD : FFTW_BACKWARD, flags);
+    }
+    if (forward) {
+      return A::plan_many_dft_r2c(1, &n, lines, static_cast<R*>(in), nullptr, 1, in_dist,
+                                  static_cast<C*>(out), nullptr, 1, out_dist, flags);
+    }
+    // In place in FFTW's padded layout: rows of out_dist complex values hold the n reals.
+    const int in_embed = static_cast<int>(c.out_last);
+    const int out_embed = 2 * in_embed;
+    return A::plan_many_dft_c2r(1, &n, lines, static_cast<C*>(in), &in_embed, 1, out_dist,
+                                static_cast<R*>(out), &out_embed, 1, 2 * out_dist, flags);
+  }
+
+  void execute(typename A::plan p, void* in, void* out, bool forward) const {
+    if (!l_.real) {
+      A::execute_dft(p, static_cast<C*>(in), static_cast<C*>(out));
+    } else if (forward) {
+      A::execute_dft_r2c(p, static_cast<R*>(in), static_cast<C*>(out));
+    } else {
+      A::execute_dft_c2r(p, static_cast<C*>(in), static_cast<R*>(out));
+    }
+  }
+
+  conv::layout l_;
+  std::size_t width_;    // reals per point of a line
+  std::size_t dist_ = 0; // between the spectrum's rows, in complex values
+  typename A::plan forward_ = nullptr;
+  typename A::plan inverse_ = nullptr;
+  fftw_buffer<R> kernel_;
+  fftw_buffer<R> pad_;
+  fftw_buffer<R> spectrum_;
+  fftw_buffer<R> copy_;
+  fftw_buffer<R> line_;
+};
+
+template <class R>
+std::int32_t create_convolution(const fbench_case* c, void* in, void* out, void** plan,
+                                char* message, std::size_t message_size) {
+  const session& s = state();
+  try {
+    const conv::layout l = conv::layout_of(*c, s.pipe_fanout, s.pipe_valid);
+    auto record = std::make_unique<plan_record>();
+    record->kind = c->kind;
+    record->single = sizeof(R) == sizeof(float);
+    record->conv = std::make_unique<fftw_convolution<R>>(*c, l, in, out, s.flags);
+    *plan = record.release();
+    return fbench_ok;
+  } catch (const std::invalid_argument& e) {
+    say(message, message_size, e.what());
+    return fbench_unsupported;
+  } catch (const std::exception& e) {
+    say(message, message_size, e.what());
+    return fbench_error;
+  }
+}
+
+plan_record::plan_record() = default;
+plan_record::~plan_record() = default;
+
 template <class R>
 std::int32_t create(const fbench_case* c, void* in, void* out, void** plan, char* message,
                     std::size_t message_size) {
+  if (state().pipeline) {
+    return create_convolution<R>(c, in, out, plan, message, message_size);
+  }
   const typename api<R>::plan p = make_plan<R>(c, in, out, state().flags);
   if (p == nullptr) {
     say(message, message_size, "FFTW returned no plan");
@@ -354,6 +681,27 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
         return fbench_error;
       }
       s.threads = static_cast<int>(t);
+    } else if (key == "PIPELINE") {
+      if (val != "separate") {
+        say(message, message_size, "PIPELINE is separate (FFTW has no pipeline)");
+        return fbench_error;
+      }
+      s.pipeline = true;
+    } else if (key == "PIPE_RUNS") {
+      if (val != "full" && val != "valid") {
+        say(message, message_size, "PIPE_RUNS is full or valid");
+        return fbench_error;
+      }
+      s.pipe_valid = val == "valid";
+    } else if (key == "PIPE_FANOUT") {
+      const std::string v(val);
+      char* stop = nullptr;
+      const long f = std::strtol(v.c_str(), &stop, 10);
+      if (v.empty() || stop != v.c_str() + v.size() || f < 1 || f > 4096) {
+        say(message, message_size, "PIPE_FANOUT is a whole number from 1 to 4096");
+        return fbench_error;
+      }
+      s.pipe_fanout = static_cast<std::size_t>(f);
     } else {
       say(message, message_size, "unknown FFTW option " + std::string(key));
       return fbench_error;
@@ -380,10 +728,22 @@ std::int32_t fbench_begin(const char* options, char* message, std::size_t messag
   }
   const std::string version = fftw_version;
   fbench::json description;
+  if (!s.pipeline && (s.pipe_valid || s.pipe_fanout != 1)) {
+    say(message, message_size, "PIPE_RUNS and PIPE_FANOUT need PIPELINE");
+    return fbench_error;
+  }
   description.str("library", "fftw")
       .str("version", version)
       .str("isa", simd_of(version))
-      .raw("supports", R"(["c2c","r2c","c2r"])");
+      .raw("supports", s.pipeline ? "[]" : R"(["c2c","r2c","c2r"])");
+  if (s.pipeline) {
+    // As FFTN's PIPELINE arms: the harness checks the delayed rows (backend.hpp).
+    description.raw("partial", R"(["c2c","r2c"])")
+        .str("pipeline", "separate")
+        .str("output", "delay")
+        .str("delay_runs", s.pipe_valid ? "valid" : "full")
+        .integer("delay_fanout", static_cast<std::int64_t>(s.pipe_fanout));
+  }
 #ifdef FBENCH_FFTW_FLOAT
   // The threaded planner is initialised for the double library only.
   if (s.threads == 1) {
@@ -441,6 +801,10 @@ std::int32_t fbench_create(const fbench_case* c, void* in, void* out, void** pla
 
 void fbench_execute(const void* plan, void* in, void* out) {
   const auto* r = static_cast<const plan_record*>(plan);
+  if (r->conv) {
+    r->conv->run(in, out);
+    return;
+  }
 #ifdef FBENCH_FFTW_FLOAT
   if (r->single) {
     execute<float>(*r, in, out);
@@ -452,6 +816,9 @@ void fbench_execute(const void* plan, void* in, void* out) {
 
 void fbench_destroy(void* plan) {
   const std::unique_ptr<plan_record> r(static_cast<plan_record*>(plan));
+  if (r->conv) {
+    return;
+  }
 #ifdef FBENCH_FFTW_FLOAT
   if (r->single) {
     api<float>::destroy_plan(static_cast<fftwf_plan>(r->plan));

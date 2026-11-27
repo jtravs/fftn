@@ -329,7 +329,7 @@ template <class T> void run_case(const lanes_case& lc, fftn::isa t) {
   const auto by_lanes = d::make_pipeline_core(run.view(), run.opts(), lanes);
   const auto by_chain = d::make_pipeline_core(run.view(), run.opts(), chain);
   const std::string describe = d::describe(*by_lanes);
-  ASSERT_NE(describe.find("the lanes pair (forced only"), std::string::npos) << describe;
+  ASSERT_NE(describe.find("the lanes pair (forced)"), std::string::npos) << describe;
   EXPECT_NE(describe.find(lc.adjacent ? "adjacent lines (a plane's columns)" : "form: lanes"),
             std::string::npos)
       << describe;
@@ -557,7 +557,8 @@ TYPED_TEST(PipelineLanes, ColumnsAgreeWithTheChainPair) {
 }
 
 // What the lanes pair does not take yet is built as the chain pair, and describe() says why; by
-// the rules no pipeline takes the pair (forced only until experiment X67).
+// the rules a batch of rows keeps the chain pair (X67's rule takes adjacent lines only,
+// pipeline_planning_test.cpp).
 TEST(PipelineLanes, FallsBackToTheChainPair) {
   using C = std::complex<double>;
   d::build_settings lanes;
@@ -571,7 +572,7 @@ TEST(PipelineLanes, FallsBackToTheChainPair) {
     return d::describe(*d::make_pipeline_core(run.view(), opts, s));
   };
   const fftn::pipeline_desc<C, C, C> good = fftn::complex_convolution_rows<double>(8, 16);
-  EXPECT_NE(describe(good, lanes).find("the lanes pair (forced only"), std::string::npos);
+  EXPECT_NE(describe(good, lanes).find("the lanes pair (forced)"), std::string::npos);
   const std::string by_rules = describe(good, {});
   EXPECT_NE(by_rules.find("the chain pair"), std::string::npos) << by_rules;
   EXPECT_EQ(by_rules.find("lanes pair"), std::string::npos) << by_rules;

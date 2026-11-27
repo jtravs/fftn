@@ -62,3 +62,15 @@ build's entries), processor model and instruction set, and only if its program r
 exactly: an entry that would
 give another program (on a machine whose caches differ, say) is ignored, and the plan's
 effort decides. Wisdom is plain data owned by the program; FFTN keeps none of its own.
+
+## Pipelines
+
+A row pipeline (`fftn::pipeline`, [conventions](conventions.md)) takes the same options
+(provisional, task 5.2g). Its candidates are the pairs of transforms its description can take:
+the rules' pair, the chain pair, the depth-first pair for contiguous `<C, C, C>` lines and the
+lanes pair for batches of short `<C, C, C>` lines or a plane's strided lines. Each is timed whole,
+on scratch data and on scratch arrays for the kernel and the other factors (block callbacks run as
+stand-ins that do nothing: planning never calls the application's code), and the fastest is kept
+as for a plan. `wisdom::add` records a pipeline's program; an entry applies only to the same
+description (the line, batches, runs, fan-out and group, the vocabulary's strides and scales, each
+callback's mode and scratch but not its function) and options.

@@ -3277,6 +3277,58 @@ in and start from a tile). Teams and executors share the blocks as tasks, as for
 lanes. Pipelines and plans without the forced pair keep their programs and bits (`describe()`,
 `workspace_bytes()` and output bits of 1,824 probes against `main`, the lanes plans among them).
 
+**As built (task 5.2g, planning, 2026-11-27).** `options::effort` and `options::use` reach
+pipelines as they reach plans (`plan_pipeline_with_effort`, `core/measure.cpp`). The candidates are
+the rules' pair and the chain, depth-first and lanes pairs forced, each only where the description
+takes it (a forced pair that builds another pair is not a candidate, and the chain pair forced
+builds the rules' program, so it is timed once). They are timed on scratch data and scratch factor
+arrays (the kernel's among them, its values scaled by 1/n so that repetitions in place stay bounded;
+callbacks as stand-ins), with plans' budgets, rounds and 1 % rule; `measure()` takes its candidates,
+builders and factor arrays from a `measure_job`, so plans and pipelines share the timing and plans'
+measured planning is unchanged. A wisdom entry is keyed by the description (`pipeline_key`: the
+line's shape key, which holds the first direction, line, batches and runs; the fan-out and group;
+the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed, a callback by its
+mode and scratch) and rebuilt only where its program's fingerprint matches. `wisdom::add` takes a
+pipeline (a new overload, provisional; no API block existed, so it is the plan overload's twin).
+fbench's `PIPELINE` arms build through `make_pipeline_core` with the build settings and `PLANNING`,
+so `STRATEGY` forces the pair, and gain the valid halves (`PIPE_RUNS`), fan-out (`PIPE_FANOUT`),
+interleaved lines and FFTW's arm (`fbench-fftw PIPELINE=separate`) for X67.
+
+**As built (task 5.2g, the pair rules, 2026-11-27; experiment X67).** The rules take two pairs
+besides the chain pair, each where X67 measured it winning and for what it measured:
+
+- **The depth-first pair** for a `<C, C, C>` line contiguous on both sides from
+  `machine_profile::pipeline_depth_min_kib` to `pipeline_depth_max_kib` of the complex line, on the
+  target `pipeline_depth_isa`, with the tops the forced pair takes (`convolution_depth_tops`; the
+  program X67 timed). Set on the Xeon 6240's class (Intel's cores), avx512: 288 KiB to 2 MiB in
+  double (18432 to 131072 points; float from 36864 to the same 131072 points, the longest measured),
+  where the pair took 0.62–0.83 of the chain pair's time with valid halves and whole lines.
+  Narrowed to what X67 measured (`depth_measured`): a kernel of stride 1 or none, at most one
+  stored run per side, no prologue or epilogue factor, accumulation, callback or fan-out (copies
+  won at one thread, but the pair runs them one after another in a team where the chain pair
+  shares them; unmeasured with threads). The rule is keyed by the plan's target, so the Xeon's
+  forced `avx2` plans keep the chain pair: a machine's two x86 targets may split on it, as they do
+  on its depth-first rows (X46) and Bluestein convolutions (X50), which DESIGN 6.2 allows (`avx2`
+  and `avx512` plans may choose different programs). The EPYC 7763's class keeps the chain pair
+  (the pair lost there, as rows' depth-first chains do on avx2).
+- **The lanes pair** for lines one element apart on both sides (a plane's strided axis) from 64
+  points to `machine_profile::pipeline_lanes_adjacent_max` (512 on Zen 3's class, AMD's cores, and
+  on the Xeon 6240's), with a lanes column phase's block only, for a kernel of stride 1 or none
+  and none of what `lanes_pair_refusal` names: 0.46–0.96 of the chain pair's time on the EPYC,
+  0.58–0.72 on the Xeon. Batches of short rows keep the chain pair (the lanes pair took 1.3–2.1 of
+  its time). The rule is keyed by the machine: its cache class and the processor's best target
+  (`pipeline_lanes_isa`: avx2 on Zen 3, avx512 on the Xeon), not the plan's target, so every target
+  of one machine takes it alike and the `avx2` and `avx512` targets never split on it where the
+  chain pair would fuse the kernel (DESIGN 6.2; 5.2f's review). An Intel core of the Xeon's cache
+  class without avx512 keeps the chain pair (the rule does not cross the instruction set).
+
+`<T, C, T>` and `<C, T, C>` keep the real chain pairs. The new profile fields sit in the
+padding after existing `bool` fields, so the profile's size and its other fields' offsets are
+unchanged (the plain drivers copy it; their objects disassemble the same). Plans and every
+pipeline outside these two rules keep their programs and bits (probes against `main`). X67's
+verdict and the leads it left (the real pair's middle as a baseline pass, fan-out's copies,
+whole lines against the plans' own strategies, short-row batches) are in its file.
+
 ### 12.3 Block callbacks
 
 ```cpp
@@ -4647,9 +4699,9 @@ infrastructure to maintain.
 
 | Document | Content | Form |
 |---|---|---|
-| `README.md` | what FFTN is, a first example, links | Markdown |
+| `README.md` | what FFTN is, what is built (provisional parts marked), a first example, links | Markdown with an example |
 | `docs/conventions.md` | every convention, stated exactly: the formula each transform computes (the real-to-real kinds of 5.7 included), signs, normalisation, the layout of every input and output (r2c and c2r sizes and padding, multi-dimensional halving, split-complex arrays), strides and distances, in-place rules, what is and is not preserved, alignment, accuracy bounds, the determinism contract | Markdown |
-| `docs/guide.md` | task-oriented: rows, planes, volumes, real transforms, choosing lengths, workspaces, planning effort and wisdom | Markdown with examples |
+| `docs/guide.md` | task-oriented, a map of the other pages: a first transform, plans and workspaces, rows, planes, volumes, real transforms, choosing lengths, planning effort and wisdom, threads, fusion, real-to-real transforms, split complex, the convenience layer, Kokkos, the C API; what is provisional and what is planned | Markdown with examples |
 | `docs/planning.md` | planning effort (rules, quick and full measurement) and wisdom | Markdown with an example |
 | `docs/lengths.md` | fast lengths (`next_fast_length`) and the per-length estimate (`relative_cost`) | Markdown with an example |
 | `docs/kokkos.md` | the optional Kokkos adapter: View-based construction, the Kokkos-FFT-shaped plan, moving a Kokkos-FFT call site, the rules for Views and axes, normalisation, and every difference from Kokkos-FFT | Markdown with examples |
@@ -4667,9 +4719,9 @@ infrastructure to maintain.
 - **The public headers are the API reference.** Every public declaration carries a
   comment stating what it does, its preconditions, and what it guarantees. The Markdown
   documents explain and link; they do not restate signatures.
-- **Examples are compiled.** Every code example in `docs/` is a snippet of a file under
-  `examples/`, which the build compiles and the tests run. A gate stage checks that the
-  snippets in the documents match the files, so examples cannot rot.
+- **Examples are compiled.** Every code example in `docs/` and `README.md` is a snippet of a
+  file under `examples/`, which the build compiles and the tests run. A gate stage checks that
+  the snippets in the documents match the files, so examples cannot rot.
 - **Completeness is checked, not hoped for.** Doxygen is used as a linter only: a gate
   stage runs it over `include/fftn/` with undocumented public members as errors. It needs
   one small configuration file and produces nothing that is committed. Rendering an HTML
@@ -5385,6 +5437,9 @@ to change before a release.
 | 2026-11-26 | Split complex, the conversion form (step 6.10, section 5.8, "As built"; provisional, second reader to come): `split_complex<T>` and `split_ptr<T>` in `fftn/split.hpp`, the c2c, r2c and c2r kinds on split data in every rank, each split side a separate edge pass or phase through the workspace block whose cursor is the imaginary array; split rows on the chain; r2c and c2r refused in place; no edges, stored runs, measured planning, wisdom or C API yet | The maintainer kept only the conversion form in phase 6 (18.2 Q2, 2026-11-26). An edge pass needs no kernel and reaches every rank and kind through 5.1b's phases, and the factor cursors already move by a side's own strides, so the second array costs no new driver state and plans without split data keep their programs. The rows' other strategies read or write the caller's arrays or use the block themselves; building them on the block is left to the fused form (6.13, phase 7) |
 | 2026-11-27 | Split complex in the C API (section 5.9, "Split complex"; provisional, 18.2 Q28–Q31 for the maintainer): `fftn_split_ptr` and `fftn_split_const_ptr` (`void*` pairs, a real side's array in `re`), `fftn_shape::split`, the four executions with a `_split` suffix; a layout mismatch at execution ends the program; edges, stored runs, in-place r2c and c2r and `fftn_wisdom_add` refused as in C++. 6.9's structs unchanged | The C form of 5.8 under 6.8's and 6.9's conventions: one plan type and `void*` data, a flag that mirrors `shape_view::split`, a suffix as 6.9's `_args`. C++ refuses edges on split plans and has no split pipelines, so the imaginary arrays need no place in `fftn_exec_args` yet |
 | 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
+| 2026-11-27 | Measured planning and wisdom for pipelines (task 5.2g, section 12.2, "As built"): the pairs a description takes are the candidates, timed as plans' are; wisdom keyed by the description; `wisdom::add(pipeline)` (provisional) | DESIGN 12.2 asked 5.2g for "measured candidates and wisdom keyed by the description"; sharing plans' timing keeps one method and one budget |
+| 2026-11-27 | The pipeline pair rules (task 5.2g, section 12.2, "As built"; experiment X67): the depth-first pair for contiguous `<C, C, C>` lines from 288 KiB to 2 MiB on the Xeon 6240's class (avx512), the lanes pair for a plane's strided `<C, C, C>` lines of 64 to 512 points on Zen 3's class and the Xeon 6240's, each narrowed to what X67 measured; the new profile fields in the profile's padding | X67's R1: the depth-first pair 0.62–0.83 of the chain pair's time on the Xeon, slower on the EPYC; the lanes pair 0.46–0.96 and 0.58–0.72 on strided lines, slower on short-row batches. The lanes rule is keyed by the machine (class and best target), so a machine's targets never split on it (DESIGN 6.2); the depth-first rule by the plan's target, so they may, as on the machine's depth-first rows and Bluestein convolutions |
+| 2026-11-27 | The documents complete (step 6.17, section 17): `docs/guide.md`, a map from a first transform to every built feature, its first steps quoted from `examples/guide.cpp`; the real-to-real normalisation and the split layout's addressing in `docs/conventions.md`; X67's pair rules and advice in `docs/fusion.md`; the README from planned to built, provisional parts marked; the snippet check (`tools/repo_lint.py snippets`) covers `README.md` as well as `docs/` | The README is the first page a reader sees, and its new example falls under the rule every other code block a reader meets is held to |
 
 ---
 

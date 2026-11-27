@@ -27,7 +27,7 @@
 // c2r_line, the middle on the spectrum's n/2 + 1 bins, and every factor in a separate pass
 // (pipeline.cpp, build_real_pair).
 //
-// The lanes pair (task 5.2f), forced only until experiment X67: a <C, C, C> line's blocks of lines
+// The lanes pair (task 5.2f), forced or by X67's rule: a <C, C, C> line's blocks of lines
 // as a lanes program, chain_builder::c2c_lanes from the input to a tile and from the tile to the
 // output, the middle on the tile between (pipeline.cpp, build_lanes_pair).
 #pragma once
@@ -43,6 +43,7 @@
 #include "strategies/chain.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -77,10 +78,10 @@ template <class T>
                                           const build_settings& settings);
 
 // The top factors of the depth-first pair (DESIGN.md 12.2, task 5.2d) for a line of n, or none:
-// forced only (build_settings::strategy depth), wherever a convolution's split fits
-// (depth_tops_for: C divides the tops' product, so that the first pass's blocks are whole);
-// never by the rules until experiment X67 (task 5.2g) gives them a rule, nor with forced radices
-// for n.
+// forced (build_settings::strategy depth), wherever a convolution's split fits (depth_tops_for:
+// C divides the tops' product, so that the first pass's blocks are whole); by the rules where the
+// profile's pipeline_depth fields put the line's bytes and the target (experiment X67, task
+// 5.2g), with the forced pair's tops; never with forced radices for n.
 template <class T>
 [[nodiscard]] std::vector<std::size_t>
 convolution_depth_tops(std::size_t n, const build_settings& settings, const chain_builder<T>& chain,
@@ -143,7 +144,23 @@ void row_output_with_callback(precision prec, bool real, const edge_side& out, s
 
 // make_pipeline_core (fftn/detail/core.hpp) with construction knobs (tests): the settings' chain
 // rules (radices, leaf limit, layout, Bluestein and Rader) and profile apply to both chains.
+// options::use and options::effort as for plans (task 5.2g): a wisdom entry for the description,
+// else the rules' pipeline, or with quick or measure the fastest of the candidates
+// (plan_pipeline_with_effort).
 [[nodiscard]] std::shared_ptr<const plan_core>
 make_pipeline_core(const pipeline_view& desc, const options& opts, const build_settings& settings);
+
+// Builds a pipeline as the settings describe, ignoring options::effort and options::use.
+using pipeline_builder = std::function<std::shared_ptr<plan_core>(
+    const pipeline_view&, const options&, const build_settings&)>;
+
+// Measured planning and wisdom for pipelines (core/measure.cpp; task 5.2g, DESIGN.md 12.2):
+// options::use, then options::effort, as plan_with_effort does for plans. The candidates are the
+// rules' pair and the chain, depth-first and lanes pairs forced (each where the description can
+// take it), timed on scratch data and scratch factor arrays (the kernel's among them; callbacks
+// as stand-ins); a wisdom entry is keyed by the description (pipeline_key).
+[[nodiscard]] std::shared_ptr<const plan_core>
+plan_pipeline_with_effort(const pipeline_view& desc, const options& opts,
+                          const build_settings& settings, const pipeline_builder& build);
 
 } // namespace fftn::inline v0::detail

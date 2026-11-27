@@ -642,6 +642,25 @@ bool identity_output() {
   return std::string(fbench_describe()).find(R"("output":"identity")") != std::string::npos;
 }
 
+// The delayed output's fan-out ("delay_fanout":F, default 1) and whether its lines are valid
+// halves ("delay_runs":"valid"), from the backend's describe (backend.hpp).
+std::int64_t delay_fanout() {
+  const std::string d = fbench_describe();
+  constexpr std::string_view key = R"("delay_fanout":)";
+  const std::size_t at = d.find(key);
+  if (at == std::string::npos) {
+    return 1;
+  }
+  std::int64_t f = 1;
+  const char* first = d.data() + at + key.size();
+  std::from_chars(first, d.data() + d.size(), f);
+  return f;
+}
+
+bool delay_valid() {
+  return std::string(fbench_describe()).find(R"("delay_runs":"valid")") != std::string::npos;
+}
+
 std::string run_case(const case_spec& c, const settings& s, const count_source* pmu) {
   const fbench::layout& l = c.layout;
   const std::uint64_t seed = hash(c.id) ^ s.seed;
@@ -718,7 +737,8 @@ std::string run_case(const case_spec& c, const settings& s, const count_source* 
     fbench::perturb_output(l, result, s.perturb, seed);
   }
   const fbench::check_result chk =
-      delayed_output() ? fbench::check_delay(l, reference_in.data(), result)
+      delayed_output()
+          ? fbench::check_delay(l, reference_in.data(), result, delay_fanout(), delay_valid())
       : identity_output()
           ? fbench::check_identity(l, reference_in.data(), result)
           : fbench::check_output(l, reference_in.data(), result, s.check_budget, seed);

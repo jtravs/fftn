@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 John C. Travers and contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Experiment X67's cases (dev/experiments/X67-row-pipelines.md, amendment 6): row convolutions
+# for the PIPELINE options of the FFTN and FFTW backends (bench/README.md). c2c forward cases are
+# `pipeline<C, C, C>`, r2c cases `pipeline<T, C, T>`, out of place. The valid halves and fan-out
+# are arm options (PIPE_RUNS, PIPE_FANOUT), so each group below is judged by its own fbench run
+# with the options it names, selected with --filter:
+#   valid    PIPE_RUNS=valid                   '-(18432|24576|32768|49152|65536|98304|131072)-b(1|32)-op'
+#   fan-out  PIPE_RUNS=valid PIPE_FANOUT=4|16  '-(18432|32768|65536|131072)-b4-op$', '-b16-op$'
+#            (the case's batch counts the copies: one line of F copies)
+#   full     PIPE_RUNS=full (whole lines, informative, and the collateral cases)
+#            '-(18432|32768|65536|131072)-b1-op$|-(64|256|1024|4096)-b(16|1024)-op|-il-'
+# Tier "quick" is a handful of cases that show every arm runs.
+
+[catalogue]
+name = "x67"
+
+[[group]]
+name = "x67-valid"
+note = "the primary set: valid halves, one and 32 lines (PIPE_RUNS=valid)"
+kind = ["c2c", "r2c"]
+dims = [18432, 24576, 32768, 49152, 65536, 98304, 131072]
+batch = [1, 32]
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x67-fanout"
+note = "fan-out: one line of 4 or 16 copies, each with its own kernel (PIPE_FANOUT=4 or 16)"
+kind = ["c2c", "r2c"]
+dims = [18432, 32768, 65536, 131072]
+batch = [4, 16]
+
+[[group]]
+name = "x67-full"
+note = "whole lines without runs, informative (PIPE_RUNS=full); the same ids as x67-valid's"
+kind = ["c2c", "r2c"]
+dims = [18432, 32768, 65536, 131072]
+
+[[group]]
+name = "x67-rows"
+note = "collateral: short rows in batches, the chain pair or a flat body of two leaves"
+kind = ["c2c", "r2c"]
+dims = [64, 256, 1024, 4096]
+batch = [16, 1024]
+
+[[group]]
+name = "x67-strided"
+note = "collateral: the lines of a 64 x 512 and a 512 x 512 plane's strided axis, for the lanes pair"
+kind = "c2c"
+dims = [64, 512]
+batch = 512
+layout = "interleaved"
+precision = ["f64", "f32"]
+
+[[group]]
+name = "x67-quick"
+note = "a smoke set for every option"
+kind = ["c2c", "r2c"]
+dims = [256, 18432]
+batch = [16, 4]
+tiers = ["quick"]

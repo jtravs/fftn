@@ -105,12 +105,16 @@ check_result check_output(const layout& l, const void* in, const void* out, std:
 
 // The check of a backend whose output is each transform's input delayed by one element,
 // y_j = x_((j - 1) mod n): the convolution a backend times when its describe says
-// "output":"delay" (backend.hpp). Rows only (rank 1, not interleaved, out of place): complex rows
-// for a c2c case, and for an r2c case real rows of n values, each at the start of its output row
-// of n/2 + 1 complex values (FFTW's padded layout of the real side). Every output of the first
-// and the last transform is compared, and their energies; the tolerance is twice the
-// transform's. Any other layout never passes.
-check_result check_delay(const layout& l, const void* in, const void* out);
+// "output":"delay" (backend.hpp). Rows only (rank 1, out of place): complex rows for a c2c case
+// (interleaved too), and for an r2c case real rows of n values, each at the start of its output
+// row of n/2 + 1 complex values (FFTW's padded layout of the real side). With `fanout` F, output
+// row b is a copy of input row (b / F) F's convolution ("delay_fanout"); with `valid`
+// ("delay_runs":"valid") the line is the input row's first m = n/2 values and zeros, and the
+// output row holds the m values from logical m/2, at its start. Every output of the first
+// transform, of the first line's last copy and of the last transform is compared, and their
+// energies; the tolerance is twice the transform's. Any other layout never passes.
+check_result check_delay(const layout& l, const void* in, const void* out, std::int64_t fanout = 1,
+                         bool valid = false);
 
 // The check of a backend whose output is its input (FFTN's STAGE option, "output":"identity" in
 // its describe: a stage whose work is the identity in exact arithmetic). c2c cases of any rank:

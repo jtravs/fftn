@@ -847,9 +847,9 @@ TYPED_TEST(PipelineRuns, DepthFirstPairSharedByATeam) {
   }
 }
 
-// By the rules a <C, C, C> line keeps the chain pair even where a Bluestein stage whose
-// convolution had the line's length would take the depth-first convolution (X50's rule), with a
-// profile the test sets: when the rules take the pair is experiment X67's to decide (task 5.2g).
+// X50's rule for a Bluestein convolution of the line's length does not reach pipelines: with
+// the profile's pipeline fields off (X67's rule, task 5.2g, below), a <C, C, C> line keeps the
+// chain pair where such a convolution takes two depth-first chains, with a profile the test sets.
 // Forced there, the pair agrees with the chain pair; a strided line never takes it.
 TEST(PipelineRuns, DepthFirstPairByTheRules) {
   using C = std::complex<double>;
@@ -863,6 +863,7 @@ TEST(PipelineRuns, DepthFirstPairByTheRules) {
   rules.profile.depth_top_alt = 20;
   rules.profile.depth_convolution_max_bytes = std::size_t{4} * 1024 * 1024;
   rules.profile.bluestein_pow2_part_bytes = SIZE_MAX;
+  rules.profile.pipeline_depth_min_kib = 0;
   rules.bluestein_length = n;
   for (const fftn::isa t : fftn::test::runnable_isas()) {
     // A Bluestein prime whose convolution is n points long.
@@ -900,6 +901,66 @@ TEST(PipelineRuns, DepthFirstPairByTheRules) {
                {.name = "float by the rules", .n = n, .count = 1, .expect = "the chain pair"},
                fftn::isa::best, src),
            rules, false, false);
+}
+
+// X67's rule (task 5.2g; machine_profile::pipeline_depth_min_kib): with the fields set, the rules
+// take the depth-first pair for a contiguous <C, C, C> line within the byte range, on the target
+// the profile names only, with exactly the forced pair's program and bits; a line below the range,
+// another target, a prologue factor, accumulation or a strided line keep the chain pair.
+TEST(PipelineRuns, DepthFirstPairByX67sRule) {
+  using C = std::complex<double>;
+  constexpr std::size_t n = 34560; // 540 KiB
+  d::build_settings rules;
+  rules.rader = 0;
+  rules.profile.depth_convolution_max_bytes = 0;
+  rules.profile.pipeline_depth_min_kib = 288;
+  rules.profile.pipeline_depth_max_kib = 2048;
+  for (const fftn::isa t : fftn::test::runnable_isas()) {
+    rules.profile.pipeline_depth_isa = t;
+    const runs_case valid{.name = "X67's rule, valid halves",
+                          .n = n,
+                          .count = 2,
+                          .in = {{0, 0, n / 2}},
+                          .out = {{n / 4, 0, n / 2}},
+                          .expect = "the depth-first pair"};
+    fftn::test::input_source a(0x67A1ULL);
+    std::vector<C> by_rules;
+    // The line is too long for the quadruple-precision reference: against the forced pair
+    // (bitwise: the same program) and the chain pair (within the derived tolerance).
+    run_core(runs_run<double, C>(valid, t, a), rules, true, false, &by_rules);
+    d::build_settings forced = rules;
+    forced.strategy = d::strategy_choice::depth;
+    fftn::test::input_source b(0x67A1ULL);
+    std::vector<C> by_forced;
+    run_core(runs_run<double, C>(valid, t, b), forced, false, false, &by_forced);
+    EXPECT_TRUE(same_bits(by_rules, by_forced)) << fftn::isa_name(t);
+    d::build_settings chain = rules;
+    chain.strategy = d::strategy_choice::chain;
+    runs_case as_chain = valid;
+    as_chain.expect = "the chain pair";
+    fftn::test::input_source e(0x67A1ULL);
+    std::vector<C> by_chain;
+    run_core(runs_run<double, C>(as_chain, t, e), chain, false, false, &by_chain);
+    expect_close<double>(by_rules, by_chain, n, fftn::isa_name(t));
+
+    // Outside the rule: the chain pair.
+    d::build_settings other = rules;
+    other.profile.pipeline_depth_isa =
+        t == fftn::isa::scalar ? fftn::isa::avx512 : fftn::isa::scalar;
+    fftn::test::input_source c(0x67A2ULL);
+    run_core(runs_run<double, C>(
+                 {.name = "another target", .n = n, .count = 1, .expect = "the chain pair"}, t, c),
+             other, false, false);
+    for (runs_case rc :
+         {runs_case{.name = "below the range", .n = 16384, .count = 1},
+          runs_case{.name = "a prologue factor", .n = n, .count = 1, .pro = factor_kind::complex},
+          runs_case{.name = "accumulated", .n = n, .count = 1, .accumulate = true},
+          runs_case{.name = "strided", .n = n, .count = 1, .in_stride = 2}}) {
+      rc.expect = "the chain pair";
+      fftn::test::input_source s(0x67A3ULL + rc.n);
+      run_core(runs_run<double, C>(rc, t, s), rules, false, false);
+    }
+  }
 }
 
 template <class In, class Mid, class Out>
