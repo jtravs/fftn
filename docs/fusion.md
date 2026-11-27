@@ -120,9 +120,10 @@ one thread unless stated):
 - **The stage itself is cheap.** A callback that returns at once costs 1–3 % over the plain plan
   on rows of 1024 points and more and on planes; short rows in batches (256 points) pay 12–37 %,
   because a plan with a callback walks them row by row.
-- **Against your own loop after the plan:** about even on rows (a cubic term per element: 0.90–
-  1.09 of the time of the plain plan plus a separate loop), a win on many short rows (16 points:
-  0.55–0.94). Planes, and the free-space layout of a stride-1 batch of planes, pay more (1.1–1.6
+- **Against your own loop after the plan:** about even on c2c rows and on real rows of 4096
+  points and more (a cubic term per element: 0.90–1.09 of the time of the plain plan plus a
+  separate loop), a win on many short c2c rows (16 points: 0.55–0.94), a loss on short real rows
+  in batches (256 points: 1.12–1.14 on the EPYC, 1.16–1.22 on the Xeon). Planes, and the free-space layout of a stride-1 batch of planes, pay more (1.1–1.6
   on the EPYC; 1.08–1.66 on the Xeon, its planes 0.61–0.77 of that since its blocks were widened):
   there the blocks are columns, a few at a time. Fusing a pointwise term into a callback is worth
   it for the code it saves you, not yet for speed on planes.

@@ -3419,7 +3419,8 @@ measured planning or a test choose (planes and volumes from 5.3c, below). Where 
 place; the vocabulary, the callback, then the store, accumulation or addition to the saved prior
 values):
 - **Chain** (c2c): as 5.3a, the copy into the workspace block by default, into the output with
-  `build_settings::callback_copy_out` (X66's arm), the chain then in place there. The edge
+  `build_settings::callback_copy_out` (X66's arm), the chain then in place there (removed by
+  X66's rule 4, task 5.3g: the copy now always goes to the block; "As measured" below). The edge
   driver's batched forms (5.2a) take callback stages as they take separate edge passes, under the
   same reach (`machine_profile::edge_batched_forms`; `leaf_rows`: rows whose transform is one
   leaf): the flat form runs a callback stage's blocks per transform, the row-block form (batch
@@ -3598,8 +3599,10 @@ a group keep their programs (the probes of 5.2f).
 As measured (task 5.3g, experiment [X66](experiments/X66-block-callbacks.md), the EPYC 7763 and
 the Xeon 6240; the Mac to follow):
 - **Block size.** `callback_block_bytes` is a quarter of L2 on the Xeon 6240's class (Intel's
-  cores; 0.933 over the cases it changes, a plane's lanes column block in one call instead of
-  3–6) and stays half the L1 elsewhere (the EPYC 7763: 0.972, short of the bar).
+  cores; per precision over the cases it changes, double 0.952 on the deciding re-run and float
+  0.839, a plane's lanes column block in one call instead of 3–6) and stays half the L1
+  elsewhere (the EPYC 7763: double 0.979, short of the bar). The gain assumes a callback that
+  walks its block in memory order.
 - **The modifying-edge copy** goes to the workspace block on every target: the copy into the
   output with the chain in place there lost on both machines (1.043, 1.065) and was deleted
   (`build_settings::callback_copy_out`).
@@ -5179,7 +5182,7 @@ to change before a release.
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
 | 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
-| 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4 took 0.933 on the Xeon and 0.972 on the EPYC against a bar of 0.95; the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
+| 2026-11-27 | Experiment X66 (task 5.3g, section 12.3, "As measured"): block callbacks' blocks of a quarter of L2 on the Xeon 6240's class (Intel's cores), half the L1 elsewhere; the input callback's copy always into the workspace block (`build_settings::callback_copy_out` deleted); fbench's callback options and catalogue `x66`; `docs/fusion.md`'s advice on callbacks | X66's rules 3 and 4 on the EPYC 7763 and the Xeon 6240 (the Mac's leg to follow): L2/4, judged per precision, passed on the Xeon in float (0.839, bar 0.945) and in double on its deciding re-run (0.952, bar 0.956; first run 0.946 against 0.945, a near miss), and missed on the EPYC in double (0.979, bar 0.956; float 0.922 passed); the copy into the output lost on both (1.043, 1.065). Rule 1's defects (short batched rows, planes, the free-space layout, out-of-place input callbacks) are leads for the maintainer |
 
 ---
 

@@ -199,7 +199,8 @@ where an item below makes them precise or narrows them.
    plans with an input callback). Plans without callbacks therefore keep their programs; an
    adopted change is checked with `describe()` and `workspace_bytes()` probes against `main`.
 10. **Added after the first runs were stopped, before any was analysed for a verdict**
-    (2026-11-26, 23:55). The first sessions (fbench options at 7af57e23; EPYC runs
+    (2026-11-26, 23:45, commit 77672c3f; the judging runs began at 23:51; this time read 23:55
+    until a typo fix of 2026-11-27, which changed no measured time). The first sessions (fbench options at 7af57e23; EPYC runs
     20261126-233227-b1ed and the two beside it, on a node at load 88 with a band of ±15 %, and
     Xeon run 20261126-233149-5693, nine rounds) were stopped, their times kept as recorded. Their
     callback walked every block line by line, whatever the strides; on planes and volumes the
@@ -226,7 +227,8 @@ mode, median statistic, one thread unless stated, 16–20 valid rounds per run; 
   (±1.21 %).
 - **Xeon 6240** (GCC 14.4, `avx512`, `--serial`, shared with other users' jobs: load 9–22, 19 of
   20 rounds above the quiet thresholds): out 20261126-235212-31ed (±2.59 %), exp 20261127-001612-2554 (±2.21 %, 10 rounds, 7 of them loaded),
-  in 20261127-002403-2238 (±2.11 %, 10 rounds, quiet).
+  in 20261127-002403-2238 (±2.11 %, 10 rounds, quiet); rule 3's f64 re-run 20261127-021303-3fa6
+  (±1.50 %, 20 rounds, 15 loaded).
 - Stopped before the loop-order fix (amendment 10), kept as recorded and not analysed:
   20261126-233149-5693 (Xeon), 20261126-233227-b1ed and its two siblings (EPYC, loaded node).
 
@@ -266,25 +268,42 @@ None is fixed in 5.3g; each is a lead for the maintainer (Verdict).
 cases).** EPYC 1.011 [1.006, 1.017], Xeon 1.025 [1.017, 1.041]: both at most 1.03 × (1 + band).
 **Passed**; rule 3 is judged.
 
-**Rule 3 (block size, cubic, target set by the notes).** Geometric mean of Ki/K over the cases
-each candidate changes; the bar is 0.97 × (1 − band) with no case slower beyond the band.
+**Rule 3 (block size, cubic, target set by the notes), per machine and precision as the rule
+says.** Geometric mean of Ki/K over the cases each candidate changes; the bar is 0.97 × (1 −
+band) with no case slower beyond the band. `callback_block_bytes` is one value per profile, so a
+machine adopts a candidate only where both precisions pass (the lead's decision, 2026-11-27).
 
-| Machine | K1 (8 KiB) | K3 (32 KiB) | K4 (L2/4) | Bar | Verdict |
+| Machine, precision (run) | K1 (8 KiB) | K3 (32 KiB) | K4 (L2/4) | Bar | Criterion |
 |---|---|---|---|---|---|
-| EPYC | 1.039 (29 cases; 3 slower) | 0.984 (27) | 0.972 (27; none slower; planes 0.78–0.90, c2c 64³ 0.954) | 0.956 | L1/2 stays (missed by 1.7 %, more than the band: no re-run) |
-| Xeon | 1.034 (30; 5 slower) | 0.965 (27) | **0.933** (27; none slower; planes 0.61–0.77, r2c 32768 0.965) | 0.945 | **L2/4 adopted** (256 KiB) |
+| EPYC f64 (-b498) | 1.037 (26 cases; 2 slower) | 0.989 (24) | 0.979 (24; none slower) | 0.956 | missed |
+| EPYC f32 (-b498) | 1.059 (3; 1 slower) | 0.944 (3) | 0.922 (3; none slower) | 0.956 | passed (informative) |
+| Xeon f64 (-31ed) | 1.021 (27; 4 slower) | 0.969 (24) | 0.9458 (24; none slower) | 0.9449 | near miss (inside the ±2.59 % band) |
+| Xeon f64 re-run (20261127-021303-3fa6, band ±1.50 %, 20 rounds, 15 loaded) | 1.027 (27; 7 slower) | 0.977 (24) | **0.952** (24; none slower; planes 0.66–0.77) | 0.9555 | **passed** (decides) |
+| Xeon f32 (-31ed) | 1.159 (3; 1 slower) | 0.933 (3) | 0.839 (3; none slower) | 0.9449 | passed |
 
-Adopted on the Xeon 6240's class only (Intel's cores, X61's key: a private L2 below 2 MiB
-without a large L3 per CPU), in `set_grid_sizes` (commit 94fec438); the EPYC's class and every
-other machine keep L1/2. Only callback stages read the field.
+The first verdict pooled both precisions (Xeon 0.933, EPYC 0.972 over 27 cases); the second
+reader split them as the rule says. The Xeon's f64 near miss got the one `--serial` re-run the
+protocol requires (same f64 cases and the rule-3 arms P, K, K1, K3, K4 at 77672c3f, the rules
+unchanged), which decides: it passed (0.952 at most 0.9555, no case slower beyond the band), so with float passing too the Xeon 6240's class keeps L2/4 (commit 94fec438). The EPYC keeps L1/2 (f64 missed; its f32 pass is recorded
+as informative). K4 was measured only with the memory-order walk (`CALL_LOOP=memory`), never with
+the line-by-line one (Kn), so L2/4's gain on the planes depends on a callback that walks its
+block in memory order. Only callback stages read the field.
 
 **Rule 4 (the copy's destination, c2c out of place, the 13 cases whose note differs between O
 and S).** EPYC O/S 1.043 [1.032, 1.060], seven cases slower beyond the band (1.035–1.147); Xeon
 1.065 [1.047, 1.082] over its 8 cases, five slower beyond the band (1.068–1.139). S stays on both; per the rule, O's build setting and code are deleted (commit
 e9f5c959). **S/U_in** (the input callback with its copy against the user modifying their own
-input in place): EPYC 1.037–1.327 on every out-of-place row (geomean over the 19 c2c cases
-1.109), 0.97–1.02 on the in-place planes (no copy); Xeon 0.79–1.42 (geomean 1.084): rows of 16384 points and more 1.27–1.42, 3072 1.25, float rows 1.21–1.26, batched rows of 64–4096 points 1.01–1.04, 16 × 1024 0.79, in place 0.86–1.02. Every out-of-place row is a
-rule-1 defect by rule 4's letter. Cause: the user's loop destroys its input, while the callback
+input in place): EPYC 1.037–1.327 on the out-of-place cases (geomean over the 19 c2c cases
+1.109), 0.97–1.02 on the in-place planes (no copy); Xeon 0.79–1.42 (geomean 1.084): rows of
+16384 points and more 1.27–1.42, 3072 1.25, float rows 1.21–1.26, batched rows of 64–4096
+points 1.01–1.04, 4099 × 4 1.056, 16 × 1024 0.79, in place 0.86–1.02. Rule-1 defects by rule
+4's letter (whole interval above 1.05 × (1 + band)): on the EPYC (threshold 1.0605, run
+20261126-235126-67b4) c2c 64 × 1024, 256 × 256, 1024 × 64, 4096 × 16, 16 × 1024, 3072, the
+single rows of 16384, 65536, 262144 and 2^20 points, 64³ and f32 1024 × 64 (12 cases; not 4099 ×
+4, 1.037, nor f32 65536, nor the in-place planes); on the Xeon (threshold 1.0715, run
+20261127-002403-2238) the single rows of 16384, 65536, 262144 and 2^20 points, 3072, and f32
+1024 × 64 and 65536 (7 cases; not the batched rows of 64–4096 points, 4099 × 4, 16 × 1024, 64³
+or the planes). Cause: the user's loop destroys its input, while the callback
 must not, so the plan copies the input (one more sweep), and then runs the callback as a stage of
 its own over the copy (a second sweep where the row exceeds the cache: the 2^20-point row's 1.33).
 
@@ -304,6 +323,18 @@ chunks can), 0.89–0.94 on batches, 1.10–1.16 on the planes.
 
 **Rule 7.** Plans without callbacks never read `callback_block_bytes` or
 `callback_copy_out` (`src/`), so the adoption and the deletion leave their programs as they were.
+Probes, as amendment 9 promised: 848 plans without callbacks (c2c rows forward and backward, in
+and out of place, r2c and c2r rows, of 16 to 2^20 points in batches of 1 to 1024; c2c, r2c and
+c2r planes of 16² to 1000², alone and in batches of 8; volumes of 16³ to 97³; both precisions)
+built with the Xeon 6240's profile (`profile_for` of its recorded topology, Intel) at
+`callback_block_bytes` 16 KiB (`main`'s value) and 256 KiB (the adopted one): `describe()` and
+`workspace_bytes()` at 1 and 8 lanes identical for all 848, on x86-64 (GCC 16, the library at
+94fec438, DMOG's login node) and on arm64 (Clang 23, the Mac). The probe compares the two
+values within one build, which isolates the adopted change; the branch's other library change
+is the deletion of `callback_copy_out`, read only by plans with an input callback.
+
+The stored runs are in the main checkout's fbench store, `bench-out/runs/` (git-ignored), and in
+each machine's job directory under the remote profiles' work directories.
 
 ## Verdict
 
@@ -311,14 +342,19 @@ Judged on the EPYC 7763 (AMD) and the Xeon 6240 (Intel); the Mac leg is a daytim
 (amendment 1), so Apple's key keeps its defaults.
 
 - **Rule 1: defects found, none fixed in 5.3g.** By the rule's letter the cases listed above
-  (both callbacks, and every out-of-place c2c row through rule 4's S/U_in) are defects. Each is
+  (both callbacks, and the out-of-place c2c cases rule 4's S/U_in names: 12 on the EPYC, 7 on
+  the Xeon) are defects. Each is
   recorded here as a lead with its cause; the rule wants the maintainer's agreement to leave them
   as leads, which this verdict asks for. Most of the slow cases are the planes, whose cause rule
   3 addressed on the Xeon.
 - **Rule 2: passed** on both machines (1.011, 1.025).
-- **Rule 3: L2/4 adopted on the Xeon 6240's class** (Intel's cores; commit 94fec438): 0.933 over
-  its 27 cases, none slower. **Half the L1 stays** on the EPYC 7763's class (L2/4 0.972 against a
-  bar of 0.956) and on every other machine.
+- **Rule 3, per precision: L2/4 adopted on the Xeon 6240's class** (Intel's cores; commit
+  94fec438), where both precisions pass: f32 0.839 (run -31ed, bar 0.9449), f64 0.9458 in run
+  -31ed (a near miss of its bar 0.9449, inside the band) and 0.952 in the deciding `--serial`
+  re-run 20261127-021303-3fa6 (bar 0.9555, none slower). **Half the L1 stays** on the EPYC
+  7763's class (f64 0.979 against 0.956: missed; f32 0.922 passed, informative) and on every
+  other machine. The gain needs a callback that walks its block in memory order (K4 was never
+  timed with the line-by-line walk).
 - **Rule 4: S stays** (the copy into the workspace block) on both machines (O/S 1.043 and
   1.065), and O's build setting, code, tests and fbench option were deleted (commit e9f5c959).
 - **Rules 5 and 6** (informative) went into `docs/fusion.md`'s callbacks section: precompute a

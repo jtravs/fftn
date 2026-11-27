@@ -197,11 +197,12 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
     p.edge_batched_forms = edge_forms_reach::leaf_rows;
   }
   // X66's rule 3 (machine_profile::callback_block_bytes): on the Xeon 6240's class (Intel's cores
-  // only) blocks of a quarter of L2 took 0.933 of the time of half the L1 over the 27 cubic
-  // callback cases whose blocks they change, none slower: a plane's lanes column block (16
-  // columns of 192-384 points) reaches the callback in one call instead of 3-6 (0.61-0.77 on
-  // the planes). On the EPYC 7763 the same blocks took 0.972, short of the rule's bar, so Zen 3's
-  // class and every other machine keep half the L1.
+  // only) blocks of a quarter of L2 passed in both precisions over the cubic callback cases whose
+  // blocks they change, none slower: double 0.952 on the deciding re-run (run
+  // 20261127-021303-3fa6), float 0.839. A plane's lanes column block (16 columns of 192-384
+  // points) reaches the callback in one call instead of 3-6 (0.61-0.77 on the planes). On the
+  // EPYC 7763 double took 0.979, short of the rule's bar, so Zen 3's class and every other
+  // machine keep half the L1.
   if (xeon6240_like && c.l2.size != 0) {
     p.callback_block_bytes = static_cast<std::uint32_t>(
         std::min<std::size_t>(c.l2.size / 4, std::numeric_limits<std::uint32_t>::max()));
