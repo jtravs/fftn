@@ -426,6 +426,11 @@ fftn_plan_release(forward);
   shapes with edges), stored runs, r2c or c2r in place, and wisdom (`fftn_wisdom_add` refuses a
   split plan; split plans are planned by the rules, which `fftn_plan_describe` says when other
   planning was asked for). `split` with `FFTN_R2R` is refused. Pipelines have no split form.
+- **`fftn_shape` grew a field** (`split`, last) on 2026-11-27, as Q21 allows before 1.0. A
+  zeroed shape is unchanged in meaning, but C programs must be rebuilt against the new header,
+  and mirrors of the struct in other languages (Python's `ctypes`, Julia's `ccall`, Fortran's
+  `iso_c_binding`) must add the field. C++ code that names every field in a designated
+  initialiser and leaves out `split` gets a `-Wmissing-field-initializers` warning.
 
 ## Not yet in C
 

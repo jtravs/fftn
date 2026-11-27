@@ -70,7 +70,7 @@ std::size_t side_reals(const split_case& c, bool input) {
     tight *= len;
   }
   const std::ptrdiff_t dist = input ? c.in_dist : c.out_dist;
-  span += (c.count - 1) * (dist != 0 ? static_cast<std::size_t>(dist) : tight);
+  span += (c.count - 1) * (dist != 0 ? static_cast<std::size_t>(dist < 0 ? -dist : dist) : tight);
   return span;
 }
 
@@ -120,13 +120,22 @@ template <class T> std::vector<T> values(std::size_t reals, std::uint32_t seed) 
 // What the arrays hold where nothing is written.
 template <class T> constexpr T untouched = static_cast<T>(-7.25);
 
+// Where transform 0 lies in a side's arrays: at the end when the side's distance is negative.
+std::size_t side_offset(const split_case& c, bool input) {
+  const std::ptrdiff_t dist = input ? c.in_dist : c.out_dist;
+  return dist < 0 ? (c.count - 1) * static_cast<std::size_t>(-dist) : 0;
+}
+
 // The arrays of one execution: the input's real parts (or real array) and imaginary parts, the
 // output's likewise; an empty vector for a real side's imaginary parts. In place, the output's
-// arrays are the input's.
+// arrays are the input's. The pointers address element 0 of transform 0.
 template <class T> struct arrays {
   std::vector<T> in_re, in_im, out_re, out_im;
+  std::size_t in_off = 0;
+  std::size_t out_off = 0;
 
-  arrays(const split_case& c, std::size_t salt) {
+  arrays(const split_case& c, std::size_t salt)
+      : in_off(side_offset(c, true)), out_off(side_offset(c, c.in_place)) {
     const std::size_t in_n = side_reals(c, true);
     in_re = values<T>(in_n, static_cast<std::uint32_t>(1234 + salt));
     if (complex_side(c, true)) {
@@ -141,12 +150,13 @@ template <class T> struct arrays {
     }
   }
 
-  T* re_out(bool in_place) { return in_place ? in_re.data() : out_re.data(); }
+  T* re_out(bool in_place) { return (in_place ? in_re.data() : out_re.data()) + out_off; }
   T* im_out(bool in_place) {
     std::vector<T>& v = in_place ? in_im : out_im;
-    return v.empty() ? nullptr : v.data();
+    return v.empty() ? nullptr : v.data() + out_off;
   }
-  const T* im_in() const { return in_im.empty() ? nullptr : in_im.data(); }
+  const T* re_in() const { return in_re.data() + in_off; }
+  const T* im_in() const { return in_im.empty() ? nullptr : in_im.data() + in_off; }
   // The output's arrays, to compare.
   [[nodiscard]] std::vector<T> result_re(bool in_place) const { return in_place ? in_re : out_re; }
   [[nodiscard]] std::vector<T> result_im(bool in_place) const { return in_place ? in_im : out_im; }
@@ -170,9 +180,9 @@ template <class In, class Out, class T> cpp_result<T> run_cpp(const split_case& 
     typename fftn::plan<In, Out>::in_data in{};
     typename fftn::plan<In, Out>::out_data out{};
     if constexpr (std::is_same_v<In, T>) {
-      in = a.in_re.data();
+      in = a.re_in();
     } else {
-      in = {a.in_re.data(), a.im_in()};
+      in = {a.re_in(), a.im_in()};
     }
     if constexpr (std::is_same_v<Out, T>) {
       out = a.re_out(c.in_place);
@@ -261,7 +271,7 @@ template <class T> void check_case(const split_case& c) {
   for (const form_case& f : forms) {
     SCOPED_TRACE(f.name);
     arrays<T> a(c, 0);
-    const fftn_split_const_ptr in{.re = a.in_re.data(), .im = a.im_in()};
+    const fftn_split_const_ptr in{.re = a.re_in(), .im = a.im_in()};
     const fftn_split_ptr out{.re = a.re_out(c.in_place), .im = a.im_out(c.in_place)};
     fftn_error e{};
     const int status =
@@ -320,6 +330,16 @@ std::vector<split_case> cases() {
                    .in_dist = 90,
                    .out_dist = 85,
                    .name = k + " padded planes"});
+      // Negative distances: the transforms in reverse order in memory on both sides.
+      v.push_back({.kind = kind,
+                   .direction = dir,
+                   .n = {20},
+                   .count = 3,
+                   .in_strides = {1},
+                   .out_strides = {1},
+                   .in_dist = -24,
+                   .out_dist = -22,
+                   .name = k + " rows, negative distances"});
       if (kind == FFTN_C2C) {
         v.push_back({.kind = kind,
                      .direction = dir,
@@ -399,45 +419,119 @@ fftn_plan* split_plan(int split) {
   return fftn_plan_create(&s, nullptr, nullptr);
 }
 
-TEST(CSplitDeathTest, ASplitPlanThroughAnInterleavedFormEndsTheProgram) {
+// The arrays and workspace of one execution of split_plan's 16-point c2c plan of two transforms,
+// made in the death test's child; nothing is freed, since every form ends the program.
+struct death_data {
+  std::vector<double> x = std::vector<double>(64);
+  std::vector<double> y = std::vector<double>(64);
+  fftn_workspace* ws;
+  explicit death_data(const fftn_plan* plan)
+      : ws(fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), nullptr)) {}
+  [[nodiscard]] fftn_split_const_ptr in() const { return {.re = x.data(), .im = x.data() + 32}; }
+  [[nodiscard]] fftn_split_ptr out() { return {.re = y.data(), .im = y.data() + 32}; }
+};
+
+// An executor that runs its tasks on the calling thread.
+fftn_executor serial_executor() {
+  fftn_executor e{};
+  e.concurrency = [](void* /*self*/) { return 1; };
+  e.bulk = [](void* /*self*/, int n, fftn_task task, void* arg) {
+    for (int i = 0; i < n; ++i) {
+      task(arg, i);
+    }
+  };
+  return e;
+}
+
+constexpr fftn_team one_member{.rank = 0, .size = 1, .group_size = 0};
+
+// Every family of interleaved execution (serial, pieces, team, executor, and an _args form)
+// given a split plan ends the program (c_api.cpp, check_layout).
+TEST(CSplitDeathTest, ASplitPlanThroughEachInterleavedFormEndsTheProgram) {
   fftn_plan* plan = split_plan(1);
   ASSERT_NE(plan, nullptr);
+  const char* message = "without the _split suffix";
   EXPECT_DEATH(
       {
-        std::vector<double> x(64);
-        std::vector<double> y(64);
-        fftn_workspace* ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), nullptr);
-        fftn_execute(plan, x.data(), y.data(), ws);
+        death_data d(plan);
+        fftn_execute(plan, d.x.data(), d.y.data(), d.ws);
       },
-      "without the _split suffix");
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_transforms(plan, 0, 1, d.x.data(), d.y.data(), d.ws);
+      },
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_team(plan, d.x.data(), d.y.data(), one_member, d.ws, FFTN_COMPLETION_ALL);
+      },
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        const fftn_executor e = serial_executor();
+        static_cast<void>(fftn_execute_on(plan, d.x.data(), d.y.data(), &e, d.ws));
+      },
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_args(plan, d.x.data(), d.y.data(), d.ws, nullptr);
+      },
+      message);
   fftn_plan_release(plan);
 }
 
-TEST(CSplitDeathTest, AnInterleavedPlanThroughASplitFormEndsTheProgram) {
+// Every _split form given a plan of interleaved data ends the program.
+TEST(CSplitDeathTest, AnInterleavedPlanThroughEachSplitFormEndsTheProgram) {
   fftn_plan* plan = split_plan(0);
   ASSERT_NE(plan, nullptr);
+  const char* message = "_split form";
   EXPECT_DEATH(
       {
-        std::vector<double> x(64);
-        std::vector<double> y(64);
-        fftn_workspace* ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), nullptr);
-        fftn_execute_split(plan, {.re = x.data(), .im = x.data() + 32},
-                           {.re = y.data(), .im = y.data() + 32}, ws);
+        death_data d(plan);
+        fftn_execute_split(plan, d.in(), d.out(), d.ws);
       },
-      "_split form");
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_transforms_split(plan, 0, 1, d.in(), d.out(), d.ws);
+      },
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_team_split(plan, d.in(), d.out(), one_member, d.ws, FFTN_COMPLETION_ALL);
+      },
+      message);
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        const fftn_executor e = serial_executor();
+        static_cast<void>(fftn_execute_on_split(plan, d.in(), d.out(), &e, d.ws));
+      },
+      message);
   fftn_plan_release(plan);
 }
 
+// A NULL imaginary array on either split side ends the program, naming split_ptr::im.
 TEST(CSplitDeathTest, ANullImaginaryArrayEndsTheProgram) {
   fftn_plan* plan = split_plan(1);
   ASSERT_NE(plan, nullptr);
   EXPECT_DEATH(
       {
-        std::vector<double> x(64);
-        std::vector<double> y(64);
-        fftn_workspace* ws = fftn_workspace_create(fftn_plan_workspace_bytes(plan, 1), nullptr);
-        fftn_execute_split(plan, {.re = x.data(), .im = nullptr},
-                           {.re = y.data(), .im = y.data() + 32}, ws);
+        death_data d(plan);
+        fftn_execute_split(plan, {.re = d.x.data(), .im = nullptr}, d.out(), d.ws);
+      },
+      "split_ptr::im");
+  EXPECT_DEATH(
+      {
+        death_data d(plan);
+        fftn_execute_split(plan, d.in(), {.re = d.y.data(), .im = nullptr}, d.ws);
       },
       "split_ptr::im");
   fftn_plan_release(plan);

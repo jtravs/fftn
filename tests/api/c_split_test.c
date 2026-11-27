@@ -107,6 +107,21 @@ int csplit_run(const fftn_shape* shape, const fftn_options* options, ctest_form 
 
 /* ---- Refusals ---- */
 
+/* An executor that runs its tasks on the calling thread, for the refusals: with a NULL workspace
+ * fftn_execute_on_split must refuse before calling it. */
+static int csplit_serial_concurrency(void* self) {
+  (void)self;
+  return 1;
+}
+
+static void csplit_serial_bulk(void* self, int n, fftn_task task, void* arg) {
+  int i;
+  (void)self;
+  for (i = 0; i < n; ++i) {
+    task(arg, i);
+  }
+}
+
 /* Whether `e` holds `code` and a non-empty message containing `needle`. */
 static int csplit_error_is(const fftn_error* e, int code, const char* needle) {
   return e->code == code && e->message[0] != '\0' && strlen(e->message) < sizeof e->message &&
@@ -146,6 +161,7 @@ int csplit_refusals(void) {
   fftn_split_const_ptr in;
   fftn_split_ptr out;
   fftn_executor none;
+  fftn_executor serial;
 
   memset(&s, 0, sizeof s);
   s.kind = FFTN_C2C;
@@ -220,8 +236,13 @@ int csplit_refusals(void) {
   out.re = re + 32;
   out.im = im + 32;
   memset(&none, 0, sizeof none);
+  serial = none;
+  serial.concurrency = csplit_serial_concurrency;
+  serial.bulk = csplit_serial_bulk;
   if (ws == NULL || fftn_execute_on_split(p, in, out, NULL, ws) != FFTN_ERROR_INVALID_ARGUMENT ||
-      fftn_execute_on_split(p, in, out, &none, ws) != FFTN_ERROR_INVALID_ARGUMENT) {
+      fftn_execute_on_split(p, in, out, &none, ws) != FFTN_ERROR_INVALID_ARGUMENT ||
+      fftn_execute_on_split(p, in, out, &serial, NULL) != FFTN_ERROR_INVALID_ARGUMENT ||
+      fftn_execute_on_split(p, in, out, &serial, ws) != FFTN_OK) {
     fftn_workspace_destroy(ws);
     fftn_wisdom_destroy(w);
     fftn_plan_release(p);

@@ -1067,13 +1067,21 @@ Points that matter:
   - *The plan.* A flag on the shape, `fftn_shape::split`, mirroring the core's
     `shape_view::split` that C++'s element types set: one plan type, one `fftn_plan_create`, the
     kind and precision fields unchanged, strides and distances counting reals on a split side as
-    in C++. `split` with `FFTN_R2R` is refused in C. Alternative: three kinds
-    (`FFTN_C2C_SPLIT`, …), which every switch on `fftn_kind` would then have to know.
+    in C++. `split` with `FFTN_R2R` is refused in C. The cost: `fftn_shape` grew a field on
+    2026-11-27, which Q21 allows before 1.0, so C callers and FFI mirrors of the struct (ctypes,
+    Julia's `ccall`, Fortran's `iso_c_binding`) must be rebuilt or updated, and C++ callers that
+    list every field in a designated initialiser without `split` get GCC's
+    `-Wmissing-field-initializers`. Alternative: three kinds (`FFTN_C2C_SPLIT`, …), the only
+    choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
+    `fftn_kind` having to know them.
   - *The executions.* The four forms with a `_split` suffix, as 6.9 added `_args`; no form takes
     both, since split plans take no edges. A split plan through the other forms, or a plan on
-    interleaved data through the `_split` forms, ends the program with a message, as a plan with
-    factors executed without its arrays does (C cannot refuse it at compile time as C++ does); a
-    NULL `im` on a split side ends it naming `split_ptr::im`, as in C++.
+    interleaved data through the `_split` forms, ends the program with a message, as the core's
+    `contract_failure` does for a plan with factors executed without its arrays (C cannot refuse
+    it at compile time as C++ does); a NULL `im` on a split side ends it naming `split_ptr::im`,
+    as in C++. The serial, pieces and team forms return nothing, so they cannot report it; the
+    executor forms return a status, and could return `FFTN_ERROR_INVALID_ARGUMENT` instead (18.2
+    Q31's alternative).
   - *What is refused, as in C++.* Edges (`fftn_plan_create_edges` with non-NULL edges), stored
     runs, in-place r2c and c2r: the C++ messages pass through. `fftn_wisdom_add` refuses a split
     plan with `FFTN_ERROR_INVALID_ARGUMENT` (C++ constrains `wisdom::add` away); a split plan is
@@ -4919,17 +4927,25 @@ table are built on the proposal, provisional and with a second reader, until it 
     the input, as C++ has), or four pointers per call as FFTW's guru split functions take them
     (no structs, but a signature per kind).
 29. **How a split plan is made.** Proposal: `int split` as the last field of `fftn_shape`
-    (nonzero: split; refused with `FFTN_R2R`), mirroring `shape_view::split`. Alternatives: a
-    `fftn_layout` enumeration field (room for other layouts, refusable values), or three more
-    `fftn_kind` values.
+    (nonzero: split; refused with `FFTN_R2R`), mirroring `shape_view::split`. It changes
+    `fftn_shape`'s layout (Q21 allows it before 1.0): C callers and FFI mirrors (ctypes, Julia,
+    Fortran) must be rebuilt, and C++ designated initialisers without `split` warn
+    (`-Wmissing-field-initializers`). Alternatives: a `fftn_layout` enumeration field (room for
+    other layouts, refusable values, the same layout change), or three more `fftn_kind` values,
+    the only choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
+    `fftn_kind` knowing them.
 30. **The executions.** Proposal: `fftn_execute_split`, `fftn_execute_transforms_split`,
     `fftn_execute_team_split` and `fftn_execute_on_split`, following 6.9's `_args` suffix; no
     `_split_args` forms until split plans take edges.
 31. **Layout mismatches at execution.** Proposal: a split plan through an interleaved form, or
     an interleaved plan through a `_split` form, ends the program with a message (one test of a
-    flag the handle keeps), since C cannot refuse it at compile time and an execution cannot
-    return an error; `fftn_wisdom_add` refuses split plans with a status. Alternative: leave the
-    mismatch undefined, as a wrong kind or precision of `void*` data is.
+    flag the handle keeps), as the core's `contract_failure` ends it for a plan with factors
+    executed without its arrays: C cannot refuse it at compile time, and the serial, pieces and
+    team forms return nothing. `fftn_wisdom_add` refuses split plans with a status.
+    Alternatives: the executor forms (`fftn_execute_on`, `_on_args`, `_on_split`), which return
+    a status, return `FFTN_ERROR_INVALID_ARGUMENT` for a mismatch instead, the void forms still
+    ending the program; or leave the mismatch undefined, as a wrong kind or precision of `void*`
+    data is.
 
 **Generator (task 1.1).** (a) A vocabulary operation that multiplies by a constant complex
 number: two `FCMLA` on NEON+FCMA, where the complex-register codelets now spend two

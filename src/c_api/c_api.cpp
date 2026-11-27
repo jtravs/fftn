@@ -468,10 +468,11 @@ bool complex_output(detail::transform_kind k) noexcept {
 // ---- Split complex ----
 
 // Ends the program when an execution's form does not match the plan's layout (c_api.h,
-// fftn_plan_create; DESIGN.md 18.2, Q31). C cannot refuse it at compile time as C++ does, and an
-// execution cannot return an error: a split plan through an interleaved form would run without
-// its imaginary arrays, an interleaved plan through a _split form would read the real parts as
-// interleaved values.
+// fftn_plan_create; DESIGN.md 18.2, Q31), as contract_failure does for a plan with factors
+// executed without its arrays. C cannot refuse it at compile time as C++ does, and the serial,
+// pieces and team executions cannot return an error (the executor forms could; Q31 keeps them
+// alike): a split plan through an interleaved form would run without its imaginary arrays, an
+// interleaved plan through a _split form would read the real parts as interleaved values.
 void check_layout(const fftn_plan* plan, bool split_form) noexcept {
   if (plan->split == split_form) {
     return;
