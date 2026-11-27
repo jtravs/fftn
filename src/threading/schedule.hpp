@@ -503,6 +503,17 @@ struct machine_profile {
   // fits the struct's tail padding: the profile's size, which the plain drivers' code copies
   // (schedule::profile), stays what it was.
   std::uint32_t callback_block_bytes = std::uint32_t{16} * 1024;
+  // The longest odd DCT-I or DST-I axis that takes the folded route (core/r2r.cpp: a real DFT
+  // of n -+ 1 points instead of the extension's 2(n -+ 1), its odd outputs running sums of the
+  // spectrum, so less accurate as n grows); 0: none, the extensions everywhere. Experiment X85's
+  // arm D. 16 bits (the route's accuracy ends far below 65535 points; X85) and the field below
+  // 8: both after callback_block_bytes in the struct's tail padding, so its size is unchanged.
+  std::uint16_t r2r_folded_max = 0;
+  // Whether a real-to-real plane's or volume's strided axes run as lanes over blocks of adjacent
+  // lines (core/r2r.cpp: each block's read stage into a tile, the lanes chain, the store stage
+  // from it) instead of one line at a time. Experiment X85's arm L. Every line's bits are the
+  // same either way.
+  bool r2r_lanes_columns = false;
 };
 
 // The profile of a machine of topology t (its CPU count aside): the defaults above, which

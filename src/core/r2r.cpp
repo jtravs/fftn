@@ -73,6 +73,14 @@ const char* kind_text(r2r_kind k) {
   return "dht";
 }
 
+// The real index of complex element i of a scratch line whose elements lie `stride` apart: 1
+// for a line alone, the block's B in a tile of adjacent lines (element i of line l at i B + l;
+// X85's arm L). The read stages write scratch at pass_args::dst_stride, the store stages read it
+// at pass_args::src_stride.
+template <class I> [[gnu::always_inline]] inline std::ptrdiff_t cx(I i, std::ptrdiff_t stride) {
+  return 2 * static_cast<std::ptrdiff_t>(i) * stride;
+}
+
 // The read stage of a DHT line of n reals (core/r2r.hpp): units [first, last) of the packed
 // complex line in scratch (dst, stride 1), read at src (pass_args::src_stride reals apart) and,
 // with Factor, each real times the input edge's factor (in_factor, src_qstride elements apart along
@@ -83,6 +91,7 @@ template <class T, bool Factor, bool Even>
 void dht_read(const pass_args* a, const void* src, void* dst, std::size_t first, std::size_t last) {
   const auto* x = static_cast<const T*>(src);
   auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
   const std::ptrdiff_t s = a->src_stride;
   const T* f = nullptr;
   if constexpr (Factor) {
@@ -103,8 +112,8 @@ void dht_read(const pass_args* a, const void* src, void* dst, std::size_t first,
         im = im * f[(j + 1) * fs];
       }
     }
-    z[2 * i] = re;
-    z[2 * i + 1] = im;
+    z[cx(i, zs)] = re;
+    z[cx(i, zs) + 1] = im;
   }
 }
 
@@ -139,6 +148,7 @@ template <class T, bool Factor, bool Scaled, bool Accumulate>
 void dht_store_even(const pass_args* a, const void* src, void* dst, std::size_t first,
                     std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   const auto* w = static_cast<const T*>(a->twiddles);
   const std::size_t n = a->n;
@@ -147,10 +157,10 @@ void dht_store_even(const pass_args* a, const void* src, void* dst, std::size_t 
   for (std::size_t k = first; k < last; ++k) {
     const std::size_t p = k == h ? 0 : k;
     const std::size_t q = k == 0 ? 0 : h - k;
-    const T zr = z[2 * p];
-    const T zi = z[2 * p + 1];
-    const T cr = z[2 * q];
-    const T ci = -z[2 * q + 1];
+    const T zr = z[cx(p, zs)];
+    const T zi = z[cx(p, zs) + 1];
+    const T cr = z[cx(q, zs)];
+    const T ci = -z[cx(q, zs) + 1];
     const T er = (zr + cr) * half;
     const T ei = (zi + ci) * half;
     // O = -i (Z_k - conj Z_(h-k)) / 2.
@@ -173,9 +183,10 @@ template <class T, bool Factor, bool Scaled, bool Accumulate>
 void dht_store_odd(const pass_args* a, const void* src, void* dst, std::size_t first,
                    std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   for (std::size_t k = first; k < last; ++k) {
-    put<T, Factor, Scaled, Accumulate>(a, y, k, z[2 * k] - z[2 * k + 1]);
+    put<T, Factor, Scaled, Accumulate>(a, y, k, z[cx(k, zs)] - z[cx(k, zs) + 1]);
   }
 }
 
@@ -238,6 +249,7 @@ void dct2_read(const pass_args* a, const void* src, void* dst, std::size_t first
                std::size_t last) {
   const auto* x = static_cast<const T*>(src);
   auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
   const T* f = nullptr;
   if constexpr (Factor) {
     f = static_cast<const T*>(a->in_factor);
@@ -250,11 +262,11 @@ void dct2_read(const pass_args* a, const void* src, void* dst, std::size_t first
   };
   for (std::size_t k = first; k < last; ++k) {
     if constexpr (Even) {
-      z[2 * k] = v(2 * k);
-      z[2 * k + 1] = v((2 * k) + 1);
+      z[cx(k, zs)] = v(2 * k);
+      z[cx(k, zs) + 1] = v((2 * k) + 1);
     } else {
-      z[2 * k] = v(k);
-      z[2 * k + 1] = T{};
+      z[cx(k, zs)] = v(k);
+      z[cx(k, zs) + 1] = T{};
     }
   }
 }
@@ -279,6 +291,7 @@ void dct3_read(const pass_args* a, const void* src, void* dst, std::size_t first
                std::size_t last) {
   const auto* x = static_cast<const T*>(src);
   auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
   const auto* w = static_cast<const T*>(a->twiddles);
   const T* f = nullptr;
   if constexpr (Factor) {
@@ -307,17 +320,17 @@ void dct3_read(const pass_args* a, const void* src, void* dst, std::size_t first
       const T wi = w[4 * k + 1];
       const T cr = wr * br + wi * bi;
       const T ci = wr * bi - wi * br;
-      z[2 * k] = ar - ci;
-      z[2 * k + 1] = ai + cr;
+      z[cx(k, zs)] = ar - ci;
+      z[cx(k, zs) + 1] = ai + cr;
     } else {
       T pr{};
       T pi{};
       untwist(in(k), in(n - k), w[2 * k], w[2 * k + 1], pr, pi);
-      z[2 * k] = pr;
-      z[2 * k + 1] = pi;
+      z[cx(k, zs)] = pr;
+      z[cx(k, zs) + 1] = pi;
       if (k != 0) {
-        z[2 * (n - k)] = pr;
-        z[2 * (n - k) + 1] = -pi;
+        z[cx(n - k, zs)] = pr;
+        z[cx(n - k, zs) + 1] = -pi;
       }
     }
   }
@@ -333,6 +346,7 @@ template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate, bool Ev
 void dct2_store(const pass_args* a, const void* src, void* dst, std::size_t first,
                 std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   const auto* w = static_cast<const T*>(a->twiddles);
   const std::size_t n = a->n;
@@ -346,10 +360,10 @@ void dct2_store(const pass_args* a, const void* src, void* dst, std::size_t firs
     if constexpr (Even) {
       const std::size_t p = k == h ? 0 : k;
       const std::size_t q = k == 0 ? 0 : h - k;
-      const T zr = z[2 * p];
-      const T zi = z[2 * p + 1];
-      const T cr = z[2 * q];
-      const T ci = -z[2 * q + 1];
+      const T zr = z[cx(p, zs)];
+      const T zi = z[cx(p, zs) + 1];
+      const T cr = z[cx(q, zs)];
+      const T ci = -z[cx(q, zs) + 1];
       // 2E = Z_p + conj Z_q, 2O = -i (Z_p - conj Z_q), 2V = 2E + w^k 2O.
       const T er = zr + cr;
       const T ei = zi + ci;
@@ -364,8 +378,8 @@ void dct2_store(const pass_args* a, const void* src, void* dst, std::size_t firs
       pr = tr * vr - ti * vi;
       pi = tr * vi + ti * vr;
     } else {
-      const T zr = z[2 * k];
-      const T zi = z[2 * k + 1];
+      const T zr = z[cx(k, zs)];
+      const T zi = z[cx(k, zs) + 1];
       const T tr = w[2 * k];
       const T ti = w[2 * k + 1];
       pr = T(2) * (tr * zr - ti * zi);
@@ -386,6 +400,7 @@ template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate, bool Ev
 void dct3_store(const pass_args* a, const void* src, void* dst, std::size_t first,
                 std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   const std::size_t n = a->n;
   const auto out = [&](std::size_t m, T v) {
@@ -394,10 +409,10 @@ void dct3_store(const pass_args* a, const void* src, void* dst, std::size_t firs
   };
   for (std::size_t j = first; j < last; ++j) {
     if constexpr (Even) {
-      out(2 * j, z[2 * j]);
-      out((2 * j) + 1, z[2 * j + 1]);
+      out(2 * j, z[cx(j, zs)]);
+      out((2 * j) + 1, z[cx(j, zs) + 1]);
     } else {
-      out(j, z[2 * j]);
+      out(j, z[cx(j, zs)]);
     }
   }
 }
@@ -414,6 +429,7 @@ void dct4_read(const pass_args* a, const void* src, void* dst, std::size_t first
                std::size_t last) {
   const auto* x = static_cast<const T*>(src);
   auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
   const auto* w = static_cast<const T*>(a->twiddles);
   const T* f = nullptr;
   if constexpr (Factor) {
@@ -429,14 +445,14 @@ void dct4_read(const pass_args* a, const void* src, void* dst, std::size_t first
     if constexpr (Even) {
       const T ur = in(2 * k);
       const T ui = in(n - 1 - (2 * k));
-      z[2 * k] = ur * pr - ui * pi;
-      z[2 * k + 1] = ur * pi + ui * pr;
+      z[cx(k, zs)] = ur * pr - ui * pi;
+      z[cx(k, zs) + 1] = ur * pi + ui * pr;
     } else {
       const T u = in(k);
-      z[2 * k] = u * pr;
-      z[2 * k + 1] = u * pi;
-      z[2 * (n + k)] = T{};
-      z[2 * (n + k) + 1] = T{};
+      z[cx(k, zs)] = u * pr;
+      z[cx(k, zs) + 1] = u * pi;
+      z[cx(n + k, zs)] = T{};
+      z[cx(n + k, zs) + 1] = T{};
     }
   }
 }
@@ -449,6 +465,7 @@ template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate, bool Ev
 void dct4_store(const pass_args* a, const void* src, void* dst, std::size_t first,
                 std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   const auto* w = static_cast<const T*>(a->twiddles);
   const std::size_t n = a->n;
@@ -456,8 +473,8 @@ void dct4_store(const pass_args* a, const void* src, void* dst, std::size_t firs
     put<T, Factor, Scaled, Accumulate>(a, y, p, Sine && (p % 2) != 0 ? -v : v);
   };
   for (std::size_t k = first; k < last; ++k) {
-    const T zr = z[2 * k];
-    const T zi = z[2 * k + 1];
+    const T zr = z[cx(k, zs)];
+    const T zi = z[cx(k, zs) + 1];
     const T qr = w[4 * k + 2];
     const T qi = w[4 * k + 3];
     const T sr = qr * zr - qi * zi;
@@ -480,6 +497,7 @@ void extension_read(const pass_args* a, const void* src, void* dst, std::size_t 
                     std::size_t last) {
   const auto* x = static_cast<const T*>(src);
   auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
   const T* f = nullptr;
   if constexpr (Factor) {
     f = static_cast<const T*>(a->in_factor);
@@ -498,8 +516,8 @@ void extension_read(const pass_args* a, const void* src, void* dst, std::size_t 
     }
   };
   for (std::size_t j = first; j < last; ++j) {
-    z[2 * j] = e(2 * j);
-    z[2 * j + 1] = e((2 * j) + 1);
+    z[cx(j, zs)] = e(2 * j);
+    z[cx(j, zs) + 1] = e((2 * j) + 1);
   }
 }
 
@@ -512,6 +530,7 @@ template <class T, bool Sine, bool Factor, bool Scaled, bool Accumulate>
 void extension_store(const pass_args* a, const void* src, void* dst, std::size_t first,
                      std::size_t last) {
   const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
   auto* y = static_cast<T*>(dst);
   const auto* w = static_cast<const T*>(a->twiddles);
   const std::size_t n = a->n;
@@ -521,10 +540,10 @@ void extension_store(const pass_args* a, const void* src, void* dst, std::size_t
     const std::size_t m = Sine ? k + 1 : k;
     const std::size_t p = m == h ? 0 : m;
     const std::size_t q = m == 0 ? 0 : h - m;
-    const T zr = z[2 * p];
-    const T zi = z[2 * p + 1];
-    const T cr = z[2 * q];
-    const T ci = -z[2 * q + 1];
+    const T zr = z[cx(p, zs)];
+    const T zi = z[cx(p, zs) + 1];
+    const T cr = z[cx(q, zs)];
+    const T ci = -z[cx(q, zs) + 1];
     const T o_re = (zi - ci) * half;
     const T o_im = (cr - zr) * half;
     const T wr = w[2 * m];
@@ -539,79 +558,133 @@ void extension_store(const pass_args* a, const void* src, void* dst, std::size_t
   }
 }
 
-template <class T, route R, bool Factor, bool Even> pass_fn read_of() {
-  if constexpr (R == route::dht) {
-    return &dht_read<T, Factor, Even>;
-  } else if constexpr (R == route::dct2 || R == route::dst2) {
-    return &dct2_read<T, R == route::dst2, Factor, Even>;
-  } else if constexpr (R == route::dct4 || R == route::dst4) {
-    return &dct4_read<T, R == route::dst4, Factor, Even>;
-  } else if constexpr (R == route::dct1 || R == route::dst1) {
-    return &extension_read<T, R == route::dst1, Factor>;
-  } else {
-    return &dct3_read<T, R == route::dst3, Factor, Even>;
+// A block of adjacent lines (X85's arm L): the line's stage for each of the block's pass_args::rows
+// lines, line l read at src + l src_dist reals and written into the tile at complex element l, its
+// elements B (dst_stride) apart.
+template <class T, pass_fn Line>
+void columns_read(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  const auto* x = static_cast<const T*>(src);
+  auto* z = static_cast<T*>(dst);
+  for (std::uint32_t l = 0; l < a->rows; ++l) {
+    Line(a, x + (static_cast<std::ptrdiff_t>(l) * a->src_dist), z + (2 * std::size_t{l}), first,
+         last);
   }
 }
 
-template <class T, route R> pass_fn read_kernel_of(bool factor, bool even) {
+// The store stage for each of the block's lines: line l read from the tile at complex element l
+// (its elements B, src_stride, apart) and written at dst + l dst_dist reals.
+template <class T, pass_fn Line>
+void columns_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+                   std::size_t last) {
+  const auto* z = static_cast<const T*>(src);
+  auto* y = static_cast<T*>(dst);
+  for (std::uint32_t l = 0; l < a->rows; ++l) {
+    Line(a, z + (2 * std::size_t{l}), y + (static_cast<std::ptrdiff_t>(l) * a->dst_dist), first,
+         last);
+  }
+}
+
+template <class T, bool Read, bool Columns, pass_fn Line> constexpr pass_fn form() {
+  if constexpr (!Columns) {
+    return Line;
+  } else if constexpr (Read) {
+    return &columns_read<T, Line>;
+  } else {
+    return &columns_store<T, Line>;
+  }
+}
+
+template <class T, route R, bool Factor, bool Even, bool Columns = false> pass_fn read_of() {
+  if constexpr (R == route::dht) {
+    return form<T, true, Columns, &dht_read<T, Factor, Even>>();
+  } else if constexpr (R == route::dct2 || R == route::dst2) {
+    return form<T, true, Columns, &dct2_read<T, R == route::dst2, Factor, Even>>();
+  } else if constexpr (R == route::dct4 || R == route::dst4) {
+    return form<T, true, Columns, &dct4_read<T, R == route::dst4, Factor, Even>>();
+  } else if constexpr (R == route::dct1 || R == route::dst1) {
+    return form<T, true, Columns, &extension_read<T, R == route::dst1, Factor>>();
+  } else {
+    return form<T, true, Columns, &dct3_read<T, R == route::dst3, Factor, Even>>();
+  }
+}
+
+// columns: the block form (no factor: the lanes phases take no edge factor).
+template <class T, route R> pass_fn read_kernel_of(bool factor, bool even, bool columns) {
+  if (columns) {
+    return even ? read_of<T, R, false, true, true>() : read_of<T, R, false, false, true>();
+  }
   if (even) {
     return factor ? read_of<T, R, true, true>() : read_of<T, R, false, true>();
   }
   return factor ? read_of<T, R, true, false>() : read_of<T, R, false, false>();
 }
 
-template <class T> pass_fn read_kernel(route r, bool factor, bool even) {
+template <class T> pass_fn read_kernel(route r, bool factor, bool even, bool columns = false) {
   switch (r) {
   case route::dct2:
-    return read_kernel_of<T, route::dct2>(factor, even);
+    return read_kernel_of<T, route::dct2>(factor, even, columns);
   case route::dct3:
-    return read_kernel_of<T, route::dct3>(factor, even);
+    return read_kernel_of<T, route::dct3>(factor, even, columns);
   case route::dst2:
-    return read_kernel_of<T, route::dst2>(factor, even);
+    return read_kernel_of<T, route::dst2>(factor, even, columns);
   case route::dst3:
-    return read_kernel_of<T, route::dst3>(factor, even);
+    return read_kernel_of<T, route::dst3>(factor, even, columns);
   case route::dct4:
-    return read_kernel_of<T, route::dct4>(factor, even);
+    return read_kernel_of<T, route::dct4>(factor, even, columns);
   case route::dst4:
-    return read_kernel_of<T, route::dst4>(factor, even);
+    return read_kernel_of<T, route::dst4>(factor, even, columns);
   case route::dct1:
-    return read_kernel_of<T, route::dct1>(factor, even);
+    return read_kernel_of<T, route::dct1>(factor, even, columns);
   case route::dst1:
-    return read_kernel_of<T, route::dst1>(factor, even);
+    return read_kernel_of<T, route::dst1>(factor, even, columns);
   case route::dht:
     break;
   }
-  return read_kernel_of<T, route::dht>(factor, even);
+  return read_kernel_of<T, route::dht>(factor, even, columns);
 }
 
-template <class T, route R, bool Factor, bool Scaled, bool Accumulate, bool Even>
+template <class T, route R, bool Factor, bool Scaled, bool Accumulate, bool Even,
+          bool Columns = false>
 pass_fn store_of() {
   if constexpr (R == route::dht) {
-    return Even ? &dht_store_even<T, Factor, Scaled, Accumulate>
-                : &dht_store_odd<T, Factor, Scaled, Accumulate>;
+    if constexpr (Even) {
+      return form<T, false, Columns, &dht_store_even<T, Factor, Scaled, Accumulate>>();
+    } else {
+      return form<T, false, Columns, &dht_store_odd<T, Factor, Scaled, Accumulate>>();
+    }
   } else if constexpr (R == route::dct2 || R == route::dst2) {
-    return &dct2_store<T, R == route::dst2, Factor, Scaled, Accumulate, Even>;
+    return form<T, false, Columns,
+                &dct2_store<T, R == route::dst2, Factor, Scaled, Accumulate, Even>>();
   } else if constexpr (R == route::dct4 || R == route::dst4) {
-    return &dct4_store<T, R == route::dst4, Factor, Scaled, Accumulate, Even>;
+    return form<T, false, Columns,
+                &dct4_store<T, R == route::dst4, Factor, Scaled, Accumulate, Even>>();
   } else if constexpr (R == route::dct1 || R == route::dst1) {
-    return &extension_store<T, R == route::dst1, Factor, Scaled, Accumulate>;
+    return form<T, false, Columns,
+                &extension_store<T, R == route::dst1, Factor, Scaled, Accumulate>>();
   } else {
-    return &dct3_store<T, R == route::dst3, Factor, Scaled, Accumulate, Even>;
+    return form<T, false, Columns,
+                &dct3_store<T, R == route::dst3, Factor, Scaled, Accumulate, Even>>();
   }
 }
 
-template <class T, route R, bool Factor, bool Scaled>
+template <class T, route R, bool Factor, bool Scaled, bool Columns = false>
 pass_fn store_kernel_of(bool accumulate, bool even) {
   if (accumulate) {
-    return even ? store_of<T, R, Factor, Scaled, true, true>()
-                : store_of<T, R, Factor, Scaled, true, false>();
+    return even ? store_of<T, R, Factor, Scaled, true, true, Columns>()
+                : store_of<T, R, Factor, Scaled, true, false, Columns>();
   }
-  return even ? store_of<T, R, Factor, Scaled, false, true>()
-              : store_of<T, R, Factor, Scaled, false, false>();
+  return even ? store_of<T, R, Factor, Scaled, false, true, Columns>()
+              : store_of<T, R, Factor, Scaled, false, false, Columns>();
 }
 
+// columns: the block form (no factor, as read_kernel_of).
 template <class T, route R>
-pass_fn store_kernel_of(bool factor, bool scaled, bool accumulate, bool even) {
+pass_fn store_kernel_of(bool factor, bool scaled, bool accumulate, bool even, bool columns) {
+  if (columns) {
+    return scaled ? store_kernel_of<T, R, false, true, true>(accumulate, even)
+                  : store_kernel_of<T, R, false, false, true>(accumulate, even);
+  }
   if (factor) {
     return scaled ? store_kernel_of<T, R, true, true>(accumulate, even)
                   : store_kernel_of<T, R, true, false>(accumulate, even);
@@ -621,28 +694,196 @@ pass_fn store_kernel_of(bool factor, bool scaled, bool accumulate, bool even) {
 }
 
 template <class T>
-pass_fn store_kernel(route r, bool factor, bool scaled, bool accumulate, bool even) {
+pass_fn store_kernel(route r, bool factor, bool scaled, bool accumulate, bool even,
+                     bool columns = false) {
   switch (r) {
   case route::dct2:
-    return store_kernel_of<T, route::dct2>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dct2>(factor, scaled, accumulate, even, columns);
   case route::dct3:
-    return store_kernel_of<T, route::dct3>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dct3>(factor, scaled, accumulate, even, columns);
   case route::dst2:
-    return store_kernel_of<T, route::dst2>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dst2>(factor, scaled, accumulate, even, columns);
   case route::dst3:
-    return store_kernel_of<T, route::dst3>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dst3>(factor, scaled, accumulate, even, columns);
   case route::dct4:
-    return store_kernel_of<T, route::dct4>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dct4>(factor, scaled, accumulate, even, columns);
   case route::dst4:
-    return store_kernel_of<T, route::dst4>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dst4>(factor, scaled, accumulate, even, columns);
   case route::dct1:
-    return store_kernel_of<T, route::dct1>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dct1>(factor, scaled, accumulate, even, columns);
   case route::dst1:
-    return store_kernel_of<T, route::dst1>(factor, scaled, accumulate, even);
+    return store_kernel_of<T, route::dst1>(factor, scaled, accumulate, even, columns);
   case route::dht:
     break;
   }
-  return store_kernel_of<T, route::dht>(factor, scaled, accumulate, even);
+  return store_kernel_of<T, route::dht>(factor, scaled, accumulate, even, columns);
+}
+
+// The folded routes of DCT-I and DST-I for odd n (experiment X85, arm D; the algorithm of
+// Numerical Recipes' cosft1 and sinft, W. H. Press et al., section 12.3): the real DFT R of N = n -
+// 1 (DST-I: n + 1) reals y instead of the extension's 2N, so a complex chain of M = N/2 where the
+// extension runs one of N. With the line's points X_0 .. X_N (DST-I: X_0 = X_N = 0 around the
+// line), u_j = X_j + X_(N-j), v_j = X_j - X_(N-j) and s_j = sin(pi j / N):
+//   DCT-I: y_j = u_j / 2 - s_j v_j, so Re R_m = Y_2m / 2, and Y_(2m+1) = Y_(2m-1) - 2 Im R_m from
+//     Y_1 = v_0 + (2 / M) sum_(i=1..M-1) (M - i) Im R_i (the odd outputs sum to M v_0);
+//   DST-I: y_j = s_j u_j + v_j / 2, so Y_(2m-1) = -2 Im R_m, and Y_(2m) = Y_(2m-2) + 2 Re R_m from
+//     Y_0 = Re R_0.
+// The odd outputs are running sums of the spectrum, so the transform's errors add along them: the
+// route is less accurate than the extension's as n grows, which is X85's question. The read stage
+// packs y as the r2c packs a line (unit p: y_2p + i y_2p+1; s_j at pass_args::twiddles for
+// j = 0 .. M); DCT-I's v_0 goes by a stage of its own to the output's place of Y_1, which the store
+// stage reads before it writes there (so no accumulation on this route); the store stage, one
+// unit, forms 2 R_m by the r2c's pairing (dct2_store's, w^m at pass_args::twiddles) twice over.
+template <class T, bool Sine, bool Factor>
+void folded_read(const pass_args* a, const void* src, void* dst, std::size_t first,
+                 std::size_t last) {
+  const auto* x = static_cast<const T*>(src);
+  auto* z = static_cast<T*>(dst);
+  const std::ptrdiff_t zs = a->dst_stride; // scratch: 1, or a tile's B (cx)
+  const auto* s = static_cast<const T*>(a->twiddles);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  const std::size_t n = a->n;
+  const std::size_t big = Sine ? n + 1 : n - 1;
+  const T half = T(0.5);
+  const auto point = [&](std::size_t j) {
+    if constexpr (Sine) {
+      return j == 0 || j == big ? T{} : line_real<T, Factor>(a, x, f, j - 1);
+    } else {
+      return line_real<T, Factor>(a, x, f, j);
+    }
+  };
+  const auto y = [&](std::size_t j) {
+    if (j == 0) {
+      if constexpr (Sine) {
+        return T{};
+      } else {
+        return (point(0) + point(big)) * half;
+      }
+    }
+    const T p = point(j);
+    const T q = point(big - j);
+    const T sj = s[2 * j <= big ? j : big - j];
+    if constexpr (Sine) {
+      return sj * (p + q) + (p - q) * half;
+    } else {
+      return (p + q) * half - sj * (p - q);
+    }
+  };
+  for (std::size_t k = first; k < last; ++k) {
+    z[cx(k, zs)] = y(2 * k);
+    z[cx(k, zs) + 1] = y((2 * k) + 1);
+  }
+}
+
+// DCT-I's v_0 = x_0 - x_(n-1) of the folded route, written to the output's place of Y_1 (one unit).
+template <class T, bool Factor>
+void folded_v0(const pass_args* a, const void* src, void* dst, std::size_t first,
+               std::size_t last) {
+  if (first >= last) {
+    return;
+  }
+  const auto* x = static_cast<const T*>(src);
+  const T* f = nullptr;
+  if constexpr (Factor) {
+    f = static_cast<const T*>(a->in_factor);
+  }
+  static_cast<T*>(dst)[a->dst_stride] =
+      line_real<T, Factor>(a, x, f, 0) - line_real<T, Factor>(a, x, f, a->n - 1);
+}
+
+template <class T, bool Sine, bool Factor, bool Scaled>
+void folded_store(const pass_args* a, const void* src, void* dst, std::size_t first,
+                  std::size_t last) {
+  if (first >= last) {
+    return;
+  }
+  const auto* z = static_cast<const T*>(src);
+  const std::ptrdiff_t zs = a->src_stride; // scratch: 1, or a tile's B (cx)
+  auto* y = static_cast<T*>(dst);
+  const auto* w = static_cast<const T*>(a->twiddles);
+  const std::size_t n = a->n;
+  const std::size_t h = Sine ? (n + 1) / 2 : (n - 1) / 2;
+  // 2 R_m by the r2c's pairing of bins m and M - m without its halving (dct2_store's).
+  const auto bin = [&](std::size_t m, T& vr, T& vi) {
+    const std::size_t p = m == h ? 0 : m;
+    const std::size_t q = m == 0 ? 0 : h - m;
+    const T zr = z[cx(p, zs)];
+    const T zi = z[cx(p, zs) + 1];
+    const T cr = z[cx(q, zs)];
+    const T ci = -z[cx(q, zs) + 1];
+    const T er = zr + cr;
+    const T ei = zi + ci;
+    const T o_re = zi - ci;
+    const T o_im = cr - zr;
+    const T wr = w[2 * m];
+    const T wi = w[2 * m + 1];
+    vr = er + (wr * o_re - wi * o_im);
+    vi = ei + (wr * o_im + wi * o_re);
+  };
+  T vr{};
+  T vi{};
+  if constexpr (Sine) {
+    T even{};
+    for (std::size_t m = 0; m < h; ++m) {
+      bin(m, vr, vi);
+      if (m == 0) {
+        even = vr * T(0.5);
+      } else {
+        put<T, Factor, Scaled, false>(a, y, (2 * m) - 1, -vi);
+        even = even + vr;
+      }
+      put<T, Factor, Scaled, false>(a, y, 2 * m, even);
+    }
+  } else {
+    T weighted{};
+    for (std::size_t m = 0; m <= h; ++m) {
+      bin(m, vr, vi);
+      put<T, Factor, Scaled, false>(a, y, 2 * m, vr);
+      if (m != 0 && m != h) {
+        weighted = weighted + static_cast<T>(h - m) * vi;
+      }
+    }
+    T odd = y[a->dst_stride] + weighted / static_cast<T>(h);
+    put<T, Factor, Scaled, false>(a, y, 1, odd);
+    for (std::size_t m = 1; m < h; ++m) {
+      bin(m, vr, vi);
+      odd = odd - vi;
+      put<T, Factor, Scaled, false>(a, y, (2 * m) + 1, odd);
+    }
+  }
+}
+
+template <class T> pass_fn folded_read_kernel(bool sine, bool factor) {
+  if (sine) {
+    return factor ? &folded_read<T, true, true> : &folded_read<T, true, false>;
+  }
+  return factor ? &folded_read<T, false, true> : &folded_read<T, false, false>;
+}
+
+template <class T> pass_fn folded_store_kernel(bool sine, bool factor, bool scaled) {
+  if (sine) {
+    if (factor) {
+      return scaled ? &folded_store<T, true, true, true> : &folded_store<T, true, true, false>;
+    }
+    return scaled ? &folded_store<T, true, false, true> : &folded_store<T, true, false, false>;
+  }
+  if (factor) {
+    return scaled ? &folded_store<T, false, true, true> : &folded_store<T, false, true, false>;
+  }
+  return scaled ? &folded_store<T, false, false, true> : &folded_store<T, false, false, false>;
+}
+
+// The sines s_j = sin(pi j / N), j = 0 .. N/2, of a folded route over N reals (folded_read),
+// each correctly rounded: the negated imaginary part of exp(-2 pi i j / 2N).
+template <class T> std::vector<T> folded_sines(std::size_t big) {
+  std::vector<T> table(big / 2 + 1);
+  for (std::size_t j = 0; j < table.size(); ++j) {
+    table[j] = -unit_root<T>(-1, j, 2 * big).imag();
+  }
+  return table;
 }
 
 // The twiddles of a DCT or DST line of n (dct3_read, dct2_store): n even, per k = 0 .. n/2 the
@@ -800,8 +1041,8 @@ struct phase_summary {
 template <class T>
 phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, const r2r_edges& e,
                     const build_settings& settings) {
-  const target_profile profile =
-      plan_profile(c, of<T>(*find_kernels(c.isa_target)).complex_lanes, settings);
+  const std::size_t lanes_c = of<T>(*find_kernels(c.isa_target)).complex_lanes;
+  const target_profile profile = plan_profile(c, lanes_c, settings);
   chain_builder<T> chain = plan_chain<T>(c, profile, settings);
   program& p = c.prog;
   const auto rb = static_cast<std::ptrdiff_t>(sizeof(T));
@@ -892,26 +1133,31 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     const bool last = i + 1 == phases.size();
     const view& src = first ? in_view : mid_view;
     const view& dst = last ? out_view : mid_view;
-    std::vector<std::size_t> open;
-    for (const std::size_t ax : order) {
-      if (ax == d || s.axes[ax].n == 1) {
-        continue;
+    // The loops over the phase's other axes but `skip` (a lanes phase's blocks walk the contiguous
+    // axis themselves; r: none skipped), opened where the phase's stages are emitted.
+    const auto open_loops = [&](std::size_t skip) {
+      std::vector<std::size_t> open;
+      for (const std::size_t ax : order) {
+        if (ax == d || ax == skip || s.axes[ax].n == 1) {
+          continue;
+        }
+        factor_steps f{};
+        if (first && in_factor) {
+          f[0] = e.in.axis_strides[ax] * static_cast<std::ptrdiff_t>(e.in.factor_bytes);
+        }
+        if (last && out_factor) {
+          f[1] = e.out.axis_strides[ax] * static_cast<std::ptrdiff_t>(e.out.factor_bytes);
+        }
+        open.push_back(p.records.size());
+        line_loops.emplace_back(p.records.size(), f);
+        p.records.emplace_back(loop{
+            .kind = loop_kind::lines,
+            .count = s.axes[ax].n,
+            .step = step_along(ax, src, dst, rb),
+        });
       }
-      factor_steps f{};
-      if (first && in_factor) {
-        f[0] = e.in.axis_strides[ax] * static_cast<std::ptrdiff_t>(e.in.factor_bytes);
-      }
-      if (last && out_factor) {
-        f[1] = e.out.axis_strides[ax] * static_cast<std::ptrdiff_t>(e.out.factor_bytes);
-      }
-      open.push_back(p.records.size());
-      line_loops.emplace_back(p.records.size(), f);
-      p.records.emplace_back(loop{
-          .kind = loop_kind::lines,
-          .count = s.axes[ax].n,
-          .step = step_along(ax, src, dst, rb),
-      });
-    }
+      return open;
+    };
     const std::size_t n = s.axes[d].n;
     const r2r_kind kind = s.kinds[d];
     const route rt = route_of(kind);
@@ -927,13 +1173,33 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     // The complex chain's length: n/2 or n (the DHT, the kinds II and III), n/2 or 2n (the kinds
     // IV), and half the extension, n - 1 or n + 1 (DCT-I, DST-I).
     std::size_t m = even ? n / 2 : n;
+    // The folded routes of DCT-I and DST-I (X85's arm D): odd n up to the profile's limit, without
+    // accumulation (DCT-I's v_0 waits in the output's place of Y_1). A real DFT of n -+ 1 points:
+    // a complex chain of half that.
+    const bool folded = extension && !even && !e.out.accumulate &&
+                        n <= static_cast<std::size_t>(settings.profile.r2r_folded_max);
     if (fourth && !even) {
       m = 2 * n;
+    } else if (folded) {
+      m = rt == route::dct1 ? (n - 1) / 2 : (n + 1) / 2;
     } else if (extension) {
       m = rt == route::dct1 ? n - 1 : n + 1;
     }
     const bool read_factor = first && in_factor;
     const bool store_factor = last && out_factor;
+    // X85's arm L: a strided axis as lanes over blocks of adjacent lines, where the contiguous
+    // axis (the last of `order`, the narrowest) holds the lines one real apart on both sides, the
+    // phase applies no factor, the route is not the folded one, and every pass of the chain of m
+    // has a lane kernel. The block: a cache line of reals, rounded up to the complex count C.
+    const std::size_t contiguous = order.back();
+    std::size_t lane_block = 0;
+    if (settings.profile.r2r_lanes_columns && contiguous != d && s.axes[contiguous].n >= 2 &&
+        src.stride[contiguous] == 1 && dst.stride[contiguous] == 1 && !read_factor &&
+        !store_factor && !folded && chain.lanes_fit(m, false)) {
+      const auto up = [lanes_c](std::size_t v) { return (v + lanes_c - 1) / lanes_c * lanes_c; };
+      lane_block = std::min(up(std::max<std::size_t>(settings.profile.line_bytes / sizeof(T), 1)),
+                            up(s.axes[contiguous].n));
+    }
     // DCT-III and DST-III: Makhoul's route inverted, over the backward transform.
     const int sign = rt == route::dct3 || rt == route::dst3 ? 1 : -1;
     const T* dct_table = nullptr;
@@ -941,6 +1207,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       std::vector<T> twiddles;
       if (fourth) {
         twiddles = dct4_twiddles<T>(n);
+      } else if (folded) {
+        twiddles = folded_sines<T>(2 * m);
       } else if (extension) {
         twiddles = pairing_twiddles<T>(2 * m);
       } else {
@@ -955,7 +1223,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
     std::vector<stage> line;
     stage rd;
     // The extensions' reads are packed whatever n's parity.
-    rd.run = read_kernel<T>(rt, read_factor, even || extension);
+    rd.run = folded ? folded_read_kernel<T>(sine, read_factor)
+                    : read_kernel<T>(rt, read_factor, even || extension);
     rd.args.src_stride = src.stride[d];
     rd.args.src_qstride = read_factor ? e.in.axis_strides[d] : 0;
     rd.args.n = n;
@@ -982,6 +1251,12 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
                             " complex values"
                       : " twiddled into scratch as " + std::to_string(n) +
                             " complex values, zero-padded to " + std::to_string(m));
+    } else if (folded) {
+      rd.args.twiddles = dct_table;
+      rd.name = "r2r read: " + kname + " line folded (" +
+                (sine ? "s_j u_j + v_j / 2" : "u_j / 2 - s_j v_j") + ") into " +
+                std::to_string(2 * m) + " reals, packed into scratch as " + std::to_string(m) +
+                " complex pairs";
     } else if (extension) {
       rd.name = "r2r read: " + kname + " line's " + (sine ? "odd" : "even") + " extension of " +
                 std::to_string(2 * m) + " reals packed into scratch as " + std::to_string(m) +
@@ -998,22 +1273,38 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       rd.name += ", times the input edge's real factor";
     }
     line.push_back(std::move(rd));
+    if (folded && !sine) {
+      stage v0;
+      v0.run = read_factor ? &folded_v0<T, true> : &folded_v0<T, false>;
+      v0.args.src_stride = src.stride[d];
+      v0.args.dst_stride = dst.stride[d];
+      v0.args.src_qstride = read_factor ? e.in.axis_strides[d] : 0;
+      v0.args.n = n;
+      v0.src = src.where;
+      v0.dst = dst.where;
+      v0.units = 1;
+      v0.chunks = 1;
+      v0.moving_factors = read_factor ? moving_in_factor : 0;
+      v0.name = "r2r read: dct1 line's x_0 - x_(n-1) into the output's place of Y_1";
+      line.push_back(std::move(v0));
+    }
 
     std::size_t need = 0;
-    const slot z = chain.scratch_transform(m, sign, need, line);
+    const slot z = lane_block != 0 ? slot::a : chain.scratch_transform(m, sign, need, line);
     scratch = std::max(scratch, need);
 
     const double scale = last ? e.scale * gain : 1.0;
     const bool scaled = scale != 1.0;
     const bool accumulate = last && e.out.accumulate;
     stage st;
-    st.run = store_kernel<T>(rt, store_factor, scaled, accumulate, even || extension);
+    st.run = folded ? folded_store_kernel<T>(sine, store_factor, scaled)
+                    : store_kernel<T>(rt, store_factor, scaled, accumulate, even || extension);
     st.args.dst_stride = dst.stride[d];
     st.args.src_qstride = store_factor ? e.out.axis_strides[d] : 0;
     st.args.n = n;
     st.args.scale = scaled ? scale : 1.0;
-    if (dht && even) {
-      const std::vector<T> twiddles = pairing_twiddles<T>(n);
+    if ((dht && even) || folded) {
+      const std::vector<T> twiddles = pairing_twiddles<T>(folded ? 2 * m : n);
       auto& table = tables_of<T>(c).emplace_back(twiddles.begin(), twiddles.end());
       st.args.twiddles = table.data();
     } else if (second || fourth || extension) {
@@ -1027,6 +1318,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       st.units = even ? m + 1 : half_units;
     } else if (fourth) {
       st.units = even ? m : n;
+    } else if (folded) {
+      st.units = 1; // the odd outputs are running sums
     } else if (extension) {
       st.units = n;
     } else {
@@ -1045,6 +1338,13 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
           "the " + kname + " twiddle" +
           (even ? ", Y_2k and Y_(n-1-2k) from bin k" : ", Y_k from the real part of bin k < n") +
           (sine ? ", with alternating signs" : "");
+    } else if (folded) {
+      store_what = std::string("the r2c pairing, ") +
+                   (sine ? "the odd outputs from its imaginary parts and the even ones as running "
+                           "sums of its real parts"
+                         : "the even outputs from its real parts and the odd ones as running sums "
+                           "of its imaginary parts") +
+                   ", one unit";
     } else if (extension) {
       store_what =
           std::string("the r2c pairing's ") +
@@ -1057,11 +1357,79 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
               (store_factor ? ", times the output edge's real factor" : "") +
               (scaled ? ", scaled" : "") + (accumulate ? ", accumulated" : "");
     line.push_back(std::move(st));
-    for (stage& x : line) {
-      p.records.emplace_back(std::move(x));
-    }
-    for (const std::size_t at : open) {
-      std::get<loop>(p.records[at]).body_end = static_cast<std::uint32_t>(p.records.size());
+    if (lane_block == 0) {
+      const std::vector<std::size_t> open = open_loops(r);
+      for (stage& x : line) {
+        p.records.emplace_back(std::move(x));
+      }
+      for (const std::size_t at : open) {
+        std::get<loop>(p.records[at]).body_end = static_cast<std::uint32_t>(p.records.size());
+      }
+    } else {
+      // The blocks' nest (as plan_core.cpp's lanes column phase, X40): the loops over the other
+      // axes, then over the whole blocks of lane_block adjacent lines along the contiguous axis,
+      // each block's stages inside: the line's read stage for each of its lines into a tile in
+      // scratch a (line l's element i at i B + l), the chain of m as lanes passes on the tile
+      // (strategies/lanes.cpp: each lane computes its line's arithmetic), and the store stage
+      // for each line from the tile. Then the same nest once for the lines left over, as one
+      // narrower block rounded up to C whose idle lanes are read by no store.
+      const stage& line_read = line.front();
+      const stage& line_store = line.back();
+      const std::ptrdiff_t columns_step_in = src.stride[contiguous];
+      const std::ptrdiff_t columns_step_out = dst.stride[contiguous];
+      const std::size_t total = s.axes[contiguous].n;
+      const std::size_t whole = total / lane_block;
+      const std::size_t left = total % lane_block;
+      const auto nest = [&](std::size_t count, std::size_t width, std::size_t rows,
+                            std::size_t first_column) {
+        const std::size_t outermost = p.records.size();
+        std::vector<std::size_t> open = open_loops(contiguous);
+        open.push_back(p.records.size());
+        const std::array<std::ptrdiff_t, moving_slots> step = step_along(contiguous, src, dst, rb);
+        loop blocks{.kind = loop_kind::lines, .count = count};
+        for (std::size_t q = 0; q < moving_slots; ++q) {
+          blocks.step.at(q) = step.at(q) * static_cast<std::ptrdiff_t>(width);
+          blocks.start.at(q) = step.at(q) * static_cast<std::ptrdiff_t>(first_column);
+        }
+        p.records.emplace_back(blocks);
+        std::vector<stage> body;
+        stage rd_block = line_read;
+        rd_block.run = read_kernel<T>(rt, false, even || extension, true);
+        rd_block.args.dst_stride = static_cast<std::ptrdiff_t>(width);
+        rd_block.args.src_dist = columns_step_in;
+        rd_block.dst = slot::a;
+        rd_block.chunks = 1;
+        rd_block.name +=
+            ", for each of a block of " + std::to_string(width) + " adjacent lines into a tile";
+        body.push_back(std::move(rd_block));
+        need = std::max(need, chain.c2c_lanes(m, sign, {slot::a, 1}, 0, {slot::b, 1}, 0,
+                                              line_edges(), width, body));
+        const slot tile = body.back().dst;
+        stage st_block = line_store;
+        st_block.run = store_kernel<T>(rt, false, scaled, accumulate, even || extension, true);
+        st_block.args.src_stride = static_cast<std::ptrdiff_t>(width);
+        st_block.args.dst_dist = columns_step_out;
+        st_block.src = tile;
+        st_block.chunks = 1;
+        st_block.name += ", for each of the block's lines from the tile";
+        body.push_back(std::move(st_block));
+        for (stage& x : body) {
+          x.args.rows = static_cast<std::uint32_t>(rows);
+          p.records.emplace_back(std::move(x));
+        }
+        for (const std::size_t at : open) {
+          std::get<loop>(p.records[at]).body_end = static_cast<std::uint32_t>(p.records.size());
+        }
+        // The narrower block's lines are disjoint from the whole blocks': one phase for teams.
+        std::get<loop>(p.records[outermost]).joins = first_column != 0;
+      };
+      if (whole != 0) {
+        nest(whole, lane_block, lane_block, 0);
+      }
+      if (left != 0) {
+        nest(1, (left + lanes_c - 1) / lanes_c * lanes_c, left, whole * lane_block);
+      }
+      scratch = std::max(scratch, need);
     }
     std::string route_text;
     if (dht) {
@@ -1077,6 +1445,9 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
                          : "the odd-length route: a zero-padded complex transform of 2n, about "
                            "four times the even route's work") +
                    (sine ? ", the sine kind by reversal and signs" : "") + ")";
+    } else if (folded) {
+      route_text = " (the folded route: a real DFT of n " + std::string(sine ? "+" : "-") +
+                   " 1 points, half the extension's work, its odd outputs running sums)";
     } else if (extension) {
       route_text = std::string(" (the ") + (sine ? "odd" : "even") +
                    " extension: about twice the work of the kinds II and III)";
@@ -1090,6 +1461,8 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
       read_note = " (Makhoul's order)";
     } else if (fourth) {
       read_note = even ? " (pairs, twiddled)" : " (twiddled, zero-padded)";
+    } else if (folded) {
+      read_note = " (folded)";
     } else if (extension) {
       read_note = sine ? " (the odd extension)" : " (the even extension)";
     } else if (!dht) {
@@ -1101,7 +1474,10 @@ phase_summary build(plan_core& c, const shape_view& s, const r2r_layout& l, cons
         read_note + ", the " + (sign < 0 ? "forward" : "backward") + " complex chain of " +
         std::to_string(m) + (even || fourth || extension ? "" : " (n odd)") + " there, radices " +
         (m == 1 ? std::string("none") : chain.radix_text(m)) + ", then the store stage" +
-        route_text);
+        route_text +
+        (lane_block != 0 ? "; lanes over blocks of " + std::to_string(lane_block) +
+                               " adjacent lines, the chain on a tile of the block's lines"
+                         : ""));
   }
   for (std::size_t b = 0; b < p.batch_loops; ++b) {
     std::get<loop>(p.records[b]).body_end = static_cast<std::uint32_t>(p.records.size());
