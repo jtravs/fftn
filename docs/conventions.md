@@ -510,6 +510,45 @@ std::vector<std::complex<double>> y(n * count);
 pipe.execute(x.data(), y.data(), ws, {.mid_user = &saturate});
 ```
 
+A **group** (`pipeline_desc::group`, task 5.3f) hands the middle callback every line of one batch
+dimension together, such as the two polarisation components of a field: each line of a group
+takes the first transform, then the callback runs once on the group's G spectra
+(`block_info::group` G, member k's line `k * group_stride` elements after member 0's, whose line
+number is `block_info::transform`), then each line takes the middle's factor and scale and the
+second transform. A group is one task: `execute_transforms` and `transforms_of` count groups, as
+many as `pipeline::transform_count()`, and the results are the same however the work is shared
+when the callback is pure per group. Each workspace slot holds the group's G lines, so the
+workspace grows with G. A group needs a middle callback, and is refused with fan-out (not built
+yet).
+
+```cpp file=examples/pipeline.cpp region=group
+// Batch dimension 0 is the component (2), dimension 1 the row: with group 0 the middle
+// callback receives both components' spectra of one row in one call, component 1 group_stride
+// elements after component 0, and rotates each bin's pair.
+auto rotate = [&angle](const fftn::block_info& info, std::complex<double>* bins) noexcept {
+  for (std::size_t b = 0; b < info.length; ++b) {
+    std::complex<double>& u = bins[static_cast<std::ptrdiff_t>(b) * info.element_stride];
+    std::complex<double>& v = (&u)[info.group_stride];
+    const double c = std::cos(angle(b));
+    const double s = std::sin(angle(b));
+    const std::complex<double> u0 = u;
+    u = c * u0 - s * v;
+    v = s * u0 + c * v;
+  }
+};
+fftn::pipeline_desc desc = fftn::complex_convolution_rows<double>(n, rows);
+desc.batches.insert(desc.batches.begin(), fftn::batch{.count = 2});
+desc.group = 0;
+desc.middle.mul = {};
+desc.middle.scale = 1.0 / static_cast<double>(n);
+desc.middle.call = {.fn = fftn::callback_of<decltype(rotate), std::complex<double>>()};
+const fftn::pipeline pipe(desc);
+fftn::workspace ws(pipe);
+
+std::vector<std::complex<double>> y(x.size());
+pipe.execute(x.data(), y.data(), ws, {.mid_user = &rotate});
+```
+
 A **spectral pair** runs the inverse transform first: `spectral_pair_rows(n, count,
 direction::backward)` (or `pipeline_desc::first`) for complex lines, and `pipeline<C, T, C>`, whose
 input and output lines are half spectra of n/2 + 1 bins (the c2r transform, ignoring the
@@ -518,8 +557,8 @@ which takes real factors only, then the r2c transform). A `<C, T, C>` pipeline's
 bands of the half spectrum's bins.
 
 Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` and
-`pipeline<C, T, C>`, with stored runs on either side, fan-out and block callbacks, planned by the
-rules (`options::effort` is ignored, and
+`pipeline<C, T, C>`, with stored runs on either side, fan-out, block callbacks and groups, planned
+by the rules (`options::effort` is ignored, and
 `pipeline::describe()` says so). Refused at construction, naming the field, until their steps:
 `fanout` above 1 in place, and stored runs on an in-place pipeline or beside a prologue or epilogue
 factor; a middle callback in another mode than `modify`, and `consume` in place, are refused too.

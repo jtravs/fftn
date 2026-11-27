@@ -130,8 +130,15 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
   const std::size_t base = origin[site.axis];
   const bool along = site.line_axis == along_transforms;
   const std::size_t line_base = along ? 0 : origin[site.line_axis];
+  // A grouped pipeline's task is a group (callback_site::group_lines).
+  std::size_t transform = env.transform;
+  if (site.group_lines != 0) {
+    const std::size_t inner = site.group_inner;
+    transform =
+        transform / inner * site.group_lines * inner + env.group_member * inner + transform % inner;
+  }
   block_info info{
-      .transform = env.transform,
+      .transform = transform,
       .origin = std::span<const std::size_t>(origin.data(), site.rank),
       .element_axis = site.axis,
       .line_axis = site.line_axis,
@@ -139,8 +146,8 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
       .lines = lines,
       .element_stride = stride,
       .line_stride = lines > 1 ? line_stride : 0,
-      .group = 1,
-      .group_stride = 0,
+      .group = site.group_stride != 0 ? site.group_lines : 1,
+      .group_stride = site.group_stride,
       .copy = env.copy,
       .member = env.member,
       .scratch = env.scratch != nullptr ? std::span<std::byte>(env.scratch, site.scratch_bytes)
@@ -165,7 +172,7 @@ void run_callback_stage(const stage& st, const callback_site& site, std::byte* d
     }
     origin[site.axis] = base + site.logical + begin;
     if (along) {
-      info.transform = env.transform + first_line;
+      info.transform = transform + first_line;
     } else {
       origin[site.line_axis] = line_base + first_line;
     }

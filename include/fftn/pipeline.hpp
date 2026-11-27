@@ -5,14 +5,15 @@
 /// Row pipelines: a transform, a pointwise middle and the inverse transform over one axis, in
 /// one sweep, the spectrum never reaching memory (dev/DESIGN.md 12.2).
 ///
-/// Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e, 2026-11-26): this API follows dev/DESIGN.md
+/// Provisional (tasks 5.2b to 5.2e and 5.3d to 5.3f, 2026-11-26): this API follows dev/DESIGN.md
 /// sections 12.2 and 12.3's API blocks with the proposals of its section 18.2 ("Pipelines",
 /// "Callbacks"), which the maintainer has yet to settle; it may change before the first release.
 /// Built so far: `pipeline<C, C, C>` with either transform first, `pipeline<T, C, T>` (r2c, then
 /// c2r) and `pipeline<C, T, C>` (c2r, then r2c), with their prologue, middle and epilogue
 /// vocabulary (scales, real and complex factors, accumulation), block callbacks on all three
 /// (fftn/callback.hpp), stored runs, and fan-out (several inverses per forward, each with its own
-/// middle factor and output).
+/// middle factor and output), and groups (a batch dimension the middle callback sees whole; task
+/// 5.3f).
 /// docs/conventions.md ("Pipelines") states what a pipeline computes.
 #pragma once
 
@@ -37,6 +38,8 @@
 #include <vector>
 
 namespace fftn::inline v0 {
+/// `pipeline_desc::group` without a group. Provisional (task 5.3f).
+inline constexpr std::size_t no_group = static_cast<std::size_t>(-1);
 
 /// What a pipeline computes, before it is built (`pipeline`): one transformed axis, the line,
 /// under any number of batch dimensions, each line taken through
@@ -77,7 +80,7 @@ namespace fftn::inline v0 {
 /// execute another plan or pipeline on the line through a serial overload, with its workspace in
 /// `block_info::scratch`.
 ///
-/// Provisional (tasks 5.2b to 5.2e, 5.3d and 5.3e). A pipeline refuses, naming the field, what is
+/// Provisional (tasks 5.2b to 5.2e and 5.3d to 5.3f). A pipeline refuses, naming the field, what is
 /// not built yet: stored runs on an in-place pipeline or beside a prologue or epilogue factor, and
 /// `fanout` above 1 in place; and a middle callback in a mode other than `modify`, and `consume`
 /// on an in-place pipeline.
@@ -162,6 +165,22 @@ template <class In, class Mid, class Out> struct pipeline_desc {
   /// With `fanout` above 1, the distance between copies' middle factors, in the array's elements,
   /// of either sign; 0 gives every copy the same factor. Ignored without a middle factor.
   std::ptrdiff_t fanout_factor_dist = 0;
+  /// A batch dimension (an index into `batches`) whose lines the middle callback sees together,
+  /// such as coupled polarisation components, or `no_group`. With a group of G lines (that
+  /// dimension's count) each group's lines take the first transform one by one, then the middle
+  /// callback runs once on all G spectra (`block_info::group` G, member 0's line at the block's
+  /// data, member k's `block_info::group_stride * k` elements further; `block_info::transform` is
+  /// member 0's line number, member k's that plus k times the product of the counts of the
+  /// dimensions after the group's), then the lines take the middle's factor and scale, the second
+  /// transform and the epilogue one by one. A group is one task: `execute_transforms`'s `first` and
+  /// `count` and `transforms_of` count groups (the lines with the group's dimension left out, in
+  /// batch order; `transform_count()`), and a team shares a group's lines. Each workspace slot
+  /// holds the group's G lines, so the workspace's block grows G times. Results are bitwise
+  /// identical however the work is shared when the middle callback is pure per group (its result
+  /// depends only on the group's values and coordinates). Refused, naming `desc.group`: a dimension
+  /// that does not exist, no `middle.call`, and with `fanout` above 1 (not built yet). Provisional
+  /// (task 5.3f).
+  std::size_t group = no_group;
 };
 
 namespace detail {
@@ -333,11 +352,12 @@ public:
     detail::execute_all(*core_, in, out, ws, args);
   }
 
-  /// Runs `count` lines of the batch, starting with line `first`, serially on the calling
-  /// thread: for callers that share a batch out themselves. `in`, `out` and the factor
-  /// arrays address line 0, as for `execute`.
+  /// Runs `count` transforms of the batch, starting with transform `first`, serially on the
+  /// calling thread: for callers that share a batch out themselves. A transform is a line, or
+  /// with `pipeline_desc::group` a group of lines (the lines with the group's dimension left
+  /// out, in batch order). `in`, `out` and the factor arrays address line 0, as for `execute`.
   ///
-  /// Preconditions: as for `execute`, and `first + count` is at most the number of lines.
+  /// Preconditions: as for `execute`, and `first + count` is at most `transform_count()`.
   /// Guarantees: as for `execute`; each line's result is bitwise identical to what `execute`
   /// gives it.
   void execute_transforms(std::size_t first, std::size_t count, const In* in, Out* out,
@@ -355,8 +375,8 @@ public:
   }
 
   /// The team `execute` with an explicit `completion`: with `completion::own` each member runs
-  /// exactly the lines `transforms_of(t)`, whole. Preconditions and guarantees: those of the
-  /// team `plan::execute`.
+  /// exactly the transforms `transforms_of(t)` (lines, or groups), whole. Preconditions and
+  /// guarantees: those of the team `plan::execute`.
   void execute(const In* in, Out* out, const team& t, workspace& ws, completion done,
                const exec_args& args) const noexcept {
     detail::execute_team(*core_, in, out, t, ws, done, args);
@@ -370,12 +390,21 @@ public:
     detail::execute_on(*core_, in, out, ex, ws, args);
   }
 
-  /// The lines a member of team `t` owns: those it runs with `completion::own`, contiguous
-  /// ranges in rank order covering the batch once, as `plan::transforms_of` deals transforms.
+  /// The transforms a member of team `t` owns: those it runs with `completion::own`, contiguous
+  /// ranges in rank order covering the `transform_count()` transforms once, as
+  /// `plan::transforms_of` deals transforms. A transform is a line, or with
+  /// `pipeline_desc::group` a group of lines (`execute_transforms`).
   ///
   /// Preconditions: those of `fftn::team`.
   [[nodiscard]] transform_range transforms_of(const team& t) const noexcept {
     return detail::transforms_of(*core_, t);
+  }
+
+  /// The transforms of the batch, as `execute_transforms` and `transforms_of` count them: the
+  /// lines, or with `pipeline_desc::group` the groups (the lines divided by the group's count).
+  /// Provisional (task 5.3f).
+  [[nodiscard]] std::size_t transform_count() const noexcept {
+    return detail::transform_count(*core_);
   }
 
   /// The bytes of workspace an execution needs when run by teams of up to `lanes` members (1:
@@ -420,6 +449,7 @@ private:
         .fanout = d.fanout,
         .fanout_out_dist = d.fanout_out_dist,
         .fanout_factor_dist = d.fanout_factor_dist,
+        .group = d.group,
     };
   }
 

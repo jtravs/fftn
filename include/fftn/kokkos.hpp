@@ -19,14 +19,17 @@
 ///   Kokkos-FFT 2.0's `KokkosFFT::Plan`, threaded on its instance, and the free
 ///   `execute(plan, in, out, norm)`. `fftn::kokkos::compat` spells these as Kokkos-FFT does
 ///   (`Plan`, `Direction`, `Normalization`, `axis_type`, `shape_type`, `execute`), so code
-///   written for Kokkos-FFT changes only its include and its namespace.
+///   written for Kokkos-FFT changes only its include and its namespace. It also has
+///   Kokkos-FFT's one-shot functions (`fft`, `rfft2`, `irfftn` and the rest), which keep their
+///   plans in the calling thread's convenience context (fftn/easy.hpp).
 ///
-/// `executor`, `team_of` and the threaded `view_plan` are provisional: their shape awaits the
-/// maintainer's review (dev/DESIGN.md 5.5). How the adapter differs from Kokkos-FFT, and the
-/// rules for each argument, are in docs/kokkos.md.
+/// `executor`, `team_of`, the threaded `view_plan` and the one-shot functions are provisional:
+/// their shape awaits the maintainer's review (dev/DESIGN.md 5.5). How the adapter differs from
+/// Kokkos-FFT, and the rules for each argument, are in docs/kokkos.md.
 #pragma once
 
 #include "fftn/config.hpp"
+#include "fftn/easy.hpp"
 #include "fftn/executor.hpp"
 #include "fftn/options.hpp"
 #include "fftn/plan.hpp"
@@ -296,9 +299,9 @@ struct bulk_call {
 // pushing and popping one stack at once.
 class region_guard {
 public:
-  explicit region_guard(bool active) : active_(active) {
+  explicit region_guard(bool active, const std::string& label = region_label()) : active_(active) {
     if (active_) {
-      Kokkos::Profiling::pushRegion(region_label());
+      Kokkos::Profiling::pushRegion(label);
     }
   }
   region_guard(const region_guard&) = delete;
@@ -327,6 +330,121 @@ public:
 
 private:
   std::atomic<bool>& busy_;
+};
+
+// Kokkos-FFT's normalisation of an output (view_plan::execute and the one-shot functions): every
+// real and imaginary part of the described elements multiplied by the coefficient computed in
+// double and rounded once to the data's precision, shared among the executor's lanes from 2^16
+// elements (experiment T3), cut along the output's longest dimension. Built from the output
+// View's extents and strides, so any layout works.
+template <class Value, std::size_t Rank> class output_scaler {
+public:
+  using real = real_of<Value>::type;
+
+  output_scaler() = default;
+
+  template <class View> explicit output_scaler(const View& out) {
+    for (std::size_t d = 0; d < Rank; ++d) {
+      extent_[d] = out.extent(d);
+      stride_[d] = out.stride(d);
+      if (extent_[d] > extent_[split_]) {
+        split_ = d;
+      }
+    }
+  }
+
+  // Scales the output at `first` as `norm` asks of a transform in direction `dir` of `points`
+  // points, on `ex`'s lanes.
+  template <class Executor>
+  void scale(Value* first, normalization norm, direction dir, std::size_t points,
+             const Executor& ex) const {
+    const bool forward = dir == direction::forward;
+    double coefficient = 1;
+    if ((norm == normalization::forward && forward) ||
+        (norm == normalization::backward && !forward)) {
+      coefficient = 1.0 / static_cast<double>(points);
+    } else if (norm == normalization::ortho) {
+      coefficient = 1.0 / std::sqrt(static_cast<double>(points));
+    } else {
+      return;
+    }
+    const auto c = static_cast<real>(coefficient);
+    std::size_t size = 1;
+    for (const std::size_t e : extent_) {
+      size *= e;
+    }
+    // Shared only when the multiplications outweigh a dispatch (experiment T3).
+    int parts = 1;
+    if (size >= share_elements) {
+      const auto most =
+          std::min<std::size_t>(extent_[split_], static_cast<std::size_t>(ex.concurrency()));
+      parts = static_cast<int>(most);
+    }
+    if (parts <= 1) {
+      scale_box(first, extent_, c);
+      return;
+    }
+    job j{.self = this, .first = first, .coefficient = c, .parts = parts};
+    ex.bulk(parts, &scale_part, &j);
+  }
+
+private:
+  // One scaling of an output: its elements, cut along dimension split_ into `parts` ranges.
+  struct job {
+    const output_scaler* self;
+    Value* first;
+    real coefficient;
+    int parts;
+  };
+
+  // Multiplies every element of the box of `extent` elements that starts at `first`, walking
+  // it with an odometer over the dimensions.
+  void scale_box(Value* first, const std::array<std::size_t, Rank>& extent, real c) const noexcept {
+    std::size_t total = 1;
+    for (const std::size_t e : extent) {
+      total *= e;
+    }
+    std::array<std::size_t, Rank> index{};
+    std::ptrdiff_t offset = 0;
+    for (std::size_t k = 0; k < total; ++k) {
+      Value& x = first[offset];
+      if constexpr (std::is_floating_point_v<Value>) {
+        x *= c;
+      } else {
+        x.real(x.real() * c);
+        x.imag(x.imag() * c);
+      }
+      for (std::size_t d = Rank; d-- > 0;) {
+        const auto step = static_cast<std::ptrdiff_t>(stride_[d]);
+        if (++index[d] < extent[d]) {
+          offset += step;
+          break;
+        }
+        offset -= step * static_cast<std::ptrdiff_t>(extent[d] - 1);
+        index[d] = 0;
+      }
+    }
+  }
+
+  static void scale_part(void* arg, int part) {
+    const auto& j = *static_cast<const job*>(arg);
+    const output_scaler& self = *j.self;
+    const std::size_t length = self.extent_[self.split_];
+    const auto parts = static_cast<std::size_t>(j.parts);
+    const auto at = static_cast<std::size_t>(part);
+    const std::size_t begin = length * at / parts;
+    std::array<std::size_t, Rank> extent = self.extent_;
+    extent[self.split_] = length * (at + 1) / parts - begin;
+    const auto start = static_cast<std::ptrdiff_t>(begin * self.stride_[self.split_]);
+    self.scale_box(j.first + start, extent, j.coefficient);
+  }
+
+  static constexpr std::size_t share_elements = std::size_t{1} << 16U;
+
+  std::array<std::size_t, Rank> extent_{};
+  std::array<std::size_t, Rank> stride_{};
+  // The output dimension that scaling cuts among threads: the longest.
+  std::size_t split_ = 0;
 };
 
 // The plan of a shape from shape_of. The shape's own checks come first, phrased in terms of
@@ -656,6 +774,33 @@ template <class TeamMember> [[nodiscard]] team team_of(const TeamMember& member)
   return {.rank = member.team_rank(), .size = size, .group_size = cache_group_size(size)};
 }
 
+namespace detail {
+
+// shape_of with Kokkos-FFT's further checks of a plan's arguments: real plans' directions (r2c
+// forward, c2r backward) and the lengths `s` (0, or the Views' own: FFTN does not crop or pad).
+template <class InView, class OutView, std::size_t Dim>
+shape<element_t<InView>, element_t<OutView>>
+checked_shape(const InView& in, const OutView& out, direction dir, const axis_type<Dim>& axes,
+              const std::array<std::size_t, Dim>& s) {
+  if (std::is_floating_point_v<element_t<InView>> && dir != direction::forward) {
+    reject("dir", "must be forward for a real-to-complex plan");
+  }
+  if (std::is_floating_point_v<element_t<OutView>> && dir != direction::backward) {
+    reject("dir", "must be backward for a complex-to-real plan");
+  }
+  auto result = shape_of(in, out, dir, axes);
+  for (std::size_t i = 0; i < Dim; ++i) {
+    if (s[i] != 0 && s[i] != result.axes[i].n) {
+      reject((Dim == 1 ? std::string("n") : "s[" + std::to_string(i) + "]"),
+             "= " + std::to_string(s[i]) + " differs from the Views' length " +
+                 std::to_string(result.axes[i].n) + ": FFTN does not crop or pad");
+    }
+  }
+  return result;
+}
+
+} // namespace detail
+
 /// A plan with the constructor and execute shape of Kokkos-FFT 2.0's `KokkosFFT::Plan`, over
 /// FFTN.
 ///
@@ -715,7 +860,7 @@ public:
   explicit view_plan(const ExecutionSpace& exec_space, const InView& in, const OutView& out,
                      direction dir, const axis_type<Dim>& axes,
                      const std::array<std::size_t, Dim>& s = {})
-      : view_plan(exec_space, in, out, checked_shape(in, out, dir, axes, s)) {}
+      : view_plan(exec_space, in, out, detail::checked_shape(in, out, dir, axes, s)) {}
 
   /// The one-axis constructor with Kokkos-FFT's `compat::Direction`, the spelling
   /// `compat::Plan` call sites use: as the one taking `direction`, with `dir` converted.
@@ -810,7 +955,7 @@ public:
       executor_.space().fence(detail::fence_label());
     }
     plan_.execute(data_of(in), data_of(out), executor_, workspace_);
-    scale(out, norm);
+    scaler_.scale(out.data(), norm, dir_, points_, executor_);
   }
 
   /// `execute` with Kokkos-FFT's `compat::Normalization`, the spelling `compat::Plan` call
@@ -837,7 +982,7 @@ private:
             const shape<in_element, out_element>& s)
       : executor_(exec_space), plan_(detail::plan_of(s, detail::same_first_element(in, out))),
         workspace_(plan_.workspace_bytes(executor_.width())), dir_(s.dir),
-        in_place_(detail::same_first_element(in, out)) {
+        in_place_(detail::same_first_element(in, out)), scaler_(out) {
     static_cast<void>(detail::fence_label());
     static_cast<void>(detail::region_label());
     for (const axis& a : s.axes) {
@@ -848,30 +993,7 @@ private:
       out_extent_[d] = out.extent(d);
       in_stride_[d] = in.stride(d);
       out_stride_[d] = out.stride(d);
-      if (out_extent_[d] > out_extent_[split_]) {
-        split_ = d;
-      }
     }
-  }
-
-  static shape<in_element, out_element> checked_shape(const InView& in, const OutView& out,
-                                                      direction dir, const axis_type<Dim>& axes,
-                                                      const std::array<std::size_t, Dim>& s) {
-    if (std::is_floating_point_v<in_element> && dir != direction::forward) {
-      detail::reject("dir", "must be forward for a real-to-complex plan");
-    }
-    if (std::is_floating_point_v<out_element> && dir != direction::backward) {
-      detail::reject("dir", "must be backward for a complex-to-real plan");
-    }
-    auto result = shape_of(in, out, dir, axes);
-    for (std::size_t i = 0; i < Dim; ++i) {
-      if (s[i] != 0 && s[i] != result.axes[i].n) {
-        detail::reject((Dim == 1 ? std::string("n") : "s[" + std::to_string(i) + "]"),
-                       "= " + std::to_string(s[i]) + " differs from the Views' length " +
-                           std::to_string(result.axes[i].n) + ": FFTN does not crop or pad");
-      }
-    }
-    return result;
   }
 
   template <class View>
@@ -891,89 +1013,6 @@ private:
     }
   }
 
-  using out_value = OutView::non_const_value_type;
-  using out_real = detail::real_of<out_value>::type;
-
-  // One scaling of an output: its elements, cut along dimension split_ into `parts` ranges.
-  struct scale_job {
-    const view_plan* self;
-    out_value* first;
-    out_real coefficient;
-    int parts;
-  };
-
-  // Multiplies every element of the box of `extent` elements that starts at `first`, walking
-  // it with an odometer over the dimensions, so any layout works.
-  void scale_box(out_value* first, const std::array<std::size_t, rank>& extent,
-                 out_real c) const noexcept {
-    std::size_t total = 1;
-    for (const std::size_t e : extent) {
-      total *= e;
-    }
-    std::array<std::size_t, rank> index{};
-    std::ptrdiff_t offset = 0;
-    for (std::size_t k = 0; k < total; ++k) {
-      out_value& x = first[offset];
-      if constexpr (std::is_floating_point_v<out_value>) {
-        x *= c;
-      } else {
-        x.real(x.real() * c);
-        x.imag(x.imag() * c);
-      }
-      for (std::size_t d = rank; d-- > 0;) {
-        const auto step = static_cast<std::ptrdiff_t>(out_stride_[d]);
-        if (++index[d] < extent[d]) {
-          offset += step;
-          break;
-        }
-        offset -= step * static_cast<std::ptrdiff_t>(extent[d] - 1);
-        index[d] = 0;
-      }
-    }
-  }
-
-  static void scale_part(void* arg, int part) {
-    const auto& job = *static_cast<const scale_job*>(arg);
-    const view_plan& self = *job.self;
-    const std::size_t length = self.out_extent_[self.split_];
-    const auto parts = static_cast<std::size_t>(job.parts);
-    const auto p = static_cast<std::size_t>(part);
-    const std::size_t begin = length * p / parts;
-    std::array<std::size_t, rank> extent = self.out_extent_;
-    extent[self.split_] = length * (p + 1) / parts - begin;
-    const auto start = static_cast<std::ptrdiff_t>(begin * self.out_stride_[self.split_]);
-    self.scale_box(job.first + start, extent, job.coefficient);
-  }
-
-  void scale(const OutView& out, normalization norm) const {
-    const bool forward = dir_ == direction::forward;
-    double coefficient = 1;
-    if ((norm == normalization::forward && forward) ||
-        (norm == normalization::backward && !forward)) {
-      coefficient = 1.0 / static_cast<double>(points_);
-    } else if (norm == normalization::ortho) {
-      coefficient = 1.0 / std::sqrt(static_cast<double>(points_));
-    } else {
-      return;
-    }
-    const auto c = static_cast<out_real>(coefficient);
-    // Shared only when the multiplications outweigh a dispatch (experiment T3).
-    int parts = 1;
-    if (out.size() >= scale_share_elements) {
-      const auto most = std::min<std::size_t>(out_extent_[split_],
-                                              static_cast<std::size_t>(executor_.concurrency()));
-      parts = static_cast<int>(most);
-    }
-    if (parts <= 1) {
-      scale_box(out.data(), out_extent_, c);
-      return;
-    }
-    scale_job job{.self = this, .first = out.data(), .coefficient = c, .parts = parts};
-    executor_.bulk(parts, &scale_part, &job);
-  }
-
-  static constexpr std::size_t scale_share_elements = std::size_t{1} << 16U;
-
   executor<ExecutionSpace> executor_;
   fftn::plan<in_element, out_element> plan_;
   // The scratch of the plan's executions, for the instance's width; busy_ makes them take
@@ -983,9 +1022,8 @@ private:
   mutable std::atomic<bool> busy_{false};
   direction dir_;
   bool in_place_;
+  detail::output_scaler<typename OutView::non_const_value_type, rank> scaler_;
   std::size_t points_ = 1;
-  // The output dimension that scaling cuts among threads: the longest.
-  std::size_t split_ = 0;
   std::array<std::size_t, rank> in_extent_{};
   std::array<std::size_t, rank> out_extent_{};
   std::array<std::size_t, rank> in_stride_{};
@@ -1014,6 +1052,183 @@ void execute(const view_plan<ExecutionSpace, InView, OutView, Dim>& p,
   p.execute(in, out, norm);
 }
 
+namespace detail {
+
+// Kokkos-FFT's hfft and ihfft run the other real transform with the normalisation's direction
+// swapped.
+inline normalization swapped(normalization norm) noexcept {
+  switch (norm) {
+  case normalization::forward:
+    return normalization::backward;
+  case normalization::backward:
+    return normalization::forward;
+  default:
+    return norm;
+  }
+}
+
+// The fence a one-shot function makes before its transform; built once, as fence_label is.
+inline const std::string& one_shot_fence_label() {
+  static const std::string label("fftn::kokkos::compat: fence before the transform");
+  return label;
+}
+
+// The data type of a View of `Rank` dimensions of `Value`: Value*, Value**, ...
+template <class Value, std::size_t Rank> struct data_type_of {
+  using type = data_type_of<Value, Rank - 1>::type*;
+};
+template <class Value> struct data_type_of<Value, 0> {
+  using type = Value;
+};
+
+// The layout of a temporary copy of a View of `Layout`: the same for LayoutLeft and LayoutRight;
+// C order for LayoutStride, whose strides a new allocation cannot take over simply (the plan reads
+// any layout, so only the copy's speed depends on it).
+template <class Layout> struct copy_layout {
+  using type = Kokkos::LayoutRight;
+};
+template <> struct copy_layout<Kokkos::LayoutLeft> {
+  using type = Kokkos::LayoutLeft;
+};
+
+// A complex copy of `in` in host memory, in `in`'s layout (copy_layout), conjugated when
+// `conjugate` is set: the temporary through which Kokkos-FFT's fft of a real View, and its hfft,
+// run. It allocates on every call, as Kokkos-FFT's temporaries do. Called after the instance's
+// fence (one_shot), so that work queued on the instance before the call has written `in`.
+template <class InView, std::size_t... I>
+auto complex_copy(const InView& in, bool conjugate, std::index_sequence<I...> /*dims*/) {
+  static_assert(host_accessible_view<InView>(),
+                "fftn::kokkos: the Views' memory must be accessible from the host");
+  using real = real_of<typename InView::non_const_value_type>::type;
+  constexpr std::size_t rank = InView::rank();
+  using copy_view =
+      Kokkos::View<typename data_type_of<Kokkos::complex<real>, rank>::type,
+                   typename copy_layout<typename InView::array_layout>::type, Kokkos::HostSpace>;
+  const copy_view copy(Kokkos::view_alloc(std::string("fftn::kokkos::compat: complex copy"),
+                                          Kokkos::WithoutInitializing),
+                       in.extent(I)...);
+  const auto* from = data_of(in);
+  auto* to = data_of(copy);
+  std::size_t total = 1;
+  for (std::size_t d = 0; d < rank; ++d) {
+    total *= in.extent(d);
+  }
+  std::array<std::size_t, rank> index{};
+  for (std::size_t k = 0; k < total; ++k) {
+    std::ptrdiff_t at = 0;
+    std::ptrdiff_t to_at = 0;
+    for (std::size_t d = 0; d < rank; ++d) {
+      at += static_cast<std::ptrdiff_t>(index[d] * in.stride(d));
+      to_at += static_cast<std::ptrdiff_t>(index[d] * copy.stride(d));
+    }
+    std::complex<real> z(from[at]);
+    to[to_at] = conjugate ? std::conj(z) : z;
+    for (std::size_t d = rank; d-- > 0;) {
+      if (++index[d] < in.extent(d)) {
+        break;
+      }
+      index[d] = 0;
+    }
+  }
+  return copy;
+}
+
+// Negates the imaginary part of every element of a complex View: ihfft's last step.
+template <class View> void conjugate_in_place(const View& v) {
+  constexpr std::size_t rank = View::rank();
+  auto* data = data_of(v);
+  std::size_t total = 1;
+  for (std::size_t d = 0; d < rank; ++d) {
+    total *= v.extent(d);
+  }
+  std::array<std::size_t, rank> index{};
+  for (std::size_t k = 0; k < total; ++k) {
+    std::ptrdiff_t at = 0;
+    for (std::size_t d = 0; d < rank; ++d) {
+      at += static_cast<std::ptrdiff_t>(index[d] * v.stride(d));
+    }
+    data[at] = std::conj(data[at]);
+    for (std::size_t d = rank; d-- > 0;) {
+      if (++index[d] < v.extent(d)) {
+        break;
+      }
+      index[d] = 0;
+    }
+  }
+}
+
+template <class In, class Out> constexpr easy::detail::easy_kind easy_kind_of() {
+  if constexpr (std::is_floating_point_v<In>) {
+    return easy::detail::easy_kind::r2c;
+  } else if constexpr (std::is_floating_point_v<Out>) {
+    return easy::detail::easy_kind::c2r;
+  } else {
+    return easy::detail::easy_kind::c2c;
+  }
+}
+
+// A one-shot transform (the functions of compat below) of the View `source()` gives into `out`:
+// what view_plan(exec, in, out, dir, axes, s).execute(in, out, norm) computes, bit for bit, with
+// the plan and the workspace of the calling thread's convenience context
+// (fftn::easy::thread_context, fftn/easy.hpp) instead of a plan's own, so a repeated call finds
+// its plan there. The fence, the region (named `label`), the executor on `exec` and the
+// normalisation are view_plan's. `source` runs after the fence, so a temporary it copies (a real
+// fft input, hfft's conjugate) reads what the instance's queued work wrote.
+template <class ExecutionSpace, class Source, class OutView, std::size_t Dim>
+void one_shot(const std::string& label, const ExecutionSpace& exec, const Source& source,
+              const OutView& out, direction dir, const axis_type<Dim>& axes,
+              const std::array<std::size_t, Dim>& s, normalization norm) {
+  static_assert(Kokkos::is_execution_space_v<ExecutionSpace>,
+                "fftn::kokkos::compat: ExecutionSpace must be a Kokkos execution space");
+  static_assert(supported_space<ExecutionSpace>(),
+                "fftn::kokkos::compat: ExecutionSpace must be Kokkos::Serial, Kokkos::OpenMP or "
+                "Kokkos::Threads (Threads needs Kokkos 5.2.1)");
+  const executor<ExecutionSpace> ex(exec);
+  // As view_plan::execute: no fence or region on Serial, nor inside a kernel.
+  const bool on_instance = !is_serial_space<ExecutionSpace> && !in_host_kernel();
+  const region_guard region(on_instance, label);
+  if (on_instance) {
+    exec.fence(one_shot_fence_label());
+  }
+  const auto& in = source();
+  using In = element_t<std::remove_cvref_t<decltype(in)>>;
+  using Out = element_t<OutView>;
+  const shape<In, Out> sh = checked_shape(in, out, dir, axes, s);
+  const bool in_place = same_first_element(in, out);
+  const executor_ref ref(ex);
+  try {
+    easy::detail::run_shape(easy::thread_context(),
+                            {.kind = easy_kind_of<In, Out>(),
+                             .single = std::is_same_v<typename real_of<In>::type, float>,
+                             .shape = &sh,
+                             .in_place = in_place,
+                             .in = data_of(in),
+                             .out = data_of(out),
+                             .ex = &ref});
+  } catch (const std::invalid_argument& e) {
+    reject("in, out", std::string("describe a layout FFTN refuses: ") + e.what());
+  }
+  std::size_t points = 1;
+  for (const axis& a : sh.axes) {
+    points *= a.n;
+  }
+  const output_scaler<typename OutView::non_const_value_type, OutView::rank()> scaler(out);
+  scaler.scale(out.data(), norm, dir, points, ex);
+}
+
+// The last Dim dimensions, Kokkos-FFT's default axes of fftn and the rest: -Dim, ..., -1.
+template <std::size_t Dim> constexpr axis_type<Dim> last_axes() {
+  axis_type<Dim> a{};
+  for (std::size_t i = 0; i < Dim; ++i) {
+    a[i] = static_cast<int>(i) - static_cast<int>(Dim);
+  }
+  return a;
+}
+
+template <class View> constexpr bool real_view = std::is_floating_point_v<element_t<View>>;
+
+} // namespace detail
+
 /// Kokkos-FFT's names for this adapter, so that code written against Kokkos-FFT 2.0 needs
 /// only a new include and namespace: `KokkosFFT::Plan` becomes `fftn::kokkos::compat::Plan`,
 /// and so on. The names break FFTN's snake_case rule on purpose; they are aliases of the
@@ -1035,6 +1250,245 @@ template <std::size_t Dim> using shape_type = std::array<std::size_t, Dim>;
 
 /// `KokkosFFT::execute`: the adapter's `execute`.
 using kokkos::execute;
+
+// The one-shot functions (step 6.7, provisional): Kokkos-FFT 2.0's `KokkosFFT::fft` and the rest,
+// with its signatures. Each computes what a plan of the same Views computes (`Plan` built for the
+// call, then `execute` with `norm`), bit for bit, but keeps the plan and its workspace in the
+// calling thread's convenience context (`fftn::easy::thread_context()`, fftn/easy.hpp), so a
+// call that repeats a layout builds nothing; the first call of a layout allocates. Each runs on
+// `exec_space` as `Plan::execute` does (the fence, the Kokkos Tools region, named after the
+// function, and the threaded execution), and refuses what `Plan` refuses, with the same messages.
+// Differences from Kokkos-FFT are view_plan's (docs/kokkos.md), and `hfft` leaves its input
+// unchanged (Kokkos-FFT conjugates a non-const input in place).
+
+/// `KokkosFFT::fft`: the forward complex transform along dimension `axis` of `in` into `out`,
+/// normalised as `norm` says. A real `in` is first copied into a complex temporary (allocated on
+/// every call, as Kokkos-FFT does). `n` may only be the length the Views have.
+///
+/// Throws `std::invalid_argument` as `Plan`'s constructor and `execute` do. Provisional.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void fft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+         Normalization norm = Normalization::backward, int axis = -1,
+         std::optional<std::size_t> n = std::nullopt) {
+  static_assert(!detail::real_view<OutViewType>, "fftn::kokkos::compat::fft: out must be complex");
+  static const std::string label("fftn::kokkos::compat::fft");
+  if constexpr (detail::real_view<InViewType>) {
+    const auto copy = [&] {
+      return detail::complex_copy(in, false, std::make_index_sequence<InViewType::rank()>{});
+    };
+    detail::one_shot(label, exec_space, copy, out, direction::forward, axis_type<1>{axis},
+                     std::array<std::size_t, 1>{n.value_or(0)}, detail::normalization_of(norm));
+  } else {
+    detail::one_shot(
+        label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward,
+        axis_type<1>{axis}, std::array<std::size_t, 1>{n.value_or(0)},
+        detail::normalization_of(norm));
+  }
+}
+
+/// `KokkosFFT::ifft`: the backward complex transform along `axis`. As `fft` otherwise; the
+/// input is complex.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void ifft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+          Normalization norm = Normalization::backward, int axis = -1,
+          std::optional<std::size_t> n = std::nullopt) {
+  static_assert(!detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::ifft: in and out must be complex");
+  static const std::string label("fftn::kokkos::compat::ifft");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward,
+      axis_type<1>{axis}, std::array<std::size_t, 1>{n.value_or(0)},
+      detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::rfft`: the real-to-complex transform along `axis` (the output has n/2 + 1
+/// values along it). As `fft` otherwise.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void rfft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+          Normalization norm = Normalization::backward, int axis = -1,
+          std::optional<std::size_t> n = std::nullopt) {
+  static_assert(detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::rfft: in must be real and out complex");
+  static const std::string label("fftn::kokkos::compat::rfft");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward,
+      axis_type<1>{axis}, std::array<std::size_t, 1>{n.value_or(0)},
+      detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::irfft`: the complex-to-real transform along `axis`, its length the real
+/// output's. As `fft` otherwise.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void irfft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           Normalization norm = Normalization::backward, int axis = -1,
+           std::optional<std::size_t> n = std::nullopt) {
+  static_assert(!detail::real_view<InViewType> && detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::irfft: in must be complex and out real");
+  static const std::string label("fftn::kokkos::compat::irfft");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward,
+      axis_type<1>{axis}, std::array<std::size_t, 1>{n.value_or(0)},
+      detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::hfft`: the transform of a Hermitian-symmetric signal given by its first half
+/// (complex `in`, or real), real `out`: `irfft` of the conjugated input with the
+/// normalisation's direction swapped, as Kokkos-FFT computes it. The conjugate is a temporary
+/// (allocated on every call); `in` is not modified.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void hfft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+          Normalization norm = Normalization::backward, int axis = -1,
+          std::optional<std::size_t> n = std::nullopt) {
+  static_assert(detail::real_view<OutViewType>, "fftn::kokkos::compat::hfft: out must be real");
+  static const std::string label("fftn::kokkos::compat::hfft");
+  const auto copy = [&] {
+    return detail::complex_copy(in, true, std::make_index_sequence<InViewType::rank()>{});
+  };
+  detail::one_shot(label, exec_space, copy, out, direction::backward, axis_type<1>{axis},
+                   std::array<std::size_t, 1>{n.value_or(0)},
+                   detail::swapped(detail::normalization_of(norm)));
+}
+
+/// `KokkosFFT::ihfft`: the inverse of `hfft`, real `in`, complex `out`: `rfft` with the
+/// normalisation's direction swapped, then the output conjugated in place, as Kokkos-FFT.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void ihfft(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           Normalization norm = Normalization::backward, int axis = -1,
+           std::optional<std::size_t> n = std::nullopt) {
+  static_assert(detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::ihfft: in must be real and out complex");
+  static const std::string label("fftn::kokkos::compat::ihfft");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward,
+      axis_type<1>{axis}, std::array<std::size_t, 1>{n.value_or(0)},
+      detail::swapped(detail::normalization_of(norm)));
+  detail::conjugate_in_place(out);
+}
+
+/// `KokkosFFT::fft2`: `fftn` along `axes` (the last two dimensions by default), with Kokkos-FFT's
+/// argument order (norm before axes). A real `in` is copied into a complex temporary.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void fft2(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+          Normalization norm = Normalization::backward, axis_type<2> axes = {-2, -1},
+          shape_type<2> s = {}) {
+  static_assert(!detail::real_view<OutViewType>, "fftn::kokkos::compat::fft2: out must be complex");
+  static const std::string label("fftn::kokkos::compat::fft2");
+  if constexpr (detail::real_view<InViewType>) {
+    const auto copy = [&] {
+      return detail::complex_copy(in, false, std::make_index_sequence<InViewType::rank()>{});
+    };
+    detail::one_shot(label, exec_space, copy, out, direction::forward, axes, s,
+                     detail::normalization_of(norm));
+  } else {
+    detail::one_shot(
+        label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward, axes,
+        s, detail::normalization_of(norm));
+  }
+}
+
+/// `KokkosFFT::ifft2`: `ifftn` along `axes` (the last two by default).
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void ifft2(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           Normalization norm = Normalization::backward, axis_type<2> axes = {-2, -1},
+           shape_type<2> s = {}) {
+  static_assert(!detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::ifft2: in and out must be complex");
+  static const std::string label("fftn::kokkos::compat::ifft2");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward, axes,
+      s, detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::rfft2`: `rfftn` along `axes` (the last two by default), the last listed halved.
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void rfft2(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           Normalization norm = Normalization::backward, axis_type<2> axes = {-2, -1},
+           shape_type<2> s = {}) {
+  static_assert(detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::rfft2: in must be real and out complex");
+  static const std::string label("fftn::kokkos::compat::rfft2");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward, axes,
+      s, detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::irfft2`: `irfftn` along `axes` (the last two by default).
+template <class ExecutionSpace, class InViewType, class OutViewType>
+void irfft2(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+            Normalization norm = Normalization::backward, axis_type<2> axes = {-2, -1},
+            shape_type<2> s = {}) {
+  static_assert(!detail::real_view<InViewType> && detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::irfft2: in must be complex and out real");
+  static const std::string label("fftn::kokkos::compat::irfft2");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward, axes,
+      s, detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::fftn`: the forward complex transform along `axes` (by default the last `DIM`
+/// dimensions, `DIM` the Views' rank), with Kokkos-FFT's argument order (axes before norm). A
+/// real `in` is copied into a complex temporary. As `fft` otherwise.
+template <class ExecutionSpace, class InViewType, class OutViewType,
+          std::size_t DIM = InViewType::rank()>
+void fftn(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+          axis_type<DIM> axes = detail::last_axes<DIM>(),
+          Normalization norm = Normalization::backward, shape_type<DIM> s = {}) {
+  static_assert(!detail::real_view<OutViewType>, "fftn::kokkos::compat::fftn: out must be complex");
+  static const std::string label("fftn::kokkos::compat::fftn");
+  if constexpr (detail::real_view<InViewType>) {
+    const auto copy = [&] {
+      return detail::complex_copy(in, false, std::make_index_sequence<InViewType::rank()>{});
+    };
+    detail::one_shot(label, exec_space, copy, out, direction::forward, axes, s,
+                     detail::normalization_of(norm));
+  } else {
+    detail::one_shot(
+        label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward, axes,
+        s, detail::normalization_of(norm));
+  }
+}
+
+/// `KokkosFFT::ifftn`: the backward complex transform along `axes`. As `fftn` otherwise.
+template <class ExecutionSpace, class InViewType, class OutViewType,
+          std::size_t DIM = InViewType::rank()>
+void ifftn(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           axis_type<DIM> axes = detail::last_axes<DIM>(),
+           Normalization norm = Normalization::backward, shape_type<DIM> s = {}) {
+  static_assert(!detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::ifftn: in and out must be complex");
+  static const std::string label("fftn::kokkos::compat::ifftn");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward, axes,
+      s, detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::rfftn`: the real-to-complex transform along `axes`, the last listed halved.
+template <class ExecutionSpace, class InViewType, class OutViewType,
+          std::size_t DIM = InViewType::rank()>
+void rfftn(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+           axis_type<DIM> axes = detail::last_axes<DIM>(),
+           Normalization norm = Normalization::backward, shape_type<DIM> s = {}) {
+  static_assert(detail::real_view<InViewType> && !detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::rfftn: in must be real and out complex");
+  static const std::string label("fftn::kokkos::compat::rfftn");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::forward, axes,
+      s, detail::normalization_of(norm));
+}
+
+/// `KokkosFFT::irfftn`: the complex-to-real transform along `axes`, the last listed halved.
+template <class ExecutionSpace, class InViewType, class OutViewType,
+          std::size_t DIM = InViewType::rank()>
+void irfftn(const ExecutionSpace& exec_space, const InViewType& in, const OutViewType& out,
+            axis_type<DIM> axes = detail::last_axes<DIM>(),
+            Normalization norm = Normalization::backward, shape_type<DIM> s = {}) {
+  static_assert(!detail::real_view<InViewType> && detail::real_view<OutViewType>,
+                "fftn::kokkos::compat::irfftn: in must be complex and out real");
+  static const std::string label("fftn::kokkos::compat::irfftn");
+  detail::one_shot(
+      label, exec_space, [&]() -> const InViewType& { return in; }, out, direction::backward, axes,
+      s, detail::normalization_of(norm));
+}
 
 } // namespace compat
 
