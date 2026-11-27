@@ -4665,6 +4665,9 @@ void execute_core(const plan_core& core, std::size_t first, std::size_t count, c
   // A plan whose edges have factors runs on the edge driver (core/drive.hpp, edge_drive), with
   // the factor cursors starting at the arrays: execute_core's path above without its shortcuts
   // (programs with factor edges are walked).
+  if (core.split) {
+    check_split_arrays(core, in, out, args);
+  }
   execute_core_cursors(core, first, count, in, out, ws, edge_state_of(args, core.factor_args));
 }
 

@@ -240,6 +240,7 @@ struct split_case {
   placement where = placement::apart;
   bool in_place = false; // c2c only
   bool reference = true; // against the quadruple-precision reference (small cases)
+  double scale = 1.0;    // options::scale, a power of two (the reference times it is exact)
 };
 
 dims_t side_dims(const split_case& c, bool output) {
@@ -567,6 +568,30 @@ std::vector<split_case> cases() {
        .gap = 2,
        .flips = flip_first | flip_last,
        .where = placement::swapped},
+      // options::scale on every kind.
+      {.name = "c2c rows scaled", .kind = c2c, .dims = {64}, .count = 3, .scale = 0.125},
+      {.name = "c2c planes in place scaled",
+       .kind = c2c,
+       .dims = {8, 12},
+       .count = 2,
+       .in_place = true,
+       .scale = 0.125},
+      {.name = "r2c planes scaled", .kind = r2c, .dims = {6, 10}, .count = 2, .scale = 0.125},
+      {.name = "c2r rows scaled", .kind = c2r, .dims = {30}, .count = 3, .scale = 0.125},
+      // Axes of one point.
+      {.name = "c2c rows of one point", .kind = c2c, .dims = {1}, .count = 5},
+      {.name = "c2c planes of one row", .kind = c2c, .dims = {1, 8}, .count = 2, .gap = 1},
+      {.name = "c2c planes of one column",
+       .kind = c2c,
+       .dims = {8, 1},
+       .count = 2,
+       .where = placement::interleaved},
+      {.name = "r2c planes of one column", .kind = r2c, .dims = {5, 1}, .count = 2},
+      {.name = "c2r planes of one column",
+       .kind = c2r,
+       .dims = {3, 1},
+       .count = 2,
+       .flips = flip_first},
   };
 }
 
@@ -611,7 +636,7 @@ TYPED_TEST(Split, EveryKindAndRank) {
         describe = p.describe();
       };
       using S = fftn::split_complex<T>;
-      const fftn::options opts{.in_place = c.in_place};
+      const fftn::options opts{.in_place = c.in_place, .scale = c.scale};
       if (c.kind == transform_kind::c2c) {
         run(fftn::plan<S, S>(shape_of<S, S>(c), opts));
       } else if (c.kind == transform_kind::r2c) {
@@ -632,8 +657,11 @@ TYPED_TEST(Split, EveryKindAndRank) {
           << describe;
       if (c.reference) {
         const std::vector<std::complex<T>> got = io.result().get();
-        check.within<T>(got, data.want, tolerance_for<T>(c.dims, c.kind == transform_kind::c2r),
-                        c.name);
+        std::vector<cd> want = data.want;
+        for (cd& z : want) {
+          z *= c.scale; // a power of two: exact
+        }
+        check.within<T>(got, want, tolerance_for<T>(c.dims, c.kind == transform_kind::c2r), c.name);
       }
     }
     // The same program on interleaved data, bitwise: the split core and the interleaved plan
@@ -645,7 +673,7 @@ TYPED_TEST(Split, EveryKindAndRank) {
     }
     for (const fftn::isa target : fftn::test::runnable_isas()) {
       SCOPED_TRACE(fftn::isa_name(target));
-      const fftn::options opts{.in_place = c.in_place, .force_isa = target};
+      const fftn::options opts{.in_place = c.in_place, .scale = c.scale, .force_isa = target};
       v.kind = c.kind;
       v.prec =
           std::is_same_v<T, double> ? fftn::detail::precision::f64 : fftn::detail::precision::f32;
@@ -689,6 +717,25 @@ TYPED_TEST(Split, EveryKindAndRank) {
         EXPECT_TRUE(same_bits(teamed.result().buffer, serial.result().buffer)) << "a team differs";
       }
       {
+        // completion::own: each member its transforms_of share, whole.
+        split_io<T> owned(c, data.input);
+        side_memory<T>& to = c.in_place ? owned.in : owned.out;
+        const fftn::exec_args args{.in_factor = cursor_of(owned.in), .out_factor = cursor_of(to)};
+        std::vector<std::thread> members;
+        for (int r = 0; r < 3; ++r) {
+          members.emplace_back([&, r] {
+            fftn::detail::execute_team(*core, slot_of(owned.in), to.real_parts(),
+                                       fftn::team{.rank = r, .size = 3}, ws, fftn::completion::own,
+                                       args);
+          });
+        }
+        for (std::thread& m : members) {
+          m.join();
+        }
+        EXPECT_TRUE(same_bits(owned.result().buffer, serial.result().buffer))
+            << "completion::own differs";
+      }
+      {
         split_io<T> pooled(c, data.input);
         side_memory<T>& to = c.in_place ? pooled.in : pooled.out;
         const fftn::exec_args args{.in_factor = cursor_of(pooled.in), .out_factor = cursor_of(to)};
@@ -702,7 +749,8 @@ TYPED_TEST(Split, EveryKindAndRank) {
 
 // Large transforms that a team splits among its members (a long row's chain, a plane's and a
 // volume's phases by lines), through the public plan: team, executor and pieces bitwise with
-// the serial execution, which equals the interleaved plan's.
+// the serial execution; and the split program equal to the interleaved plan's of the same program
+// (the settings of EveryKindAndRank), bitwise.
 TYPED_TEST(Split, TeamsShareLargeTransforms) {
   using T = TypeParam;
   using S = fftn::split_complex<T>;
@@ -788,7 +836,116 @@ TYPED_TEST(Split, TeamsShareLargeTransforms) {
     } else {
       run(fftn::plan<S, T>(shape_of<S, T>(c), opts));
     }
+    // The same program on interleaved data, bitwise.
+    fftn::detail::build_settings same_program;
+    same_program.strategy = fftn::detail::strategy_choice::chain;
+    same_program.batch_leaves = fftn::detail::batch_leaf_choice::never;
+    same_program.c2r_packed = 0;
+    const auto s = c2c_of<T>(c);
+    fftn::detail::shape_view v;
+    v.kind = c.kind;
+    v.prec =
+        std::is_same_v<T, double> ? fftn::detail::precision::f64 : fftn::detail::precision::f32;
+    v.dir = c.kind == c2c ? c.dir : fftn::direction::forward;
+    v.axes = s.axes;
+    v.batches = s.batches;
+    v.split = true;
+    const auto core = fftn::detail::make_plan_core(v, opts, same_program);
+    fftn::workspace ws(fftn::detail::workspace_bytes(*core, 1));
+    split_io<T> serial(c, data.input);
+    run_serial(*core, serial, ws);
+    EXPECT_TRUE(
+        same_bits(serial.result().get(), interleaved_result<T>(c, data.input, opts, same_program)))
+        << "not the interleaved plan's bits\n"
+        << fftn::detail::describe(*core);
   }
+}
+
+// Strided axes of an array for the real kinds (axes_r2c's and axes_c2r's shapes): the split plan
+// against the interleaved plan of the same shape, each within the derived tolerance of the
+// transform (their programs may differ, so twice it apart).
+TYPED_TEST(Split, RealAxesOfAnArray) {
+  using T = TypeParam;
+  using S = fftn::split_complex<T>;
+  checker check;
+  const std::vector<fftn::axis> array{{.n = 6}, {.n = 5}, {.n = 8}};
+  const dims_t dims{6, 5, 8};
+  const std::vector<std::vector<std::size_t>> selections{{0}, {1}, {0, 2}, {2, 0}, {0, 1}};
+  const std::size_t points = 6 * 5 * 8;
+  fftn::test::input_source src(101);
+  const auto x = src.reals<T>(points);
+  for (const auto& selected : selections) {
+    const std::size_t n = dims[selected.back()];
+    const std::size_t half = points / n * (n / 2 + 1); // the complex side's elements, tight
+    dims_t sel;
+    for (const std::size_t d : selected) {
+      sel.push_back(dims[d]);
+    }
+    const auto tol = tolerance_for<T>(sel, false) * 2.0;
+    // r2c: the real array into split arrays.
+    const auto ri = fftn::axes_r2c<T>(array, selected);
+    fftn::shape<T, S> rs;
+    rs.axes = ri.axes;
+    rs.batches = ri.batches;
+    std::vector<std::complex<T>> y(half);
+    {
+      const fftn::plan<T, std::complex<T>> q(ri);
+      fftn::workspace qs(q);
+      q.execute(x.data(), y.data(), qs);
+      const fftn::plan<T, S> p(rs);
+      fftn::workspace ws(p);
+      std::vector<T> re(half);
+      std::vector<T> im(half);
+      p.execute(x.data(), {re.data(), im.data()}, ws);
+      std::vector<std::complex<T>> got(half);
+      for (std::size_t i = 0; i < half; ++i) {
+        got[i] = {re[i], im[i]};
+      }
+      check.within<T>(got, std::vector<cd>(y.begin(), y.end()), tol, "r2c axes of an array");
+    }
+    // c2r: that half spectrum back, from split arrays.
+    {
+      const auto ci = fftn::axes_c2r<T>(array, selected);
+      fftn::shape<S, T> cs;
+      cs.dir = fftn::direction::backward;
+      cs.axes = ci.axes;
+      cs.batches = ci.batches;
+      std::vector<std::complex<T>> spectrum = y;
+      const fftn::plan<std::complex<T>, T> q(ci);
+      fftn::workspace qs(q);
+      std::vector<T> want(points);
+      q.execute(spectrum.data(), want.data(), qs);
+      const fftn::plan<S, T> p(cs);
+      fftn::workspace ws(p);
+      std::vector<T> re(half);
+      std::vector<T> im(half);
+      for (std::size_t i = 0; i < half; ++i) {
+        re[i] = y[i].real();
+        im[i] = y[i].imag();
+      }
+      std::vector<T> out(points);
+      const fftn::split_ptr<T> mutable_in{re.data(), im.data()};
+      p.execute(mutable_in, out.data(), ws); // split_ptr<T> converts to split_ptr<const T>
+      check.within<T>(std::vector<std::complex<T>>(out.begin(), out.end()),
+                      std::vector<cd>(want.begin(), want.end()), tol, "c2r axes of an array");
+    }
+  }
+}
+
+// A null imaginary array ends the program, naming it.
+TEST(SplitPlanDeathTest, NullImaginaryArray) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  using S = fftn::split_complex<double>;
+  fftn::shape<S, S> s;
+  s.axes = {{.n = 8}};
+  const fftn::plan<S, S> p(s);
+  fftn::workspace ws(p);
+  std::vector<double> a(8);
+  std::vector<double> b(8);
+  std::vector<double> c(8);
+  EXPECT_DEATH(p.execute({a.data(), nullptr}, {b.data(), c.data()}, ws), "split_ptr::im");
+  EXPECT_DEATH(p.execute({a.data(), b.data()}, {c.data(), nullptr}, fftn::team{}, ws),
+               "split_ptr::im");
 }
 
 // Strided axes of an array (axes_c2c's shapes, their strides counting reals on the split side):
@@ -900,6 +1057,10 @@ TEST(SplitPlan, Describe) {
       << measured;
 }
 
+// Whether wisdom::add takes a plan of type P.
+template <class P>
+concept wisdom_takes = requires(fftn::wisdom& w, const P& p) { w.add(p); };
+
 // The refusals, naming the field.
 TEST(SplitPlan, Refusals) {
   using S = fftn::split_complex<double>;
@@ -943,6 +1104,8 @@ TEST(SplitPlan, Refusals) {
   overlap.axes = {{.n = 16, .in_stride = 1, .out_stride = 1}};
   overlap.batches = {{.count = 2, .in_dist = 16, .out_dist = 8}};
   EXPECT_NE(message([&] { const fftn::plan<S, S> p(overlap); }).find("overlap"), std::string::npos);
+  // Nor is wisdom: a split plan reads none, so wisdom::add takes none.
+  static_assert(!wisdom_takes<fftn::plan<S, S>>);
   static_assert(!std::is_constructible_v<fftn::plan<S, S>, const fftn::shape<S, S>&,
                                          const fftn::options&, const fftn::plan_edges<S, S>&>);
 }

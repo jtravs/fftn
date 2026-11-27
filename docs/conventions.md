@@ -681,8 +681,10 @@ output split) and `shape<split_complex<T>, T>` (c2r, the input split), in rows, 
 and chosen axes alike. On a split side the strides and distances count reals and hold for both
 arrays; the defaults are those of the interleaved shape, counted in reals. An execution passes a
 split side as `split_ptr<const T>` (input) or `split_ptr<T>` (output), `{re, im}`, in every
-form: serial, `execute_transforms`, teams and executors. Mixed forms (interleaved in, split out)
-are not offered.
+form: serial, `execute_transforms`, teams and executors (`plan::in_data` and `plan::out_data`
+name the types); a `split_ptr<T>` converts to `split_ptr<const T>`. A null imaginary array ends
+the program with a message naming `split_ptr::im`. Mixed forms (interleaved in, split out) are
+not offered.
 
 ```cpp file=examples/split.cpp region=rows
 using split = fftn::split_complex<double>;
@@ -726,7 +728,7 @@ bit, so the accuracy and "Determinism" below are the interleaved kinds'. The wor
 transform more. Not built yet: rows on other strategies than the chain (the lanes, the grid and
 the depth-first chains; `describe()` names the strategy the plan on interleaved data takes),
 edges, stored runs, measured planning and wisdom (split plans are planned by the rules, and
-`describe()` says so), and split data in the C API.
+`describe()` says so; `wisdom::add` takes none), and split data in the C API.
 
 ## In place
 

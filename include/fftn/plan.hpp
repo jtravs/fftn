@@ -47,6 +47,13 @@ namespace fftn::inline v0 {
 ///   moving a plan copies it, so the source of a move stays a valid plan too.
 template <class In, class Out> class plan {
 public:
+  /// What an execution passes for the input: `const In*`, or for split-complex data
+  /// (fftn/split.hpp) `split_ptr<const T>`, its two arrays. Provisional (task 6.10).
+  using in_data = detail::in_data<In>;
+  /// What an execution passes for the output: `Out*`, or for split-complex data `split_ptr<T>`.
+  /// Provisional (task 6.10).
+  using out_data = detail::out_data<Out>;
+
   /// Builds the plan of `s` with options `opts`.
   ///
   /// Throws `std::invalid_argument` when the shape or the options are not valid (the
@@ -282,7 +289,7 @@ public:
   ///
   /// Guarantees: those of `execute` above; the input's arrays are only read unless the plan is
   /// in place.
-  void execute(detail::in_data<In> in, detail::out_data<Out> out, workspace& ws) const noexcept
+  void execute(in_data in, out_data out, workspace& ws) const noexcept
     requires detail::split_kind<In, Out>
   {
     detail::execute_all(*core_, detail::slot_array(in), detail::slot_array(out), ws,
@@ -294,8 +301,8 @@ public:
   ///
   /// Provisional (task 6.10). Preconditions and guarantees: those of `execute_transforms` and
   /// of the split `execute`.
-  void execute_transforms(std::size_t first, std::size_t count, detail::in_data<In> in,
-                          detail::out_data<Out> out, workspace& ws) const noexcept
+  void execute_transforms(std::size_t first, std::size_t count, in_data in, out_data out,
+                          workspace& ws) const noexcept
     requires detail::split_kind<In, Out>
   {
     detail::execute_core(*core_, first, count, detail::slot_array(in), detail::slot_array(out), ws,
@@ -306,7 +313,7 @@ public:
   ///
   /// Provisional (task 6.10). Preconditions and guarantees: those of the team `execute` and of
   /// the split `execute`; the output is bitwise identical to the serial split execution.
-  void execute(detail::in_data<In> in, detail::out_data<Out> out, const team& t, workspace& ws,
+  void execute(in_data in, out_data out, const team& t, workspace& ws,
                completion done = completion::all) const noexcept
     requires detail::split_kind<In, Out>
   {
@@ -320,8 +327,7 @@ public:
   /// Provisional (task 6.10). Preconditions, exceptions and guarantees: those of the executor
   /// `execute` and of the split `execute`; the output is bitwise identical to the serial split
   /// execution.
-  void execute(detail::in_data<In> in, detail::out_data<Out> out, executor_ref ex,
-               workspace& ws) const
+  void execute(in_data in, out_data out, executor_ref ex, workspace& ws) const
     requires detail::split_kind<In, Out>
   {
     detail::execute_on(*core_, detail::slot_array(in), detail::slot_array(out), ex, ws,

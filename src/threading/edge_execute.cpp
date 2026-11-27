@@ -31,7 +31,10 @@ void execute_team(const plan_core& core, const void* in, void* out, const team& 
     execute_team(core, in, out, t, ws, done);
     return;
   }
-  // A missing array ends the program here (edge_state_of).
+  // A missing array ends the program here (edge_state_of; a split plan's, check_split_arrays).
+  if (core.split) {
+    check_split_arrays(core, in, out, args);
+  }
   execute_member_as<edge_drive>(core, in, out, t, ws, done, 0,
                                 edge_state_of(args, core.factor_args));
 }
@@ -43,6 +46,9 @@ void execute_on(const plan_core& core, const void* in, void* out, const executor
     return;
   }
   // On the caller, before any member runs.
+  if (core.split) {
+    check_split_arrays(core, in, out, args);
+  }
   execute_on_as<edge_drive>(core, in, out, ex, ws, edge_state_of(args, core.factor_args));
 }
 

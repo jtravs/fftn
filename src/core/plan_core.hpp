@@ -16,6 +16,7 @@
 #include "threading/schedule.hpp"
 #include "threading/work_graph.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -303,6 +304,35 @@ public:
 [[nodiscard]] inline bool out_of_place_pointers(const plan_core& c, const void* in,
                                                 const void* out) noexcept {
   return c.in_place || in != out || (in == nullptr && c.in_unread && c.out_unwritten);
+}
+
+// A split-complex execution's arrays (fftn/split.hpp, task 6.10): `in` and `out` are the slots'
+// arrays (the real parts, or a real side's array), the imaginary arrays arrive as the factor
+// pointers of `args`. A null imaginary array ends the program, naming it (rather than
+// edge_state_of's message about factor arrays); the debug builds assert the pointers' relations
+// as in_place_pointers does for the slots: in place, each imaginary array the same in and out;
+// out of place, no output array equal to another output array or to an input one.
+inline void check_split_arrays(const plan_core& c, const void* in, const void* out,
+                               const exec_args& args) noexcept {
+  const bool in_split = (c.factor_args & moving_in_factor) != 0;
+  const bool out_split = (c.factor_args & moving_out_factor) != 0;
+  if ((in_split && args.in_factor == nullptr) || (out_split && args.out_factor == nullptr)) {
+    contract_failure("fftn: a split-complex plan was executed with a null imaginary array "
+                     "(split_ptr::im)");
+  }
+  const void* in_im = in_split ? args.in_factor : nullptr;
+  const void* out_im = out_split ? args.out_factor : nullptr;
+  assert((!c.in_place || in_im == out_im) &&
+         "fftn: in-place split-complex plan executed with in.im != out.im");
+  assert(
+      (out_im == nullptr || (out_im != out && out_im != in && (c.in_place || out_im != in_im))) &&
+      "fftn: a split-complex output's imaginary array is another of the execution's arrays");
+  assert((in_im == nullptr || c.in_place || in_im != out) &&
+         "fftn: out-of-place split-complex plan executed with in.im == out.re");
+  static_cast<void>(in_im);
+  static_cast<void>(out_im);
+  static_cast<void>(in);
+  static_cast<void>(out);
 }
 
 // The core a team of two or more members runs: the team program where there is one.

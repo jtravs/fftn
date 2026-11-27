@@ -12,6 +12,8 @@
 
 #include "fftn/config.hpp"
 
+#include <type_traits>
+
 namespace fftn::inline v0 {
 
 /// The element tag of split-complex data in a shape and a plan, for `T` = `double` or `float`:
@@ -31,12 +33,17 @@ template <class T> struct split_complex {};
 /// The two arrays of one execution's split-complex side: `re` addresses the real part of
 /// element 0, `im` its imaginary part, each laid out by the shape's strides and distances for
 /// that side. `T` is `const double` or `const float` for an input, `double` or `float` for an
-/// output; write `{re, im}` to pass two pointers.
+/// output; write `{re, im}` to pass two pointers. A `split_ptr<T>` converts to
+/// `split_ptr<const T>`, so an output's arrays can be passed as an input.
 ///
-/// Preconditions at execution (not checked: the pointers arrive with each call): both arrays
-/// hold the planned layout and have at least `T`'s alignment; an output's two arrays overlap
-/// neither each other nor any input array, unless the plan is in place, where each input array
-/// is the same as the output array of its part (`in.re == out.re`, `in.im == out.im`).
+/// Preconditions at execution: both arrays hold the planned layout and have at least `T`'s
+/// alignment, and neither pointer is null; an output's two arrays overlap neither each other nor
+/// any input array, unless the plan is in place, where each input array is the same as the output
+/// array of its part (`in.re == out.re`, `in.im == out.im`). Overlap is not checked, since the
+/// pointers arrive with each call; debug builds assert the equalities and inequalities of the
+/// pointers themselves. An execution whose imaginary array is null ends the program
+/// (`std::abort`, with a message on stderr naming `split_ptr::im`), as an execution without a
+/// factor array an edge needs does (fftn/edges.hpp).
 ///
 /// Provisional (task 6.10).
 template <class T> struct split_ptr {
@@ -44,6 +51,15 @@ template <class T> struct split_ptr {
   T* re = nullptr;
   /// The imaginary parts.
   T* im = nullptr;
+
+  /// The same two arrays, read only. Provisional (task 6.10): a conversion function, so that
+  /// `split_ptr` stays an aggregate.
+  // NOLINTNEXTLINE(google-explicit-constructor): implicit, as const-qualifying a pointer is
+  operator split_ptr<const T>() const noexcept
+    requires(!std::is_const_v<T>)
+  {
+    return {re, im};
+  }
 };
 
 } // namespace fftn::inline v0

@@ -910,8 +910,9 @@ Points that matter:
   `docs/conventions.md` "Split complex").** The block above, provisional, with 18.2's Q2 and Q16
   as proposed (the maintainer, 2026-11-26: the conversion form only in phase 6, the fused form in
   phase 7). `shape_view::split` marks the kinds; the split side's elements are reals in the
-  layout checks, and `plan`'s execute overloads for split kinds take `detail::in_data<In>` and
-  `detail::out_data<Out>` (a `split_ptr` or a pointer), constrained so that each kind has one set.
+  layout checks, and `plan`'s execute overloads for split kinds take `plan::in_data` and
+  `plan::out_data` (member aliases: a `split_ptr` or a pointer), constrained so that each kind has
+  one set.
   Choices where the block was silent, each for the maintainer's review:
   - *The conversion.* Each split side is an edge side with a separate pass of its own
     (`edge_side::split`): c2c rows take 5.1a's separate passes around the row's chain, planes,
@@ -925,16 +926,24 @@ Points that matter:
   - *Rows on the chain.* The lanes over rows and over adjacent transforms, the grids, the
     depth-first chains and the edge driver's row blocks are not built on the block's row, so a
     split row is the chain (batch leaves one row at a time where the rules give them), and
-    `describe()` names the strategy of the plan on interleaved data (task 5.1c's line).
+    `describe()` names the strategy of the plan on interleaved data (task 5.1c's line). So the
+    "every strategy works" above holds for planes and volumes, not yet for rows. Follow-up: the
+    lanes over rows on the block, as a consumed output's c2c rows run them (12.3), with the
+    conversion passes over each lanes block's rows (`split_pass` already takes `pass_args::rows`);
+    the grids and depth-first chains, which use the block themselves, with the fused form (6.13).
   - *In place.* c2c only, each array the same in and out; r2c and c2r are refused in place
     (`options.in_place`), since one real array and two split ones cannot each be.
+  - *Executions.* A null imaginary array ends the program with a message naming
+    `split_ptr::im` (`check_split_arrays`); debug builds assert the pointers' relations (in place
+    `in.im == out.im`, out of place no output array equal to another array). `split_ptr<T>`
+    converts to `split_ptr<const T>` through a conversion function, which keeps it an aggregate.
+    `wisdom::add` is not offered for split plans (constrained away), which read no wisdom.
   - *Not built yet, each refused or absent:* edges on split kinds (`plan`'s edges constructor is
     constrained away, the core refuses `edges`), stored runs (`shape.runs`), measured planning and
-    wisdom (by the rules, `describe()` says so; the wisdom key carries "split"), shape helpers
-    (`rows_c2c` and the rest stay interleaved: a split shape is written field by field, or copied
-    from an interleaved helper's, since the strides are the same numbers), the `split_ptr<T>` to
-    `split_ptr<const T>` conversion (`{re, im}` builds either), and split kinds in the C API (5.9
-    names them but gives no block).
+    wisdom (by the rules, `describe()` says so), shape helpers (`rows_c2c` and the rest stay
+    interleaved: a split shape is written field by field, or copied from an interleaved helper's,
+    since the strides are the same numbers), and split kinds in the C API (5.9 names them but
+    gives no block).
 
 ### 5.9 C API
 
