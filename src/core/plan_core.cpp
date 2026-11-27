@@ -1398,10 +1398,13 @@ lanes_pair_block convolution_lanes_block(std::size_t n, std::size_t rows, std::p
                                          std::ptrdiff_t out_dist, const build_settings& settings,
                                          const target_profile& profile,
                                          const chain_builder<T>& chain, std::size_t c) {
-  // Forced, or by the rules (experiment X67, task 5.2g) for adjacent lines up to the profile's
-  // pipeline_lanes_adjacent_max points, with a lanes column phase's block only.
+  // Forced, or by the rules (experiment X67, task 5.2g) for adjacent lines from the shortest X67
+  // measured (64 points) up to the profile's pipeline_lanes_adjacent_max, with a lanes column
+  // phase's block only.
+  constexpr std::size_t lanes_adjacent_min = 64;
   const bool by_rules = settings.strategy == strategy_choice::rules && in_dist == 1 &&
-                        out_dist == 1 && n <= settings.profile.pipeline_lanes_adjacent_max;
+                        out_dist == 1 && n >= lanes_adjacent_min &&
+                        n <= settings.profile.pipeline_lanes_adjacent_max;
   if ((settings.strategy != strategy_choice::lanes && !by_rules) || rows < 2 ||
       !chain.lanes_fit(n, false)) {
     return {};

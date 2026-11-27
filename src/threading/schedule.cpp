@@ -202,7 +202,7 @@ void set_grid_sizes(machine_profile& p, const core_class& c, bool x86_64) noexce
   // of the chain pair's time; float from 36864 points, where 32768 to 131072 took 0.66-0.94).
   // The EPYC 7763's class keeps the chain pair (the pair took 1.0-3.4 of its time there).
   // Experiment X67 (machine_profile::pipeline_lanes_adjacent_max): a plane's strided lines on the
-  // lanes pair up to 512 points, where it was measured: Zen 3's class, AMD's cores only (the lines
+  // lanes pair from 64 to 512 points, where it was measured: Zen 3's class, AMD's cores only (the lines
   // of 64 x 512 and 512 x 512 planes took 0.46-0.96 of the chain pair's time, float most).
   if (zen3_like && p.vendor == cpu_vendor::amd) {
     p.pipeline_lanes_adjacent_max = 512;

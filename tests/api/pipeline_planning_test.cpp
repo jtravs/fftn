@@ -263,6 +263,12 @@ TEST(PipelinePlanning, LanesRuleForAdjacentLines) {
 
   build_settings shorter = rules;
   shorter.profile.pipeline_lanes_adjacent_max = 32;
+  // Below X67's shortest measured line (64 points): the chain pair.
+  conv<double> short_lines(32, lines);
+  short_lines.desc.line.in_stride = short_lines.desc.line.out_stride =
+      static_cast<std::ptrdiff_t>(lines);
+  short_lines.desc.batches[0].in_dist = short_lines.desc.batches[0].out_dist = 1;
+  EXPECT_EQ(d::make_pipeline_core(short_lines.view(), {}, rules)->built, strategy_choice::chain);
   build_settings off = rules;
   off.profile.pipeline_lanes_adjacent_max = 0;
   for (const build_settings* s : {&shorter, &off}) {
