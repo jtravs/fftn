@@ -214,6 +214,20 @@ TYPED_TEST(KokkosArrayOf, RealViewsOfRankOneToThreeInBothLayouts) {
   const real2<T, Kokkos::LayoutLeft> lz2("lz2", 9, 4);
   check_real<T>(lx2, ly2, lz2, fftn::kokkos::axis_type<1>{0}, true);
   check_real<T>(lx2, ly2, lz2, fftn::kokkos::axis_type<1>{-2}, true);
+  // A negative halved dimension accepted: -2 is dimension 0 of these rank-2 Views.
+  const auto r2c_negative = fftn::kokkos::array_of(lx2, ly2, -2);
+  const auto c2r_negative = fftn::kokkos::array_of(ly2, lz2, -2);
+  expect_entries(r2c_negative, lx2, ly2, 0);
+  expect_entries(c2r_negative, ly2, lz2, 0);
+  EXPECT_EQ(r2c_negative[0].n, 9U);
+  EXPECT_EQ(c2r_negative[0].n, 9U);
+  const std::array<std::size_t, 1> first{0};
+  expect_same_shape(
+      fftn::axes_r2c<T>(r2c_negative, first),
+      fftn::kokkos::shape_of(lx2, ly2, direction::forward, fftn::kokkos::axis_type<1>{0}));
+  expect_same_shape(
+      fftn::axes_c2r<T>(c2r_negative, first),
+      fftn::kokkos::shape_of(ly2, lz2, direction::backward, fftn::kokkos::axis_type<1>{0}));
 
   // Rank 3: planes halved along the fastest dimension, and a halved middle dimension.
   const r3<T, Kokkos::LayoutRight> x3("x3", 3, 6, 8);

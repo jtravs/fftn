@@ -745,9 +745,9 @@ std::array<axis, InView::rank()> array_of_pair(const InView& in, const OutView& 
 /// Preconditions: the Views are of equal rank, at least 1; their memory is accessible from the
 /// host and their values are `float`, `double` or a complex of either, in one precision, `out`
 /// writable (checked at compile time). The caller passes the halved dimension last in the
-/// `axes_*` call's `axes`, sets `options::in_place` when the Views share their memory, and
-/// keeps the Views' memory alive and unmoved while the shape or pipeline built from the result
-/// is used.
+/// `axes_*` call's `axes` and sets `options::in_place` when the Views share their memory. The
+/// result holds no addresses: a plan or pipeline built from it executes on the pointers passed
+/// at execution (`data_of(in)`, `data_of(out)`, or any arrays of the same layout).
 ///
 /// Throws `std::invalid_argument` naming the argument (`in`, `out`), as `shape_of` does, when an
 /// extent is 0, a stride is 0 on a dimension of extent above 1 on either side, or the extents do

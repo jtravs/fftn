@@ -4838,8 +4838,9 @@ do not depend on the direction, and a workspace is plain bytes sized by
 12.2's API block. Each has a proposal, which is used until the maintainer settles it:
 
 *Settled 2026-11-26 (the maintainer): every proposal below is accepted as built (tasks 5.2b to
-5.2f and 5.3d to 5.3f), so step 6.9 can carry the API into C. Item 10 (`array_of`, not built)
-stays open. The headers keep "provisional" until step 6.20 confirms the APIs for the release.*
+5.2f and 5.3d to 5.3f), so step 6.9 can carry the API into C. Item 10 (`array_of`) was settled
+on 2026-11-27, as proposed, and built in task 5.5's follow-up (section 5.5). The headers keep
+"provisional" until step 6.20 confirms the APIs for the release.*
 
 1. **Names of the helpers.** A forward-first `<C, C, C>` convolution is made by
    `spectral_pair_rows(n, count, direction::forward)`, which reads oddly. Proposal: add
