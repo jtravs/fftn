@@ -61,6 +61,12 @@ fftn_add_test(fftn_owner_computes_tests SOURCES owner_computes_test.cpp LIBRARIE
 fftn_add_test(fftn_r2r_tests SOURCES r2r_test.cpp LIBRARIES fftn_test_support)
 fftn_always_optimise(r2r_test.cpp)
 
+# Split-complex data (task 6.10) against the quadruple-precision reference and the interleaved
+# plans, with teams and an executor, optimised likewise.
+fftn_add_test(fftn_split_tests SOURCES split_test.cpp
+  LIBRARIES fftn_test_support Threads::Threads)
+fftn_always_optimise(split_test.cpp)
+
 # The C API (steps 6.8 and 6.9, fusion in c_fusion_test): its C halves compiled as C99 with the strict warnings (-Wpedantic among
 # them, from fftn_configure_target), checked against the C++ plans of the same shapes; threads
 # for the team members and the C thread pool.
