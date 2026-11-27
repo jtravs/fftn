@@ -874,7 +874,8 @@ TEST(Schedule, GridSizesFromCaches) {
   EXPECT_EQ(xeon86.c2r_packed_isa, fftn::isa::avx512);
   // On Intel's cores only (X64): an AMD core the same key reaches (Zen 4c with SMT, a Zen 4 VM
   // reporting a small L3 per CPU: 1 MiB of private L2, under 2 MiB of L3 per CPU) keeps the
-  // block, and so does an unknown vendor; Zen 3's avx2 branch does not read the vendor.
+  // block, and so does an unknown vendor. Zen 3's avx2 branch is AMD's only too (the maintainer,
+  // 2026-11-27; Schedule.AmdOnlyKeys).
   {
     fftn::detail::core_class zen4c;
     zen4c.l1d = {.size = 32 * kib, .line_size = 64, .ways = 8, .shared_by = 2};
@@ -893,7 +894,8 @@ TEST(Schedule, GridSizesFromCaches) {
     }
     EXPECT_EQ(x86("linux-intel-xeon-gold-6240.sysfs").c2r_packed_bytes,
               std::numeric_limits<std::size_t>::max());
-    EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs").c2r_packed_bytes, std::size_t{16} * 1024 * kib);
+    EXPECT_EQ(x86("linux-amd-epyc-7763.sysfs").c2r_packed_bytes,
+              std::numeric_limits<std::size_t>::max());
     EXPECT_EQ(fftn::detail::profile_for(
                   fftn::detail::load_topology(data / "linux-intel-xeon-gold-6240.sysfs"), true,
                   fftn::detail::cpu_vendor::intel)
@@ -1443,14 +1445,169 @@ TEST(Schedule, IntelOnlyKeys) {
       EXPECT_EQ(p.fit_in_place_bytes, never);
     }
   }
-  // The AMD recordings do not read the vendor (Zen 3's and the large-L3 branch's rules).
-  for (const char* file : {"linux-amd-epyc-7763.sysfs", "linux-gcp-c4d-zen5.sysfs"}) {
+  // The Zen 5 recording does not read the vendor (the large-L3 branch's rules, X29, X32, X36,
+  // X43, X57); Zen 3's class does, AMD's only (Schedule.AmdOnlyKeys).
+  EXPECT_EQ(fields_of(recorded("linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd)),
+            fields_of(recorded("linux-gcp-c4d-zen5.sysfs", cpu_vendor::intel)));
+  EXPECT_EQ(keyed_of(recorded("linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd)),
+            keyed_of(recorded("linux-gcp-c4d-zen5.sysfs", cpu_vendor::unknown)));
+}
+
+// The same policy for Zen 3's class (the maintainer, 2026-11-27; DESIGN.md 13.5): x86-64 with a
+// private L2 under 1 MiB and at least 2 MiB of L3 per CPU, whose rules (X51, X59, X60, X62, X63,
+// X65, X67, X72, X73, X85) were measured on AMD's cores only (the EPYC 7763; Zen 2 in X64's and
+// X81's screens). The AMD recordings keep their profile, field for field; an Intel core with
+// those caches (a client part, a small VM), or an unknown vendor's, keeps the class's fields'
+// defaults and the large-L3 branch's own fields (X29, X32, X36, X43, X57). The other conditions
+// of fair_line_runs (Apple) and anchored_runs (Apple, the Xeon 6240's class) stand.
+struct amd_keyed {
+  bool fair_line_runs;                               // X59
+  bool anchored_runs;                                // X73
+  std::size_t bluestein_pow2_part_bytes;             // X62 (X36's L1 off the class)
+  bool bluestein_whole_lanes;                        // X62
+  std::size_t depth_min_bytes;                       // X51 (arm E)
+  std::size_t depth_max_bytes;                       // X51
+  std::size_t depth_part_bytes;                      // X51
+  std::size_t depth_top;                             // X51
+  std::size_t depth_pow2_max_bytes;                  // X51
+  std::size_t depth_real_max_bytes;                  // X72
+  std::size_t c2r_packed_bytes;                      // X60, X63
+  fftn::isa c2r_packed_isa;                          // X63
+  fftn::detail::edge_forms_reach edge_batched_forms; // X65
+  std::uint32_t pipeline_lanes_adjacent_max;         // X67
+  fftn::isa pipeline_lanes_isa;                      // X67
+  std::size_t r2r_folded_max;                        // X85
+  fftn::isa r2r_folded_isa;                          // X85
+
+  bool operator==(const amd_keyed&) const = default;
+};
+
+amd_keyed amd_keyed_of(const machine_profile& p) {
+  return {
+      .fair_line_runs = p.fair_line_runs,
+      .anchored_runs = p.anchored_runs,
+      .bluestein_pow2_part_bytes = p.bluestein_pow2_part_bytes,
+      .bluestein_whole_lanes = p.bluestein_whole_lanes,
+      .depth_min_bytes = p.depth_min_bytes,
+      .depth_max_bytes = p.depth_max_bytes,
+      .depth_part_bytes = p.depth_part_bytes,
+      .depth_top = p.depth_top,
+      .depth_pow2_max_bytes = p.depth_pow2_max_bytes,
+      .depth_real_max_bytes = p.depth_real_max_bytes,
+      .c2r_packed_bytes = p.c2r_packed_bytes,
+      .c2r_packed_isa = p.c2r_packed_isa,
+      .edge_batched_forms = p.edge_batched_forms,
+      .pipeline_lanes_adjacent_max = p.pipeline_lanes_adjacent_max,
+      .pipeline_lanes_isa = p.pipeline_lanes_isa,
+      .r2r_folded_max = p.r2r_folded_max,
+      .r2r_folded_isa = p.r2r_folded_isa,
+  };
+}
+
+TEST(Schedule, AmdOnlyKeys) {
+  const std::filesystem::path data(FFTN_PLATFORM_DATA);
+  using fftn::detail::cpu_vendor;
+  constexpr std::size_t kib = 1024;
+  constexpr std::size_t mib = 1024 * kib;
+  constexpr std::size_t never = std::numeric_limits<std::size_t>::max();
+  const auto recorded = [&](const char* file, cpu_vendor vendor) {
+    return fftn::detail::profile_for(fftn::detail::load_topology(data / file), true, vendor);
+  };
+  // The EPYC 7763 (32 MiB of L3 per CCX of 8 cores) and the Zen 2 VM of X64's and X81's screens
+  // (Google Cloud n2d, EPYC 7B12: 16 MiB per complex of 4 cores, so X63's threshold of half the
+  // L3 is 8 MiB): Zen 3's class, as measured.
+  amd_keyed zen3{
+      .fair_line_runs = true,
+      .anchored_runs = true,
+      .bluestein_pow2_part_bytes = 16 * kib,
+      .bluestein_whole_lanes = true,
+      .depth_min_bytes = 128 * kib,
+      .depth_max_bytes = 2 * mib,
+      .depth_part_bytes = 8 * kib,
+      .depth_top = 4,
+      .depth_pow2_max_bytes = 0,
+      .depth_real_max_bytes = 2 * mib,
+      .c2r_packed_bytes = 16 * mib,
+      .c2r_packed_isa = fftn::isa::avx2,
+      .edge_batched_forms = fftn::detail::edge_forms_reach::leaf_rows,
+      .pipeline_lanes_adjacent_max = 512,
+      .pipeline_lanes_isa = fftn::isa::avx2,
+      .r2r_folded_max = 129,
+      .r2r_folded_isa = fftn::isa::avx2,
+  };
+  EXPECT_EQ(amd_keyed_of(recorded("linux-amd-epyc-7763.sysfs", cpu_vendor::amd)), zen3);
+  // The Intel-only keys stay off on AMD's Zen 3 cores (Schedule.IntelOnlyKeys no longer loops over
+  // them).
+  for (const char* file : {"linux-amd-epyc-7763.sysfs", "linux-gcp-n2d-zen2.sysfs"}) {
     SCOPED_TRACE(file);
-    EXPECT_EQ(fields_of(recorded(file, cpu_vendor::amd)),
-              fields_of(recorded(file, cpu_vendor::intel)));
-    EXPECT_EQ(keyed_of(recorded(file, cpu_vendor::amd)),
-              keyed_of(recorded(file, cpu_vendor::unknown)));
+    const machine_profile p = recorded(file, cpu_vendor::amd);
+    EXPECT_EQ(p.grid_two_odd_part, 0U);
+    EXPECT_EQ(p.grid_three_block, 0U);
+    EXPECT_FALSE(p.adjacent_lanes);
+    EXPECT_FALSE(p.split_complex_rows);
+    EXPECT_TRUE(p.batch_leaf_12);
+    EXPECT_FALSE(p.fit_large_l2);
+    EXPECT_EQ(p.team_state_page, 0U);
   }
+  amd_keyed zen2 = zen3;
+  zen2.c2r_packed_bytes = 8 * mib;
+  EXPECT_EQ(amd_keyed_of(recorded("linux-gcp-n2d-zen2.sysfs", cpu_vendor::amd)), zen2);
+  // The Zen 2 recording's whole planner profile (X81: Zen 2 keeps every rule Zen 3's key gives it).
+  EXPECT_EQ(fields_of(recorded("linux-gcp-n2d-zen2.sysfs", cpu_vendor::amd)),
+            (planner_fields{256 * kib, 512 * kib, 32 * kib,  128 * kib, never,    0,
+                            0,         16 * kib,  0,         8 * mib,   32 * mib, never,
+                            false,     0,         0,         0,         16 * kib, 256 * kib,
+                            0,         0,         128 * kib, 2 * mib,   8 * kib,  4,
+                            0,         0,         0,         0,         0}));
+  // Another vendor's cores with those caches: the defaults of the class's fields, except the
+  // Bluestein limit, which takes the large-L3 branch's L1 (X36).
+  const machine_profile defaults{};
+  amd_keyed off = amd_keyed_of(defaults);
+  off.bluestein_pow2_part_bytes = 32 * kib;
+  EXPECT_EQ(off.depth_pow2_max_bytes, never);
+  EXPECT_EQ(off.c2r_packed_bytes, never);
+  for (const cpu_vendor vendor : {cpu_vendor::intel, cpu_vendor::unknown}) {
+    SCOPED_TRACE(fftn::detail::cpu_vendor_name(vendor));
+    // Each recording with its cache group's L3 (32 MiB, 16 MiB).
+    for (const auto& [file, l3] : {std::pair{"linux-amd-epyc-7763.sysfs", 32 * mib},
+                                   std::pair{"linux-gcp-n2d-zen2.sysfs", 16 * mib}}) {
+      SCOPED_TRACE(file);
+      const machine_profile p = recorded(file, vendor);
+      EXPECT_EQ(amd_keyed_of(p), off);
+      // The large-L3 branch's fields stand: measured on the EPYC and reached by Zen 4 and 5, the
+      // Ice Lake VM and the Axion VM as well, they are not Zen 3's class.
+      EXPECT_EQ(p.column_team_bytes, 128U);    // X43
+      EXPECT_EQ(p.column_wide_bytes, 1024U);   // X57
+      EXPECT_EQ(p.fit_row_bytes, l3 / 4 * 3);  // X57
+      EXPECT_EQ(p.fit_in_place_bytes, l3 / 2); // X57 amendment 2
+      EXPECT_EQ(p.chain_part_bytes, 16 * kib); // X29
+      EXPECT_EQ(p.chain_part_limit_bytes, l3 / 2);
+      EXPECT_EQ(p.pow2_chain_bytes, 2 * l3); // X32
+      EXPECT_EQ(p.pow2_radix8_bytes, never);
+      EXPECT_EQ(p.long_convolution_bytes, 256 * kib); // X36
+      EXPECT_TRUE(p.team_volume_planes);              // X43b
+      // None of the Xeon 6240's class (a large L3 per CPU) nor X58's Ice Lake chain (L2 under
+      // 1 MiB) on Intel's cores either.
+      EXPECT_EQ(keyed_of(p), keyed_of(defaults));
+    }
+  }
+  // Zen 5 (1 MiB of L2) is not on the class, whatever the vendor.
+  for (const cpu_vendor vendor : {cpu_vendor::amd, cpu_vendor::intel, cpu_vendor::unknown}) {
+    SCOPED_TRACE(fftn::detail::cpu_vendor_name(vendor));
+    amd_keyed zen5 = off;
+    zen5.bluestein_pow2_part_bytes = 48 * kib; // its L1 (X36)
+    EXPECT_EQ(amd_keyed_of(recorded("linux-gcp-c4d-zen5.sysfs", vendor)), zen5);
+  }
+  // The other conditions stand: Apple's fair and anchored runs (X59, X74), the Xeon 6240's
+  // anchored runs (X79) and batched forms (X65), on their own vendors' recordings.
+  const machine_profile m5 = fftn::detail::profile_for(
+      fftn::detail::load_topology(data / "macos-apple-m5-max.sysctl"), false, cpu_vendor::apple);
+  EXPECT_TRUE(m5.fair_line_runs);
+  EXPECT_TRUE(m5.anchored_runs);
+  const machine_profile xeon = recorded("linux-intel-xeon-gold-6240.sysfs", cpu_vendor::intel);
+  EXPECT_FALSE(xeon.fair_line_runs);
+  EXPECT_TRUE(xeon.anchored_runs);
+  EXPECT_EQ(xeon.edge_batched_forms, fftn::detail::edge_forms_reach::leaf_rows);
 }
 
 } // namespace

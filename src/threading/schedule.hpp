@@ -42,11 +42,12 @@ struct machine_profile {
   // profile_of; core/plan_core.cpp, copies_prefetch): an Intel core with `avx2` but no
   // AVX-512 keeps the plans it had before them until it is measured (the maintainer, 2026-11-24;
   // the Xeon 6240 forced to `avx2` lost with two of them, X26 and X30's 512). Unknown, the default
-  // here (unlike the other fields, not the CCX's), keeps those plans too. Two cache keys read
+  // here (unlike the other fields, not the CCX's), keeps those plans too. Three cache keys read
   // it as well (set_grid_sizes; the maintainer, 2026-11-25: a rule measured on one vendor only
   // is keyed to that vendor): the Xeon 6240's class and the 2 MiB-L2 key, measured on Intel's
   // cores only, apply to intel alone (X64: Zen 4, which the Xeon key reaches, lost with X63's
-  // packed c2r planes); other vendors, unknown included, keep those fields' defaults.
+  // packed c2r planes), and Zen 3's class, measured on AMD's cores only, to amd alone (the
+  // maintainer, 2026-11-27); other vendors, unknown included, keep those fields' defaults.
   // default_machine_profile reads it from a replayed recording that states it, else from CPUID
   // (system_cpu_vendor, platform/topology.hpp); profile_for takes it as an argument.
   cpu_vendor vendor = cpu_vendor::unknown;
@@ -388,7 +389,8 @@ struct machine_profile {
   // Column phases of planes whose neighbouring lines write the same cache lines claim small
   // shares in fair runs (work_graph.hpp, chunk_run; core/plan_core.cpp, lines_share_cache_lines;
   // X59 arm R6). set_grid_sizes sets it on x86-64 where a private L2 under 1 MiB has a large L3
-  // behind it (Zen 3; Zen 4 and Zen 5 are not measured) (EPYC 7763 at 8 lanes: 0.909 of the guided
+  // behind it, on AMD's cores (Zen 3; Zen 4 and Zen 5 are not measured, nor other vendors' cores
+  // with those caches) (EPYC 7763 at 8 lanes: 0.909 of the guided
   // runs' time over the real planes that split, 512^2 0.70) and where a cluster shares L2 (M5 Max
   // at 6 lanes: 0.979); the Xeon 6240 lost (1.017, c2r 1000^2 1.21), and the profiles like it keep
   // the guided runs.
@@ -523,7 +525,7 @@ struct machine_profile {
 // X35's rule for a private L2 of 2 MiB or more was adopted there only. vendor: the
 // processor's maker, the profile's vendor (unknown by default; t.vendor is not read, so a
 // caller replaying a recording passes planning_vendor(t, ...)), which set_grid_sizes reads for
-// the Intel-only keys (the Xeon 6240's class, 2 MiB of L2).
+// the Intel-only keys (the Xeon 6240's class, 2 MiB of L2) and the AMD-only one (Zen 3's class).
 [[nodiscard]] machine_profile profile_for(const topology& t, bool x86_64 = FFTN_ARCH_X86_64 != 0,
                                           cpu_vendor vendor = cpu_vendor::unknown) noexcept;
 

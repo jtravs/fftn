@@ -500,6 +500,7 @@ TEST(TopologyFixtureDetail, RecordingsStateTheirVendor) {
       {"linux-gcp-c4-granite-rapids.sysfs", cpu_vendor::intel},
       {"linux-amd-epyc-7763.sysfs", cpu_vendor::amd},
       {"linux-gcp-c4d-zen5.sysfs", cpu_vendor::amd},
+      {"linux-gcp-n2d-zen2.sysfs", cpu_vendor::amd},
       {"linux-gcp-c4a-axion.sysfs", cpu_vendor::arm_other},
       {"macos-apple-m5-max.sysctl", cpu_vendor::apple},
       {"linux-synthetic-2socket-smt.sysfs", std::nullopt},
