@@ -91,7 +91,7 @@ fftn_shape c_shape(const split_case& c, fftn_precision precision, std::array<fft
   batch = {.count = c.count, .in_dist = c.in_dist, .out_dist = c.out_dist};
   s.batch_rank = 1;
   s.batches = &batch;
-  s.split = 1;
+  s.layout = FFTN_SPLIT;
   return s;
 }
 
@@ -385,7 +385,7 @@ TEST(CSplit, RefusalsPassTheCppMessages) {
   s.axes = &c_axis;
   s.batch_rank = 1;
   s.batches = &c_batch;
-  s.split = 1;
+  s.layout = FFTN_SPLIT;
   fftn_options o = fftn_options_default();
   o.in_place = 1;
   fftn_error e{};
@@ -404,7 +404,7 @@ TEST(CSplit, RefusalsPassTheCppMessages) {
 }
 
 // A split plan of the given kind, built from C.
-fftn_plan* split_plan(int split) {
+fftn_plan* split_plan(fftn_layout layout) {
   static const fftn_axis axis{.n = 16, .in_stride = 0, .out_stride = 0};
   static const fftn_batch batch{.count = 2, .in_dist = 0, .out_dist = 0};
   fftn_shape s{};
@@ -415,7 +415,7 @@ fftn_plan* split_plan(int split) {
   s.axes = &axis;
   s.batch_rank = 1;
   s.batches = &batch;
-  s.split = split;
+  s.layout = layout;
   return fftn_plan_create(&s, nullptr, nullptr);
 }
 
@@ -448,7 +448,7 @@ constexpr fftn_team one_member{.rank = 0, .size = 1, .group_size = 0};
 // Every family of interleaved execution (serial, pieces, team, executor, and an _args form)
 // given a split plan ends the program (c_api.cpp, check_layout).
 TEST(CSplitDeathTest, ASplitPlanThroughEachInterleavedFormEndsTheProgram) {
-  fftn_plan* plan = split_plan(1);
+  fftn_plan* plan = split_plan(FFTN_SPLIT);
   ASSERT_NE(plan, nullptr);
   const char* message = "without the _split suffix";
   EXPECT_DEATH(
@@ -487,7 +487,7 @@ TEST(CSplitDeathTest, ASplitPlanThroughEachInterleavedFormEndsTheProgram) {
 
 // Every _split form given a plan of interleaved data ends the program.
 TEST(CSplitDeathTest, AnInterleavedPlanThroughEachSplitFormEndsTheProgram) {
-  fftn_plan* plan = split_plan(0);
+  fftn_plan* plan = split_plan(FFTN_INTERLEAVED);
   ASSERT_NE(plan, nullptr);
   const char* message = "_split form";
   EXPECT_DEATH(
@@ -520,7 +520,7 @@ TEST(CSplitDeathTest, AnInterleavedPlanThroughEachSplitFormEndsTheProgram) {
 
 // A NULL imaginary array on either split side ends the program, naming split_ptr::im.
 TEST(CSplitDeathTest, ANullImaginaryArrayEndsTheProgram) {
-  fftn_plan* plan = split_plan(1);
+  fftn_plan* plan = split_plan(FFTN_SPLIT);
   ASSERT_NE(plan, nullptr);
   EXPECT_DEATH(
       {

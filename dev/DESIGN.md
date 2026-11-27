@@ -1078,8 +1078,9 @@ Points that matter:
   typedef struct fftn_split_const_ptr {                                   /* an input side */
     const void* re; const void* im;
   } fftn_split_const_ptr;
+  typedef enum fftn_layout { FFTN_INTERLEAVED = 0, FFTN_SPLIT = 1 } fftn_layout;
   /* fftn_shape gains a last field, so that a zeroed shape stays interleaved: */
-  /*   int split;   nonzero: the complex sides are split arrays (FFTN_C2C, _R2C, _C2R only) */
+  /*   fftn_layout layout;   FFTN_SPLIT: the complex sides are split arrays (C2C, R2C, C2R) */
   void fftn_execute_split(const fftn_plan*, fftn_split_const_ptr in, fftn_split_ptr out,
                           fftn_workspace*);
   void fftn_execute_transforms_split(const fftn_plan*, size_t first, size_t count,
@@ -1094,16 +1095,18 @@ Points that matter:
     precisions, and a const struct for the input as 6.8's `const void* in`, since C has no
     `split_ptr<const T>` conversion. A real side (r2c's input, c2r's output) passes its array as
     `re`; its `im` is not read (NULL by convention), so every kind has one signature.
-  - *The plan.* A flag on the shape, `fftn_shape::split`, mirroring the core's
-    `shape_view::split` that C++'s element types set: one plan type, one `fftn_plan_create`, the
-    kind and precision fields unchanged, strides and distances counting reals on a split side as
-    in C++. `split` with `FFTN_R2R` is refused in C. The cost: `fftn_shape` grew a field on
+  - *The plan.* An enumeration field on the shape, `fftn_shape::layout` (18.2 Q29, settled
+    by the maintainer on 2026-11-27), whose `FFTN_SPLIT` sets the core's `shape_view::split`
+    as C++'s element types do: one plan type, one `fftn_plan_create`, the kind and precision
+    fields unchanged, strides and distances counting reals on a split side as in C++.
+    `FFTN_INTERLEAVED` is 0, so a zeroed shape is interleaved; a value outside the enumeration
+    is refused with `FFTN_ERROR_INVALID_ARGUMENT`, as other C enumerations are, and so is
+    `FFTN_SPLIT` with `FFTN_R2R`. An enumeration rather than an `int` flag leaves room for other
+    layouts and makes stray values refusable. The cost: `fftn_shape` grew a field on
     2026-11-27, which Q21 allows before 1.0, so C callers and FFI mirrors of the struct (ctypes,
     Julia's `ccall`, Fortran's `iso_c_binding`) must be rebuilt or updated, and C++ callers that
-    list every field in a designated initialiser without `split` get GCC's
-    `-Wmissing-field-initializers`. Alternative: three kinds (`FFTN_C2C_SPLIT`, …), the only
-    choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
-    `fftn_kind` having to know them.
+    list every field in a designated initialiser without `layout` get GCC's
+    `-Wmissing-field-initializers`.
   - *The executions.* The four forms with a `_split` suffix, as 6.9 added `_args`; no form takes
     both, since split plans take no edges. A split plan through the other forms, or a plan on
     interleaved data through the `_split` forms, ends the program with a message, as the core's
@@ -1118,7 +1121,8 @@ Points that matter:
     planned by the rules whatever `options.effort` and `options.use` say, as in C++.
     `fftn_plan_describe`, `_workspace_bytes`, `_instruction_set` and `fftn_transforms_of` are
     unchanged. Pipelines have no split form (neither has C++).
-  - *As built*: the block as written. The handle keeps the shape's kind and `split`, so a
+  - *As built*: the block as written. The handle keeps the shape's kind and whether its
+    layout is split, so a
     `_split` execution passes each complex side's `im` as the core's factor pointer and the real
     parts through the slot, as `plan::execute`'s split overloads do (`detail::split_args`), and
     every plan execution checks its form against the flag (`check_layout`, the core's
@@ -5057,7 +5061,10 @@ table are built on the proposal, provisional and with a second reader, until it 
     (`-Wmissing-field-initializers`). Alternatives: a `fftn_layout` enumeration field (room for
     other layouts, refusable values, the same layout change), or three more `fftn_kind` values,
     the only choice that leaves `fftn_shape`'s layout unchanged, at the price of every switch on
-    `fftn_kind` knowing them.
+    `fftn_kind` knowing them. *Settled 2026-11-27 (the maintainer): an `fftn_layout`
+    enumeration, `fftn_layout layout` as the last field, `FFTN_INTERLEAVED = 0` (the default)
+    and `FFTN_SPLIT = 1`; other values are refused with a status, as other C enumerations are,
+    and `FFTN_SPLIT` with `FFTN_R2R` stays refused (5.9, "Split complex").*
 30. **The executions.** Proposal: `fftn_execute_split`, `fftn_execute_transforms_split`,
     `fftn_execute_team_split` and `fftn_execute_on_split`, following 6.9's `_args` suffix; no
     `_split_args` forms until split plans take edges.
