@@ -372,6 +372,12 @@ target as well as its cache class. The excluded cases are back on their chain pa
 need no timing: those cases build main's programs, probes), and R2's evidence stands for every
 case the rules still move.
 
+**Probes on the Xeon** (the final rules against the main before them, GCC 14.4, avx512): 56 of
+2,256 move, all within the rules' scope (contiguous `<C, C, C>` lines of 18432–131072 points in
+double and 49152–131072 in float, with or without runs, on the depth-first pair; strided lines of
+64–512 points on the lanes pair); fan-out, real kernels, float lines to 32768 points and every plan
+are unchanged.
+
 **The baselines' multiply loop** (the second reader of PR 172): as merged it lacked `restrict` on
 its two arrays while S and W call it in place, which a compiler may answer with a scalar path
 after a failed overlap check. Timed in place on the EPYC (9217 complex values, the AVX2 clone, a
