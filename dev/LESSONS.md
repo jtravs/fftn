@@ -1199,19 +1199,21 @@ deleted with the lanes). pocketfft, which runs several lines of a multi-dimensio
 once in vector lanes, pre- and post-processing included, took 0.56 of FFTN's time on the same
 planes and volumes on the Xeon (AVX-512): batch the whole line's work, not only its FFT. [X85](experiments/X85-r2r-speed.md).
 
-4.35 **A scrambled-order mode saves only the reordering step a library would otherwise pay;
-read the program before borrowing prior art's estimate.** Scrambled spectra between a transform
-and its inverse (MKL's scrambled mode, djbfft, PFFFT's unordered transforms) were expected to save
-10–25 % on FFTN's row convolutions. FFTN's pipelines have no reordering step to save: their chains
-are Stockham autosorts, whose passes write each result where the next pass reads it, and its
-depth-first chains fold the four-step transpose into the strided addressing of their first and top
-passes, so `describe()` of every pair showed radix, pairing, edge and copy stages only (stride
-copies, independent of order). The savings a scrambled order seems to offer come from the passes
-next to the middle sharing their data, and they are open to the natural order: in a Stockham
-chain the last pass and the inverse chain's first pass read the same R-tuples (n/R apart), so one
-joined pass can do both; in a four-step pair the forward's top pass and an inverse decimated in
-frequency at the top touch the same index sets. Ask which pass a scrambled order removes before
-designing an API around it. [X9](experiments/X9-scrambled-middle.md).
+4.35 **A scrambled order saves a reordering step, and also the traversals that locality around
+the middle can join. Count both before borrowing prior art's estimate, and count every traversal
+of the line.** Scrambled spectra between a transform and its inverse (MKL's scrambled mode, djbfft,
+PFFFT's unordered transforms) were expected to save 10–25 % on FFTN's row convolutions. FFTN's
+pipelines have no reordering step to save. Their chains are Stockham autosorts, whose passes write
+each result where the next reads it, and the depth-first chains fold the four-step transpose into
+the strided addressing of their first and top passes: `describe()` of every pair showed radix,
+pairing, edge and copy stages only. In a Stockham pair the last pass and the inverse's first read
+the same R-tuples (n/R apart), so a joined pass needs no scrambled order. The locality part is
+different. Every Stockham pass's legs are n/R apart, so no pass can stay inside a block. A
+depth-first pair beyond L2 traverses the line six times (first pass, the sub-row loop, top pass,
+in each direction). A scrambled pair (DIF top, then each block's two sub-row chains and the factor
+in cache, then the DIT top) traverses it three times. The best natural-order form from the same
+passes traverses it four times. A first count of "four against three, no gain" left out the
+sub-row loops, which re-read every block. [X9](experiments/X9-scrambled-middle.md).
 
 ## 5. Threading
 
