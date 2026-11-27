@@ -372,6 +372,14 @@ target as well as its cache class. The excluded cases are back on their chain pa
 need no timing: those cases build main's programs, probes), and R2's evidence stands for every
 case the rules still move.
 
+**The baselines' multiply loop** (the second reader of PR 172): as merged it lacked `restrict` on
+its two arrays while S and W call it in place, which a compiler may answer with a scalar path
+after a failed overlap check. Timed in place on the EPYC (9217 complex values, the AVX2 clone, a
+loop outside fbench), it took the same time as the restrict-qualified form with GCC 16.2 (4839
+against 4839 ns in double, 2283 against 2280 in float) and with GCC 14.4, the Xeon's compiler (4885
+against 4821, 2279 against 2278): S and W were not slowed and no P/S above is flattered. The loop
+is restrict-qualified again for other compilers (Clang, the Mac leg).
+
 **Not adopted:** no fused middle (rule 5): neither M1 nor a fused tile pass is built. The near
 misses of rule 2 (the Xeon's `<T, C, T>` 65536 × 4 copies) were not re-run: clear losses on
 both machines decide rule 2 whatever their re-run shows. Rule 2's
