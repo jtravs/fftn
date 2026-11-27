@@ -677,7 +677,8 @@ template <class In, class Out, class R> void check_record(const record_case& c) 
                             .batches = &batch,
                             .r2r_kinds = nullptr,
                             .run_count = 0,
-                            .runs = nullptr};
+                            .runs = nullptr,
+                            .split = 0};
   const fftn_plan_edges edges = {.in = c_edge(e), .out = c_edge(e)};
 
   for (const int lanes : {1, 3}) {
@@ -1151,7 +1152,8 @@ fftn_plan* rows_with_callback(fftn_block_fn fn) {
                             .batches = &batch,
                             .r2r_kinds = nullptr,
                             .run_count = 0,
-                            .runs = nullptr};
+                            .runs = nullptr,
+                            .split = 0};
   fftn_plan_edges edges = {.in = fftn_edge_default(), .out = fftn_edge_default()};
   edges.out.call.fn = fn;
   return fftn_plan_create_edges(&shape, nullptr, &edges, nullptr);
