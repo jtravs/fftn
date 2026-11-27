@@ -23,7 +23,7 @@ if(FFTN_BUILD_C_SHARED)
   target_link_libraries(fftn_c PRIVATE fftn)
   set_target_properties(fftn_c PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
   # While FFTN is 0.x a minor version may change the C API (AGENTS.md section 1), so the
-  # SOVERSION is the major and minor version (libfftn_c.so.0.1, libfftn_c.0.1.dylib) and a
+  # SOVERSION is 0.<minor> (libfftn_c.so.0.<minor>, libfftn_c.0.<minor>.dylib) and a
   # program built against one minor version never loads another; VERSION is the full version.
   # Mach-O's compatibility and current versions follow them; Windows DLL names do not change.
   # (The maintainer, 2026-11-27; DESIGN.md 5.9.) What 1.0 takes is not decided yet.

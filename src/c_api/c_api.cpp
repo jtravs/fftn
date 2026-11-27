@@ -109,9 +109,11 @@ static_assert(FFTN_PLANNING_MEASURE == static_cast<int>(fftn::planning::measure)
 static_assert(FFTN_FORWARD == static_cast<int>(fftn::direction::forward));
 static_assert(FFTN_BACKWARD == static_cast<int>(fftn::direction::backward));
 
-// The value a C caller stored in an enumeration-typed field or argument, read as the int it
-// is in C: a value outside the enumeration, which the C side may hold, is never loaded as the
-// C++ enumeration type (UBSan's enum check would rightly flag it).
+// The value a C caller stored in an enumeration-typed field or argument, read as an int (the
+// enumeration's underlying type is the compiler's choice, int-sized here, unsigned int with
+// GCC and Clang when no value is negative): a value outside the enumeration, which the C side
+// may hold, is never loaded as the C++ enumeration type (UBSan's enum check would rightly flag
+// it).
 template <class E> int raw_value(const E& e) noexcept {
   static_assert(sizeof(E) == sizeof(int), "C enumerations are ints");
   int v = 0;

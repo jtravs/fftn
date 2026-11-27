@@ -91,10 +91,12 @@ standard library itself (`-lstdc++` with GCC, `-lc++` with Clang on macOS):
 a shared library. With `-DFFTN_BUILD_C_SHARED=ON` the build also makes `libfftn_c`
 (`fftn_c.dll` on Windows), installed and exported as `fftn::fftn_c`, which holds the whole
 library inside and exports the `fftn_` functions and nothing else. The C++ API stays static.
-While FFTN is 0.x a minor version may change the C API, so the library's SOVERSION is the
-major and minor version: `libfftn_c.so.0.1` on Linux (the soname, linked to the fully versioned
-file, with `libfftn_c.so` for the linker), `libfftn_c.0.1.dylib` on macOS (whose compatibility
-version is 0.1), and a program built against 0.1 never loads 0.2. Windows' DLL is not renamed.
+While FFTN is 0.x a minor version may change the C API, so the library's SOVERSION is
+`0.<minor>`: `libfftn_c.so.0.<minor>` on Linux (the soname, linked to the fully versioned file,
+with `libfftn_c.so` for the linker) and `libfftn_c.0.<minor>.dylib` on macOS (whose
+compatibility version is `0.<minor>`). For example, at version 0.1 the soname is
+`libfftn_c.so.0.1`, and a program built against it never loads 0.2's library. Windows' DLL is
+not renamed.
 
 Every C symbol the library defines starts with `fftn_`; a test checks both libraries.
 
@@ -432,11 +434,12 @@ fftn_plan_release(forward);
   split plan; split plans are planned by the rules, which `fftn_plan_describe` says when other
   planning was asked for). `FFTN_SPLIT` with `FFTN_R2R` is refused, as is a `layout` that is
   not an `fftn_layout`. Pipelines have no split form.
-- **`fftn_shape` grew a field** (`layout`, last, an `fftn_layout`, which is an `int` in C) on
-  2026-11-27, as Q21 allows before 1.0. A zeroed shape is unchanged in meaning, but C programs
-  must be rebuilt against the new header, and mirrors of the struct in other languages (Python's
-  `ctypes`, Julia's `ccall`, Fortran's `iso_c_binding`) must add the field. C++ code that names
-  every field in a designated initialiser and leaves out `layout` gets a
+- **`fftn_shape` grew a field** (`layout`, last, an `fftn_layout`: an enumeration whose
+  underlying type the compiler chooses, int-sized, 4 bytes) on 2026-11-27, as Q21 allows before
+  1.0. A zeroed shape is unchanged in meaning, but C programs must be rebuilt against the new
+  header, and mirrors of the struct in other languages (Python's `ctypes`, Julia's `ccall`,
+  Fortran's `iso_c_binding`) must add the field, as a 4-byte integer. C++ code that names every
+  field in a designated initialiser and leaves out `layout` gets a
   `-Wmissing-field-initializers` warning.
 
 ## Not yet in C

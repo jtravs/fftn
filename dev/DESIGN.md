@@ -5022,7 +5022,9 @@ table are built on the proposal, provisional and with a second reader, until it 
     code and message; no thread-local last error.
 20. **A shared library.** Python's ctypes, Julia's `ccall` and some Fortran builds want one.
     Proposal: an opt-in shared library, `fftn_c`, that exports the `fftn_` symbols only; the C++
-    API stays static (section 14.2).
+    API stays static (section 14.2). *Settled 2026-11-27 (the maintainer): its SOVERSION is
+    `0.<minor>` from the project version and its VERSION the full version while FFTN is 0.x
+    (5.9, "As built (step 6.8)").*
 21. **ABI.** Proposal: plain structs, no size or version fields, until 1.0; the version macros
     of `config.hpp` are the check.
 22. **Scope of the first C step.** Proposal: plans of every built kind, workspaces, the four
