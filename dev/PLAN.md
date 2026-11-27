@@ -21,8 +21,8 @@ handoff. Lessons that generalise are in [LESSONS.md](LESSONS.md), decisions in D
 | 2 | Built: real transforms, any length, `planning::measure`, wisdom, `next_fast_length`. Open: 2.2's double c2c batch acceptance on AVX-512; X6; X13; the cost model's second pass. Exit not checked. The client catalogue's real-row gap mostly closed (X72, X75, X78; Ice Lake X82, Zen 2 X81). |
 | 3 | Built: the engine, scheduler, OpenMP adapter, `thread_pool`, Kokkos (provisional API). Scheduling improved: anchored whole transforms (X73 Zen 3, X74 Apple, X79 the Xeon 6240's class), the team state on pages of its own on the Xeon 6240's class (X79, after X76's diagnosis), real rows split by complex points there (X83). Open: T2, T4, T6; 3.6 against its acceptance. Exit not checked. |
 | 4 | 4.3 done. 4.1 and 4.2 built; acceptance not met case by case (large threaded planes against oneMKL, some volumes). |
-| 5 | Started 2026-11-25. Built, all new API provisional with a second read: 5.1 (5.1a–5.1e; X65 judged); 5.2a (batched forms, X65's P1), 5.2b (the pipeline API and the `<C, C, C>` chain pair), 5.2c (`<T, C, T>`, `convolution_rows`), 5.2d (stored runs on pipelines; the depth-first pair, forced only, PR 154), 5.2e (fan-out, PR 162), 5.2f (the lanes pair, forced only, PR 169); 5.3a–5.3c (block callbacks on rows, every row strategy, multi-axis plans; PRs 141, 152, 153, 158; beside stored runs on planes and volumes, PR 176), 5.3d (prologue, middle and epilogue callbacks on pipelines, PR 165), 5.3e (inverse-first spectral pairs and `<C, T, C>`, PR 166), 5.3f (`group`, PR 170); 5.5 (owner-computes, `docs/fusion.md`, fbench pipeline arms, PR 168). The maintainer accepted 18.2's "Pipelines" and "Callbacks" proposals as built on 2026-11-26 (PR 171; `array_of` open). Experiments: X66 (5.3g) judged on the Xeon 6240 and the EPYC 7763 (PR 175: L2/4 callback blocks on the Xeon 6240's class; the rule-1 leads await the maintainer; the Mac leg is a daytime follow-up); X67 (5.2g) judged on the Xeon 6240 and the EPYC 7763 (PRs 172 and 179: measured planning and wisdom for pipelines; 5.2's acceptance not met, P/S inside L2 EPYC 1.009/1.001, Xeon 0.765/0.840; adopted, subject to the maintainer's veto (AGENTS.md section 6): the depth-first pair for contiguous `<C, C, C>` lines of 288 KiB–2 MiB on the Xeon 6240's class with avx512, and the lanes pair for a plane's strided lines of 64–512 points on Zen 3's and the Xeon 6240's classes; the losses are leads awaiting the maintainer; the Mac leg is a daytime follow-up); X68 (5.3h) judged on the Xeon 6240 and the EPYC 7763 (PR 184: the free-space stage as an fbench case; 5.3's acceptance not met, the three objects 2.59 (one component) and 1.32 (two) of today's route at 384² on 64 EPYC threads, 1.89 on 18 Xeon threads, mainly FFTN's (y, x) planes over a stride-1 batch, about 5 times tight planes; rule 4 proposes a multi-axis pipeline behind that planes fix; both await the maintainer; the Mac leg and FFTW's arm are daytime follow-ups); X9 (5.4) closed by reading (PR 190: no pass exists only for natural order in the chain, real or lanes pairs, so no `spectral_layout`; the depth-first pair's scrambled form, 6 → 3 traversals, is an open lead). |
-| 6 | Started 2026-11-26; steps 6.1–6.20 (phase 6 table), API proposals in DESIGN 5.4, 5.7–5.9, questions in DESIGN 18.2, "Phase 6". Built 2026-11-26/27, new API provisional with a second read: 6.1 (packaging, PR 147), 6.2 (size report, PR 146), 6.3 (r2r kind and DHT, PR 148), 6.4 (DCT/DST II and III, PR 151), 6.5 (DCT/DST IV and I, PR 155; an independent reference for every r2r kind, PR 176), 6.6 (`fftn/easy.hpp`, PR 149), 6.7 (scipy-style r2r, PRs 159 and 161; Kokkos-FFT's one-shot functions, PR 160), 6.8 (the C API for plans, PR 157), 6.9 (the C API for fusion, PR 174), 6.10 (split complex, the conversion form, PR 173; in C, PR 177), 6.11 (float coverage, PR 163; X84, PR 164), 6.12 (r2r benchmarking with FFTW's and pocketfft's backends and the `r2r` catalogue, PR 182; X85 judged, PR 186: the folded DCT-I/DST-I on Zen 3's class, lanes over r2r lines rejected, fused stages drafted; Q15's standing informative: FFTN leads on rows, trails on planes and volumes of kinds II, III and the DHT, where pocketfft leads both), 6.17 (the documents, PR 181; written, awaiting the maintainer's review). Settled by the maintainer 2026-11-26 (PR 171): split complex's fused form (6.13) moves to phase 7; phase 6's cloud budget is USD 40, spent once the features are built. Left: 6.14–6.16 (machines, cloud), 6.17's review by the maintainer, 6.18–6.20 (release). |
+| 5 | Started 2026-11-25. Built, all new API provisional with a second read: 5.1 (5.1a–5.1e; X65 judged); 5.2a (batched forms, X65's P1), 5.2b (the pipeline API and the `<C, C, C>` chain pair), 5.2c (`<T, C, T>`, `convolution_rows`), 5.2d (stored runs on pipelines; the depth-first pair, forced only, PR 154), 5.2e (fan-out, PR 162), 5.2f (the lanes pair, forced only, PR 169); 5.3a–5.3c (block callbacks on rows, every row strategy, multi-axis plans; PRs 141, 152, 153, 158; beside stored runs on planes and volumes, PR 176), 5.3d (prologue, middle and epilogue callbacks on pipelines, PR 165), 5.3e (inverse-first spectral pairs and `<C, T, C>`, PR 166), 5.3f (`group`, PR 170); 5.5 (owner-computes, `docs/fusion.md`, fbench pipeline arms, PR 168). The maintainer accepted 18.2's "Pipelines" and "Callbacks" proposals as built on 2026-11-26 (PR 171; `array_of` open). Experiments: X66 (5.3g) judged on the Xeon 6240 and the EPYC 7763 (PR 175: L2/4 callback blocks on the Xeon 6240's class; the rule-1 leads filed as performance leads by the maintainer, 2026-11-27; the Mac leg not scheduled); X67 (5.2g) judged on the Xeon 6240 and the EPYC 7763 (PRs 172 and 179: measured planning and wisdom for pipelines; 5.2's acceptance not met, P/S inside L2 EPYC 1.009/1.001, Xeon 0.765/0.840; adopted, and kept by the maintainer on 2026-11-27: the depth-first pair for contiguous `<C, C, C>` lines of 288 KiB–2 MiB on the Xeon 6240's class with avx512, and the lanes pair for a plane's strided lines of 64–512 points on Zen 3's and the Xeon 6240's classes; the losses filed as performance leads; the Mac leg not scheduled); X68 (5.3h) judged on the Xeon 6240 and the EPYC 7763 (PR 184: the free-space stage as an fbench case; 5.3's acceptance not met, the three objects 2.59 (one component) and 1.32 (two) of today's route at 384² on 64 EPYC threads, 1.89 on 18 Xeon threads, mainly FFTN's (y, x) planes over a stride-1 batch, about 5 times tight planes; rule 4's multi-axis pipeline accepted by the maintainer on 2026-11-27, behind that planes fix, which is performance lead 1; the Mac leg dropped); X9 (5.4) closed by reading (PR 190: no pass exists only for natural order in the chain, real or lanes pairs, so no `spectral_layout`; the depth-first pair's scrambled form, 6 → 3 traversals, is a performance lead; the maintainer counted 5.4 closed on 2026-11-27). |
+| 6 | Started 2026-11-26; steps 6.1–6.20 (phase 6 table), API proposals in DESIGN 5.4, 5.7–5.9, questions in DESIGN 18.2, "Phase 6". Built 2026-11-26/27, new API provisional with a second read: 6.1 (packaging, PR 147), 6.2 (size report, PR 146), 6.3 (r2r kind and DHT, PR 148), 6.4 (DCT/DST II and III, PR 151), 6.5 (DCT/DST IV and I, PR 155; an independent reference for every r2r kind, PR 176), 6.6 (`fftn/easy.hpp`, PR 149), 6.7 (scipy-style r2r, PRs 159 and 161; Kokkos-FFT's one-shot functions, PR 160), 6.8 (the C API for plans, PR 157), 6.9 (the C API for fusion, PR 174), 6.10 (split complex, the conversion form, PR 173; in C, PR 177), 6.11 (float coverage, PR 163; X84, PR 164), 6.12 (r2r benchmarking with FFTW's and pocketfft's backends and the `r2r` catalogue, PR 182; X85 judged, PR 186: the folded DCT-I/DST-I on Zen 3's class, lanes over r2r lines rejected, fused stages drafted; Q15's standing informative: FFTN leads on rows, trails on planes and volumes of kinds II, III and the DHT, where pocketfft leads both), 6.17 (the documents, PR 181; its four choices accepted on 2026-11-27, the maintainer's reading of the guide and README still to come). Settled by the maintainer 2026-11-26 (PR 171): split complex's fused form (6.13) moves to phase 7; phase 6's cloud budget is USD 40, spent once the features are built. Settled by the maintainer 2026-11-27: the provisional APIs of phases 5 and 6 confirmed as built, their add-ons moved to phase 7; Q15 is a target for 1.0, not a gate; no float tuning before a release (Q23). **No release tag yet** (the maintainer, 2026-11-27): the release report (Q26), the tag's criteria (Q27), the cloud steps 6.14–6.16 and the daytime Mac legs wait until the maintainer says. Under way: Q29's `fftn_layout`, a SOVERSION for `fftn_c`, `array_of`, the Zen 3-class rules keyed to AMD. Left: those four, the maintainer's reading of 6.17, then 6.14–6.16 and 6.18–6.20 when the maintainer says. |
 | 7 | Not started. |
 
 **Client catalogue** (the check of 2026-11-24, `main` d4b169f): weighted geometric mean of FFTN ÷
@@ -44,7 +44,7 @@ AArch64 Linux leg of the check is pending.
 
 The cloud campaign stands at USD 16.54 of 20 (after X80; ledger `experiments/cloud-ledger-2026-11.md`).
 
-Adoptions under the 2026-11-23 clauses, open to the maintainer's veto: X75 arm B narrowed to half
+Adoptions under the 2026-11-23 clauses, kept by the maintainer on 2026-11-27 (none vetoed; X65's P1 narrowing too): X75 arm B narrowed to half
 lengths above L2/8; X78's B4n defined from a diagnosis after B's judging runs (amendment 1); X85's
 folded DCT-I/DST-I on Zen 3's class (AMD, best target avx2), narrowed three times before its
 deciding run (DCT-I from 9, then from 33; the limit from 257 to 129 points after a round trip's
@@ -404,16 +404,17 @@ Done:
 - CI: a short required set on pull requests (no up-to-date rule), the full per-change set on main
   after each merge, weekly extended and emulation jobs.
 
-Open, features first (as of 2026-11-27 morning; phases 5 and 6's features are built):
-- 5: built (5.1–5.5, PRs through 190); experiments X65–X68 and X9 judged. Waiting for the
-  maintainer: the adoptions open to veto (X66, X67), the losses filed as leads (X66 rule 1, X67,
-  X68 rule 2), X68's multi-axis pipeline proposal, whether 5.4 counts as closed by reading, and
-  X9's two performance leads (a joined middle pass; the scrambled depth-first pair).
-- 6: built except the steps that wait: 6.14–6.16 (machines, cloud; USD 40, Q24), the
-  maintainer's review of 6.17, 6.18 (the release report; its case set and machines are Q26),
-  6.19 and 6.20 (the maintainer's decisions). Open questions: `array_of`, Q28–Q31, the C API
-  questions, Q15 (r2r speed target). Daytime Mac legs: X66, X67, X68, X85.
-- 7: on demand (FFTW3 shim, SVE, Python, more axes).
+Open, features first (as of 2026-11-27; the maintainer settled the open list that day):
+- 5: built and judged (5.1–5.5, PRs through 190; X65–X68, X9); 5.4 counted closed by reading.
+  The adoptions are kept; the losses are performance leads (below).
+- 6: built. Under way from the maintainer's decisions: Q29's `fftn_layout`, a SOVERSION for
+  `fftn_c` (0.minor while 0.x), `array_of`, the Zen 3-class profile rules keyed to AMD. Then the
+  maintainer reads 6.17's guide and README. **No release tag yet:** 6.14–6.16 (cloud, Windows),
+  6.18 (the report, Q26), 6.19–6.20 and the daytime Mac legs wait until the maintainer says.
+- 7: on demand (FFTW3 shim, SVE, Python, more axes), with the add-ons moved there on 2026-11-27:
+  numpy's `n`/`s`, `orthogonalize`, `dhtn`/`idht`, Kokkos-FFT's helpers, a block region per team
+  member for fan-out, a `<C, T, C>` helper, an input factor on the depth-first pair's first pass,
+  a callback mode that may modify the caller's input (X66), r2r pipelines, the fused split form.
 
 Open, acceptance and exit checks (after the features):
 - 1 (optional): X2 above 1024 on the Mac; X4 on x86 and for edge passes; X5 (twiddle modes);
@@ -447,6 +448,27 @@ Performance follow-ups, parked for later:
 - the phase 2 and phase 3 exit checks;
 - a client-catalogue re-check under the 1.05 rule (DESIGN 1.3), with the Xeon and the EPYC after
   X72–X83.
+
+Performance leads filed by the maintainer on 2026-11-27 (the performance phase starts after the
+release report, item 22 of that day's list):
+- X68 lead 1, first: FFTN's (y, x) planes over a stride-1 batch at large strides (about 5 times
+  tight planes; extends X66's lead 3); then X68 rule 4's multi-axis pipeline, accepted behind it;
+- X66 rule 1: 256-point batched rows walk row by row; plane column blocks too narrow (X66b: never
+  cut column blocks); one strided column per call in the free-space layout; out-of-place input
+  callbacks copy, then sweep (1.27–1.42 on Xeon rows of 16384 and more); batched forms for
+  callback plans;
+- X67: the real pair's middle as a baseline SSE2 pass; fan-out copies (up to 1.29; 1.6–3.6× at 8
+  threads on one line); whole lines and short-row batches against the plans' own strategies; the
+  Xeon's 64 × 512 float strided lines (1.96);
+- X9: a joined middle pass for the chain and lanes pairs (6 → 5 passes at 4096 on `avx512`,
+  estimated); the depth-first pair's scrambled form (6 → 3 traversals), Bluestein's depth-first
+  convolution as the first test;
+- Q15: r2r planes and volumes of kinds II, III and the DHT (1.29–3.10 of FFTW on the EPYC;
+  pocketfft 0.56 of FFTN's time on the Xeon): lanes with stages vectorised across lines, a
+  reworked DCT-III/DST-III route, X85's fused read and store stages; a DST-I-only Xeon key;
+- Q23: float's tail (13–23 % of cases past 1.05; tiny real rows and small real planes 2–10 ×
+  FFTW), after a quiet re-check; whether double shares the tiny real gap;
+- single tiny transforms 1.06–1.08 of their time since PR 128 (inside DESIGN 1.3's rule).
 
 Notes kept from earlier sessions:
 

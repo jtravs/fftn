@@ -4935,6 +4935,13 @@ optional trailing runs, `middle.scale` 1).
 proposed APIs in 5.4, 5.7, 5.8 and 5.9. Each question has a proposal; steps marked P in the
 table are built on the proposal, provisional and with a second reader, until it is settled.
 
+*Settled 2026-11-27 (the maintainer): every proposal below that is built is accepted as built
+(Q4–Q14, Q16–Q22, Q28, Q30, Q31, with the choices listed in each step's "As built"); Q29 becomes
+an `fftn_layout` enumeration, and `fftn_c` gets a SOVERSION of 0.minor while FFTN is 0.x. The
+add-ons the steps asked about (numpy's `n` and `s`, `orthogonalize`, `dhtn` and `idht`,
+Kokkos-FFT's helpers) move to phase 7, on demand. Q15 and Q23 are settled below; Q24's spending,
+Q26 and Q27 wait: no release tag yet. The headers keep "provisional" until step 6.20.*
+
 *Scope and order*
 
 1. **Order.** Features first (packaging, the real-to-real kinds, the convenience layer, the C
@@ -4994,7 +5001,9 @@ table are built on the proposal, provisional and with a second reader, until it 
     mean over an `r2r` catalogue of the standard lengths, one thread, on the three local
     machines, with the tail rule of 1.3; pocketfft as a second reference. The catalogue and the
     backends exist since step 6.12 (`bench/catalogues/r2r.toml`); X85 records the standing on the
-    EPYC and the Xeon (the Mac's is a daytime follow-up). Still the maintainer's to settle.
+    EPYC and the Xeon (the Mac's is a daytime follow-up). *Settled 2026-11-27 (the maintainer): the
+    target for 1.0, not a gate for the first tag; the planes and volumes where FFTN trails are
+    performance leads (PLAN, Tasks).*
 
 *Split-complex layout (5.8)*
 
@@ -5022,13 +5031,15 @@ table are built on the proposal, provisional and with a second reader, until it 
 
 23. **Float tuning "where wanted".** Proposal: step 6.11 measures float's standing on the three
     local machines and lists cases above 1.10 of FFTW's float; tuning follows only for the cases
-    the maintainer names. The client application uses double only.
+    the maintainer names. The client application uses double only. *Settled 2026-11-27 (the
+    maintainer): no float tuning before a release; float's tail is a performance lead, after a
+    re-check on quiet machines.*
 24. **Cloud spending** for 6.14 (Neoverse N1, V1, V2), 6.15 (Zen 4 and 5, recent Intel) and
     6.16 (Windows). The November campaign stands at USD 16.54 of 20. Proposal: a phase 6 budget
     of USD 40 on Spot VMs, the ledger as before; Windows on one x64 VM of an instance type
     already screened under Linux, so the two systems are compared on the same hardware.
     *Settled 2026-11-26 (the maintainer): USD 40 approved, to be spent only once the features
-    are built.*
+    are built.* Not started: on 2026-11-27 the maintainer held the cloud steps until asked.
 25. **Packaging.** Proposal: a CMake package, pkg-config and FetchContent (6.1); no
     amalgamation for the first release (14.3: it would take the user's floating-point flags,
     and `-ffp-contract=fast` cannot be detected); recipes for package managers (vcpkg, Conan,
@@ -5036,12 +5047,14 @@ table are built on the proposal, provisional and with a second reader, until it 
 26. **The release report** (16.4). Proposal: a fixed `release` catalogue (c2c, r2c and c2r rows
     in both precisions, planes, volumes, a threads sample, a pipeline sample), on the M5 Max, the
     Xeon 6240 and the EPYC 7763, against FFTW (MEASURE), MKL on the Xeon and FFTL.jl on the Mac;
-    cloud machines as an appendix only, since their runs cannot be repeated at will.
+    cloud machines as an appendix only, since their runs cannot be repeated at will. *Open: the
+    maintainer (2026-11-27) wants no release tag yet, so the report waits.*
 27. **Release criteria for the first tag.** Proposal: version 0.1.0, a preview: phase 5's and 6's
     features built, documented and tested; CI green on every platform, extended and emulation
     workflows included; every provisional API either confirmed or listed as provisional in the
     release notes; the release report published with whatever it shows, the 1.3 targets not
-    required. Versions stay 0.x until the API is frozen at 1.0.
+    required. Versions stay 0.x until the API is frozen at 1.0. *Open: no release tag yet (the
+    maintainer, 2026-11-27).*
 
 *Split complex in the C API (5.9, "Split complex"; 2026-11-27)*
 
@@ -5487,6 +5500,7 @@ to change before a release.
 | 2026-11-27 | Experiment X9 (step 5.4, section 12.2 "Natural order for now"): the middle runs in the natural order; no scrambled middle and no `spectral_layout` built, nothing timed; the depth-first pair's scrambled form left open as a lead | By reading the pairs' programs (`describe()` on the Xeon 6240, the chain builder): no pair runs a pass only for the natural order (Stockham chains, the depth-first transpose folded into the first and top passes, the lanes' tile layout, no grid in pipelines), and the chain and lanes pairs' joined middle pass is open to the natural order. On the depth-first pair a scrambled order would make 3 traversals of the line against 6 today and 4 for the best natural-order form from today's passes (locality, not a removed permutation); features come first, so it waits, with Bluestein's depth-first convolution as the API-free first test |
 
 ---
+| 2026-11-27 | The maintainer settled the open list: the adoptions open to veto kept (X65's P1 narrowed, X67's two pipeline rules, X75's arm B narrowed, X78's B4n, X85's folded DCT-I/DST-I); the Zen 3-class profile rules measured only on AMD keyed to AMD's cores; X66's rule-1, X67's and X68's losses, X9's two leads and the r2r and float tails filed as performance leads, X68's multi-axis pipeline accepted behind the planes fix; 5.4 closed by reading; the provisional APIs of phases 5 and 6 confirmed as built (18.2), their add-ons to phase 7; `array_of` as proposed; the C API's fixed `fftn_error`, two extra codes, separate `fftn_pipeline`, `_args` forms and void callbacks kept, Q29 an `fftn_layout` enumeration, `fftn_c` a SOVERSION of 0.minor; Q15 a target for 1.0; no float tuning before a release; 6.17's four choices accepted. Not yet: no release tag, so Q26, Q27, the cloud steps and the daytime Mac legs wait | Features first, then performance (2026-11-25); the report should show where FFTN stands before the tuning; the release waits for the maintainer |
 
 ## 20. References
 
