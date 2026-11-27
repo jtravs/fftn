@@ -624,7 +624,15 @@ Points that matter:
   edges built by hand along one axis, against the quadruple-precision reference over several,
   and for the allocation of no weight array beyond one axis.
 - **Kokkos.** The one-shot functions of `fftn::kokkos::compat` (Kokkos-FFT's `fft`, `ifft`,
-  `rfft` and the rest, 5.5) would be built over the same context (step 6.7).
+  `rfft` and the rest, 5.5) are built over the same context. *As built (step 6.7;
+  provisional):* the header-only adapter reaches it through one internal entry,
+  `easy::detail::run_shape` (declared in `fftn/easy.hpp`, a friend of `context`): the plan of
+  exactly the Views' `shape_of` with `options::in_place`, keyed by every field of the shape,
+  found or built in `thread_context()` and executed on the caller's Kokkos executor with the
+  context's workspace. The normalisation stays the adapter's separate pass (`view_plan`'s,
+  now a shared helper), so each one-shot is bitwise the `view_plan` of the same Views. The
+  shape's vectors are built on every call, so a one-shot allocates even when it finds its
+  plan.
 
 ### 5.5 Other interfaces
 
@@ -694,8 +702,15 @@ the header and the docs until it happens.
   the host checks and then fence inside its own kernels; Threads needs Kokkos 5.2.1, 13.6). An
   application that builds for devices selects the provider per build. Errors are `std::invalid_argument` with the prefix
   `fftn::kokkos:` and the argument's name (Kokkos-FFT throws `std::runtime_error`).
-- *Not provided yet:* the one-shot functions (`KokkosFFT::fft` and the rest, which would make
-  a plan per call and belong with the convenience layer of 5.4, step 6.7); `DynPlan`.
+- *The one-shot functions* (`KokkosFFT::fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, the
+  `2` and `n` forms; step 6.7, provisional) take Kokkos-FFT's signatures and compute what a
+  plan of the same Views computes, keeping the plan in the calling thread's convenience
+  context (5.4, "Kokkos"). As Kokkos-FFT: a real input to `fft`, `fft2` and `fftn` goes through
+  a complex temporary, `hfft` is `irfft` of the conjugate with the normalisation's direction
+  swapped, and `ihfft` is `rfft` so swapped, then conjugated. One deliberate difference: `hfft`
+  conjugates into a temporary and never modifies its input, which Kokkos-FFT does to a
+  non-const one.
+- *Not provided yet:* the helpers (`fftfreq`, `rfftfreq`, `fftshift`, `ifftshift`); `DynPlan`.
 
 **`fftn/omp.hpp`** (optional, header-only, compiled in the user's translation units against
 the user's OpenMP runtime, so the process has one OpenMP runtime; the library links none):
@@ -5149,6 +5164,7 @@ to change before a release.
 | 2026-11-26 | Groups on pipelines (task 5.3f, section 12.3, "As built"): `pipeline_desc::group`, provisional; the group's dimension a task, two members loops around one middle callback over the G spectra, which `block_info::group` and `group_stride` describe; `execute_transforms` and `transforms_of` count groups; refused without a middle callback, with fan-out and for no such dimension; 18.2's "Callbacks" proposals 15 and 16. Awaits the maintainer's review of the API | A coupled middle (polarisations) needs every member's spectrum at once, and one task per group keeps the callback whole under teams and executors |
 | 2026-11-26 | The C API for plans (step 6.8, section 5.9; provisional, second reader to come): `fftn/c_api.h` and `src/c_api/` with 18.2's proposals Q17–Q22 taken as written (the header in `fftn::fftn`, one plan type and `void*` data, NULL or a status plus an optional caller-owned `fftn_error`, the opt-in shared library `fftn_c` exporting `fftn_` only, plain structs without size or version fields, plans of every built kind with workspaces, the four execution forms, wisdom and lengths); the choices where 5.9 was silent are listed in its "As built" | The maintainer's priority (2026-11-25): features fully built; the C interface serves C, Fortran, Python and Julia callers and older toolchains (decision of 2026-11-16) |
 | 2026-11-26 | Owner-computes and the fusion documents (task 5.5, section 12.4, "As built"): no library change; a test of the deal for plans with edges and callbacks and for pipelines, an OpenMP example, `docs/fusion.md`. fbench's pipeline arms (`PIPELINE=fused` and the unfused `separate`) convolve rows with a kernel that delays each row by one element, and the harness checks such backends against the delayed input (`"output":"delay"` in `describe`) instead of the DFT. `fftn/kokkos.hpp`'s `array_of` not built: section 5.5 gives it no design (the fusion proposal's one line did not reach the agreed section 12) | A pipeline computes no DFT, so the harness's check needs another reference; a delay is exact, analytic and moves every bin's phase, so a copying or wrong arm fails it. The API waits for the maintainer (AGENTS.md section 7) |
+| 2026-11-26 | Kokkos-FFT's one-shot functions (step 6.7, sections 5.4 and 5.5): provisional, in `fftn::kokkos::compat` with Kokkos-FFT 2.0's signatures (`fft`, `ifft`, `rfft`, `irfft`, `hfft`, `ihfft`, `fft2`, `ifft2`, `rfft2`, `irfft2`, `fftn`, `ifftn`, `rfftn`, `irfftn`); plans in the calling thread's convenience context through the internal `easy::detail::run_shape`; the normalisation as `view_plan`'s separate pass, so each one-shot is bitwise its `view_plan`; real input to `fft` and `hfft` through temporaries as Kokkos-FFT does, but `hfft` leaves its input unchanged; the helpers left out. Awaits the maintainer's review (PLAN marks the Kokkos part M) | 18.2 Q3's proposal: a Kokkos-FFT call site compiles unchanged, and repeated calls build no plan |
 | 2026-11-26 | The maintainer settled four questions (18.2): the "Pipelines" and "Callbacks" proposals are accepted as built (item 10, `array_of`, stays open; the headers stay provisional until 6.20); split complex is the conversion form (6.10) in phase 6, the fused form (6.13) moves to phase 7 (Q2); the Kokkos one-shot functions are built as proposed (Q3, PR 160); phase 6's cloud budget is USD 40, spent only once the features are built (Q24) | Unblocks 6.9 and 6.10; keeps phase 6 to features users ask for |
 
 ---
