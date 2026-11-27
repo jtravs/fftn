@@ -264,6 +264,15 @@ struct machine_profile {
   // private L2 of 2 MiB or more, where it lost (X58: Sapphire Rapids 12 x 64 1.17 of the
   // chain's time; it won on the Xeon 6240 and Ice Lake).
   bool batch_leaf_12 = true;
+  // A <C, C, C> pipeline's line, contiguous on both sides, runs as the depth-first pair (DESIGN.md
+  // 12.2; core/plan_core.cpp, convolution_depth_tops) from this many KiB of the complex line up
+  // to pipeline_depth_max_kib, on the target pipeline_depth_isa (0: never). Experiment X67 (task
+  // 5.2g): set_grid_sizes sets the Xeon 6240's class, where the pair took 0.64-0.81 of the chain
+  // pair's time from 18432 points in double and 0.66-0.94 from 32768 in float (the limit is the
+  // larger of the two in bytes, 288 KiB), on avx512. In the padding after the bool above, so that
+  // the profile's size and its other fields' places stay what they were (the plain drivers copy
+  // it, schedule::profile).
+  std::uint32_t pipeline_depth_min_kib = 0;
   // A Bluestein stage's convolution of one copy runs on two depth-first chains where a row
   // of its length would be one in double, by the fields above, but with this upper limit in
   // place of depth_max_bytes (0: never; core/plan_core.cpp, bluestein_tops_of; experiment
@@ -437,6 +446,14 @@ struct machine_profile {
   // float, 2036 = 4 x 509 (s = C = 4) took 0.92 of its time with M = 4320, the one float line
   // measured.
   bool bluestein_whole_lanes = false;
+  // A <C, C, C> pipeline's lines one element apart on both sides (a plane's strided axis, DESIGN.md
+  // 9.3) run as the lanes pair (DESIGN.md 12.2; core/plan_core.cpp, convolution_lanes_block) up to
+  // this many points per line, with a lanes column phase's block (0: never). Experiment X67 (task
+  // 5.2g): set_grid_sizes sets the classes where the pair beat the chain pair on the lines of
+  // 64 x 512 and 512 x 512 planes. Every target of such a machine takes it alike, so the two
+  // targets of a pair never split on it (DESIGN.md 6.2). In the padding after the bool above, as
+  // pipeline_depth_min_kib.
+  std::uint32_t pipeline_lanes_adjacent_max = 0;
   // A Bluestein or Rader convolution of a power-of-two length of more than this many bytes
   // takes X32's long-row radices (experiment X36; a convolution is a chain, never a grid):
   // grid_min_bytes where X32's long chains apply (Apple, Zen), four times the L2 on other
@@ -447,6 +464,16 @@ struct machine_profile {
   // rather than in a separate pass (X29): set where the L2 is shared (Apple: 0.92-0.94 of
   // the separate route); on the EPYC it took 1.11.
   bool c2r_paired_gather = false;
+  // The target and upper limit of pipeline_depth_min_kib's rule: the plan's target (so that a
+  // machine's avx2 and avx512 targets may split, as its depth-first rows and Bluestein
+  // convolutions do, DESIGN.md 6.2), and the longest line measured, given in double (131072
+  // points; float lines up to the same number of points, the longest measured in float too).
+  // pipeline_lanes_isa: the processor's best target that pipeline_lanes_adjacent_max's rule needs
+  // (best: any), a property of the machine, not of the plan's target, so that every target of a
+  // machine takes that rule alike. In the padding after the bool above, as those fields.
+  fftn::isa pipeline_depth_isa = fftn::isa::best;
+  fftn::isa pipeline_lanes_isa = fftn::isa::best;
+  std::uint32_t pipeline_depth_max_kib = 0;
   // A c2r plane out of place builds its intermediate packed in the output (core/plan_core.cpp,
   // c2r_packed) where one transform's half spectrum exceeds this many bytes, and keeps it in the
   // workspace block otherwise (X60, X63). The packed route wins where the block pushes input,

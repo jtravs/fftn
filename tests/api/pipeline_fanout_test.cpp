@@ -643,6 +643,10 @@ TYPED_TEST(PipelineFanout, TeamsAndExecutorsAgreeWithSerial) {
     }
   }
   constexpr std::size_t big = 131072;
+  // The chain pair's copies whatever the host: X67's rule (task 5.2g) puts such a line on the
+  // depth-first pair on the Xeon 6240's class.
+  d::build_settings chain_pair;
+  chain_pair.profile.pipeline_depth_min_kib = 0;
   for (const fan_case& fc : {
            fan_case{.name = "a long line", .n = big, .count = 1, .fanout = 3, .expect = shared},
            fan_case{.name = "a long accumulated line",
@@ -652,8 +656,8 @@ TYPED_TEST(PipelineFanout, TeamsAndExecutorsAgreeWithSerial) {
                     .accumulate = true,
                     .expect = serial},
        }) {
-    run_case<TypeParam, C>(fc, fftn::isa::best, true, {}, false);
-    run_case<TypeParam, TypeParam>(fc, fftn::isa::best, true, {}, false);
+    run_case<TypeParam, C>(fc, fftn::isa::best, true, chain_pair, false);
+    run_case<TypeParam, TypeParam>(fc, fftn::isa::best, true, chain_pair, false);
   }
 }
 

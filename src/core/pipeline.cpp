@@ -931,10 +931,25 @@ void build_lanes_pair(plan_core& c, const pipeline_view& d, const row_layout& l,
                          " " + radices + " (shared twiddle tables)");
 }
 
+// Whether the rules may take the depth-first pair for a <C, C, C> line (convolution_depth_tops
+// says where): only for what experiment X67 measured (task 5.2g), a kernel of stride 1 along the
+// line or none, at most one stored run per side, no prologue or epilogue factor, accumulation,
+// callback or fan-out (its copies run one after another in a team, where the chain pair shares
+// them; X67 timed it at one thread only). Anything else keeps the chain pair by the rules (narrowed
+// before adoption, AGENTS.md section 6); forced, the pair takes it all.
+bool depth_measured(const vocab& v, const pipeline_view& d) {
+  const auto one_run = [](const side_runs& s) { return !s.any() || s.of(0).size() <= 1; };
+  return v.pro.kind == factor_kind::none && v.epi.kind == factor_kind::none && !v.epi.accumulate &&
+         !v.pro.call.any() && !v.mid.call.any() && !v.epi.call.any() &&
+         (v.mid.kind == factor_kind::none ||
+          (v.mid.kind == factor_kind::complex && v.mid.axis_stride == 1)) &&
+         one_run(v.runs.in) && one_run(v.runs.out) && d.fanout == 1;
+}
+
 // The pair a <C, C, C> line takes and its stages: the lanes pair where it is forced and taken
 // (convolution_lanes_block, lanes_pair_refusal; task 5.2f), the depth-first pair where it is
-// forced (convolution_depth_tops, for contiguous lines only: its passes read and write stride 1),
-// the rules' choice of either waiting for X67; otherwise the chain pair (below). Returns which
+// forced or the rules take it (convolution_depth_tops and depth_measured, for contiguous lines
+// only: its passes read and write stride 1; X67); otherwise the chain pair (below). Returns which
 // (strategy_choice lanes, depth or chain). lanes: the lanes pair's block as built, or why a
 // forced lanes pair was not taken.
 struct lanes_outcome {
@@ -952,6 +967,24 @@ strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layou
   program& p = c.prog;
   const std::size_t n = d.line.n;
   const int s1 = first_sign(d);
+  // By the rules (X67): adjacent lines only (convolution_lanes_block), for what X67 measured,
+  // a kernel of stride 1 or none and no middle callback, with nothing lanes_pair_refusal names.
+  const bool lanes_rules = settings.strategy == strategy_choice::rules &&
+                           lanes_pair_refusal(d, v).empty() && !v.mid.call.any() &&
+                           (v.mid.kind == factor_kind::none ||
+                            (v.mid.kind == factor_kind::complex && v.mid.axis_stride == 1));
+  if (lanes_rules) {
+    const std::size_t b = d.batches.size() - 1;
+    const lanes_pair_block lb =
+        convolution_lanes_block<T>(n, d.batches[b].count, l.in_stride, l.out_stride, l.in_dist[b],
+                                   l.out_dist[b], settings, profile, chain, complex_lanes);
+    if (lb.block != 0) {
+      pl = place(v, n, false, false);
+      build_lanes_pair<T>(c, d, l, pl, settings, chain, lb);
+      lanes.block = lb;
+      return strategy_choice::lanes;
+    }
+  }
   if (settings.strategy == strategy_choice::lanes) {
     lanes.refusal = lanes_pair_refusal(d, v);
     if (lanes.refusal.empty()) {
@@ -976,7 +1009,8 @@ strategy_choice build_pair(plan_core& c, const pipeline_view& d, const row_layou
   if (settings.strategy == strategy_choice::depth && d.group != ungrouped) {
     lanes.depth_refusal = "a group";
   }
-  if (l.in_stride == 1 && l.out_stride == 1 && d.group == ungrouped) {
+  if (l.in_stride == 1 && l.out_stride == 1 && d.group == ungrouped &&
+      (settings.strategy != strategy_choice::rules || depth_measured(v, d))) {
     if (const std::vector<std::size_t> tops =
             convolution_depth_tops<T>(n, settings, chain, c.isa_target);
         !tops.empty()) {
@@ -1758,18 +1792,25 @@ std::shared_ptr<plan_core> build_pipeline_core(const pipeline_view& d, const opt
           ? "the real chain pair reversed: each line's half spectrum through the c2r chain into "
             "the workspace block (its scratch-resident home, which the batch loops never move), "
             "the middle there on its n reals, then the r2c chain out of it (DESIGN.md 12.2, 12.3)"
-      : lanes ? "the lanes pair (forced only, until experiment X67 writes its rule): blocks of " +
-                    std::to_string(c->prog.lanes) +
+      : lanes ? std::string("the lanes pair (") +
+                    (settings.strategy == strategy_choice::lanes
+                         ? "forced"
+                         : "by the rules for a plane's strided lines, experiment X67") +
+                    "): blocks of " + std::to_string(c->prog.lanes) +
                     (lanes_built.block.columns ? " adjacent lines" : " lines") +
                     " of the innermost batch dimension, one line per vector lane, then blocks of " +
                     std::to_string(c->prog.lane_unit) +
                     ": the forward chain on a tile of the block's lines, the middle on the tile, "
                     "then the backward chain from the tile (DESIGN.md 12.2)"
       : depth
-          ? "the depth-first pair: each line through the forward depth-first chain (its sub-rows "
-            "finished one at a time on their blocks of the workspace block), its top pass into "
-            "scratch with the middle, then the backward depth-first chain from there (DESIGN.md "
-            "12.2)"
+          ? std::string("the depth-first pair") +
+                (settings.strategy == strategy_choice::depth ? ""
+                                                             : " (by the rules, experiment X67)") +
+                ": each line through the forward depth-first chain (its sub-rows "
+                "finished one at a time on their blocks of the workspace block), its top pass into "
+                "scratch with the middle, then the backward depth-first chain from there "
+                "(DESIGN.md "
+                "12.2)"
           : "the chain pair: each line through the forward chain into the workspace block (its "
             "scratch-resident home, which the batch loops never move), the middle there, then "
             "the backward chain out of it (DESIGN.md 12.2)";

@@ -569,9 +569,10 @@ On `<C, C, C>`, a complex factor of stride 1 along the line is applied in the ne
 transform's pass; any other factor, every factor of `<T, C, T>`, accumulation and the runs' reading
 and storing, in a pass of its own over the line while it is in the workspace (`describe()` counts
 them), except that runs within the line's first half are read or written by the transform's first or
-last pass where its passes allow, as for a plan. Every pipeline is built as the chain pair: the
-depth-first pair for long lines is built (task 5.2d) but taken by no pipeline unless forced, until
-experiment X67 gives the rules their choice. Results equal the transform, the multiplications and
+last pass where its passes allow, as for a plan. A pipeline is built as the chain pair, except
+where the rules take another pair of transforms measured faster on the machine (experiment X67):
+on some processors long contiguous `<C, C, C>` lines take a depth-first pair, and a plane's strided
+`<C, C, C>` lines a lanes pair; `pipeline::describe()` names the pair. Results equal the transform, the multiplications and
 the inverse done separately within two transforms' error bound plus one rounding per multiplication
 and addition, not bit for bit; the guarantees of "Determinism" below hold for pipelines too.
 `pipeline::transforms_of` deals lines among a team's members as `plan::transforms_of` deals
