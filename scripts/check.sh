@@ -10,7 +10,7 @@
 #
 # Stages, in order:
 #   spdx      every source file carries the SPDX header, and shell scripts are
-#             executable in git                                    (tools/repo_lint.py)
+#             executable in git, and no file holds conflict markers (tools/repo_lint.py)
 #   docs      Markdown links resolve, PLAN.md keeps its sections   (tools/repo_lint.py)
 #   knobs     experimental switches are registered and not expired (tools/repo_lint.py)
 #   format    clang-format (pinned), C and C++ sources and headers
@@ -98,7 +98,7 @@ build_and_test() {
 test_prefix=()
 preset() { configure "$1" && build_and_test "$1"; }
 
-if stage spdx; then say "SPDX headers"; py tools/repo_lint.py spdx; fi
+if stage spdx; then say "SPDX headers, conflict markers"; py tools/repo_lint.py spdx markers; fi
 if stage docs; then say "documents"; py tools/repo_lint.py docs; fi
 if stage knobs; then say "experimental switches"; py tools/repo_lint.py knobs; fi
 
