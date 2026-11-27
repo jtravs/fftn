@@ -187,8 +187,24 @@ only (its extension of 5 points is one leaf of 4, which the folded route's extra
 identical to A's), and no case D moves (odd DCT-I from 9 and odd DST-I up to 257) slower than A
 beyond the band; the geometric mean over the moved cases is reported against D2's 0.90.
 
-(Xeon 6240 pending: judging run Slurm 17556 on 363ed5aa behind other tasks' jobs in the
-`fbench-serial` chain; the narrowing applies there too.)
+**Narrowed deciding run, EPYC** (20261127-074258-549e, stopped after 6 rounds; loaded, load
+average 34; band ±1.48 %; code a997ebb8): DCT-I of 5 on its old plan in both arms, as declared,
+but read 1.032 [0.999, 1.078]; the moved cases 0.802 over 46, yet DCT-I single rows of 9 and 17
+points at 1.093 [1.077, 1.124] and 1.073 [1.052, 1.078], where the two runs before had them at
+0.88–0.98: the narrowed change fails its deciding run. Single DCT-I rows below 33 points swing by
+about 10 % from one run to the next on this node; from 33 points DCT-I took 0.84–0.92 in all three
+runs, DST-I 0.62–0.93 at every length, batches and planes 0.70–0.95. Cases above 257 kept their
+plans (0.99–1.01).
+
+**Second narrowing (commit after a997ebb8):** DCT-I takes the folded route from 33 points.
+**Second narrowed deciding run, EPYC (declared before it starts):** that code, arms A and D =
+`R2R_FOLDED_MAX=257`, catalogue `x85`: every excluded case (DCT-I of 5 to 17 points) on its old
+plan, no case D moves slower than A beyond the band, the geometric mean over the moved cases
+against D2's 0.90. If it fails, D is not adopted on the EPYC and the decision goes to the
+maintainer with these runs.
+
+(Xeon 6240 pending: judging run Slurm 17561 on a997ebb8 behind other tasks' jobs in the
+`fbench-serial` chain.)
 
 ## Verdict
 
