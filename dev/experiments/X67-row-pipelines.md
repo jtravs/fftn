@@ -201,6 +201,18 @@ where the two disagree, these hold.
     change no pipeline built by the rules (rule 8's probes), so they take no judging run of
     their own; a test shows the candidates and the wisdom round trip.
 
+## R2 declared deciding (2026-11-27, before the Xeon's R2 started)
+
+R2 judges the rules as adopted from R1, narrowed (AGENTS.md section 6) to what R1 measured: the
+depth-first pair (Xeon 6240's class, avx512, 288 KiB to 2 MiB, a kernel of stride 1 or none, at
+most one run per side, no prologue or epilogue factor, accumulation or callback) and the lanes
+pair for a plane's strided lines of 64 to 512 points (Zen 3's class and the Xeon 6240's). It is the
+deciding run of amendment 8 and of the narrowing: every case the rules exclude must show its
+chain pair, and no case they move may be slower than C beyond the band. The Xeon's R2 runs
+commit a2378229 (the final rules). The EPYC's R2 started at d8fc1250, whose programs for every
+x67 case are the final code's: the later commits only exclude adjacent lines under 64 points
+(none in the catalogue), add the Xeon's lanes field and pin a test.
+
 ## Results
 
 Not run.
