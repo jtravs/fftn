@@ -90,9 +90,13 @@ template <class T> struct conv {
   }
 };
 
+// The budget is real time even with the fake clock: quick's 0.1 s is spent building a long
+// line's candidates under a sanitizer (TSan), which then admits none and times nothing, so the
+// tests give planning a minute.
 std::shared_ptr<const d::plan_core> measured(const d::pipeline_view& v, fake_clock& clock,
                                              const fftn::options& opts = {
-                                                 .effort = fftn::planning::quick}) {
+                                                 .effort = fftn::planning::quick,
+                                                 .measure_seconds = 60}) {
   build_settings s = fixed_settings();
   s.measure_time = &fake_time;
   s.measure_context = &clock;
