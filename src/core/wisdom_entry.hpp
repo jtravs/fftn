@@ -65,8 +65,8 @@ struct wisdom_record {
 
 // A pipeline description and its options as one line of text (task 5.2g): "pipeline", the kind,
 // then the line's shape_key (its first direction, line, batches and runs), the fan-out and the
-// group, and the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed (a
-// callback by its mode and scratch, not its function).
+// group, the prologue's, epilogue's and middle's vocabulary as a plan's edges are keyed (a
+// callback by its mode and scratch, not its function), and their three scales.
 [[nodiscard]] std::string pipeline_key(const pipeline_view& d, const options& opts);
 
 } // namespace fftn::inline v0::detail

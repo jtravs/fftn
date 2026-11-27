@@ -649,6 +649,28 @@ std::string check_delays() {
              std::to_string(kind) + ")";
     }
   }
+  // Interleaved c2c lines (a plane's strided axis): 3 lines of 12, one element apart, in 2 blocks.
+  const layout il = make_layout(fbench_c2c, 1, {12, 1, 1}, 3, -1, false, fbench_f64, true, 2);
+  std::vector<double> xi(il.reals_in());
+  fill_input(il, xi.data(), 11);
+  const auto shifted = [&](std::int64_t delay) {
+    std::vector<double> out(il.reals_out(), 0.0);
+    for (std::int64_t b = 0; b < il.batch; ++b) {
+      for (std::int64_t j = 0; j < 12; ++j) {
+        const value w = load(il.in, xi.data(), b, (j + 12 - delay) % 12);
+        out[idx(2 * il.out.offset(b, j))] = w.re;
+        out[idx(2 * il.out.offset(b, j) + 1)] = w.im;
+      }
+    }
+    return out;
+  };
+  if (!check_delay(il, xi.data(), shifted(1).data()).pass) {
+    return "the delayed check rejects an exact delay of interleaved lines";
+  }
+  if (check_delay(il, xi.data(), shifted(0).data()).pass ||
+      check_delay(il, xi.data(), shifted(2).data()).pass) {
+    return "the delayed check accepts a wrong delay of interleaved lines";
+  }
   return {};
 }
 
